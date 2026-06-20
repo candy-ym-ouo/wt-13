@@ -285,19 +285,45 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
 
 /**
  * @param {EventCard[]} hand
- * @returns {EventCard[]}
+ * @returns {{ hand: EventCard[], expiredCards: EventCard[] }}
  */
 export function tickActiveCards(hand) {
-  return hand.map(card => {
+  /** @type {EventCard[]} */
+  const expiredCards = [];
+  /** @type {EventCard[]} */
+  const newHand = [];
+  for (const card of hand) {
     if (card.cardState === 'active' && card.remainingDuration !== undefined) {
       const newDuration = card.remainingDuration - 1;
       if (newDuration <= 0) {
-        return { ...card, cardState: 'cooling', remainingDuration: 0, remainingCooldown: card.cooldown };
+        expiredCards.push(card);
+      } else {
+        newHand.push({ ...card, remainingDuration: newDuration });
       }
-      return { ...card, remainingDuration: newDuration };
+    } else {
+      newHand.push(card);
     }
-    return card;
-  });
+  }
+  return { hand: newHand, expiredCards };
+}
+
+/**
+ * @param {CooldownEntry[]} cooldowns
+ * @param {EventCard[]} expiredCards
+ * @returns {CooldownEntry[]}
+ */
+export function addExpiredCardsToCooldowns(cooldowns, expiredCards) {
+  /** @type {CooldownEntry[]} */
+  const newCooldowns = [...cooldowns];
+  for (const card of expiredCards) {
+    const existing = newCooldowns.find(cd => cd.cardId === card.id);
+    if (existing) {
+      existing.remainingCooldown = Math.max(existing.remainingCooldown, card.cooldown);
+    } else {
+      newCooldowns.push({ cardId: card.id, remainingCooldown: card.cooldown });
+    }
+  }
+  return newCooldowns;
 }
 
 /**
@@ -322,7 +348,7 @@ export function activateCard(card) {
       remainingDuration: card.effect.duration || 1
     };
   }
-  return { ...card, cardState: 'cooling', remainingCooldown: card.cooldown };
+  return { ...card, cardState: 'available' };
 }
 
 /**

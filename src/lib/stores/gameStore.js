@@ -301,9 +301,12 @@ function createGameState() {
         newRevealTurns = state.revealTurns ? state.revealTurns : 0;
       }
 
+      const currentHand = state.hands[nextFaction];
+      const tickResult = tickActiveCards(currentHand);
+
       const nextHands = {
-        red: nextFaction === 'red' ? tickActiveCards(state.hands.red) : state.hands.red,
-        blue: nextFaction === 'blue' ? tickActiveCards(state.hands.blue) : state.hands.blue
+        red: nextFaction === 'red' ? tickResult.hand : state.hands.red,
+        blue: nextFaction === 'blue' ? tickResult.hand : state.hands.blue
       };
 
       const nextCooldowns = {
@@ -378,22 +381,54 @@ function createGameState() {
         c => c.instanceId === cardInstanceId
       );
 
-      hands[faction] = hands[faction].filter(
-        /** @param {EventCard} c */
-        c => c.instanceId !== cardInstanceId
-      );
+      if (!usedCard) {
+        return state;
+      }
 
       const newCooldowns = {
         red: [...state.cooldowns.red],
         blue: [...state.cooldowns.blue]
       };
 
-      if (usedCard && usedCard.cooldown > 0) {
-        const existingCd = newCooldowns[faction].find(c => c.cardId === cardId);
-        if (existingCd) {
-          existingCd.remainingCooldown = Math.max(existingCd.remainingCooldown, usedCard.cooldown);
-        } else {
-          newCooldowns[faction] = [...newCooldowns[faction], createCooldownEntry(usedCard)];
+      const isInstant = usedCard.category === 'instant';
+
+      if (isInstant) {
+        hands[faction] = hands[faction].filter(
+          /** @param {EventCard} c */
+          c => c.instanceId !== cardInstanceId
+        );
+        if (usedCard.cooldown > 0) {
+          const existingCd = newCooldowns[faction].find(c => c.cardId === cardId);
+          if (existingCd) {
+            existingCd.remainingCooldown = Math.max(existingCd.remainingCooldown, usedCard.cooldown);
+          } else {
+            newCooldowns[faction] = [...newCooldowns[faction], createCooldownEntry(usedCard)];
+          }
+        }
+      } else {
+        hands[faction] = hands[faction].map(
+          /** @param {EventCard} c */
+          c => {
+            if (c.instanceId === cardInstanceId) {
+              return {
+                ...c,
+                cardState: 'active',
+                remainingDuration: usedCard.effect.duration || 1
+              };
+            }
+            return c;
+          }
+        );
+        if (usedCard.cooldown > 0) {
+          const existingCd = newCooldowns[faction].find(c => c.cardId === cardId);
+          if (existingCd) {
+            existingCd.remainingCooldown = Math.max(existingCd.remainingCooldown, usedCard.cooldown + (usedCard.effect.duration || 0));
+          } else {
+            newCooldowns[faction] = [...newCooldowns[faction], {
+              cardId: usedCard.id,
+              remainingCooldown: usedCard.cooldown + (usedCard.effect.duration || 0)
+            }];
+          }
         }
       }
 
@@ -410,7 +445,7 @@ function createGameState() {
         energy: newEnergy,
         selectedCardId: null,
         gamePhase: 'idle',
-        lastCardAction: usedCard ? { cardId: usedCard.id, type: 'play' } : null
+        lastCardAction: usedCard ? { cardId: usedCard.id, type: isInstant ? 'play' : 'activate' } : null
       };
     }),
     /**

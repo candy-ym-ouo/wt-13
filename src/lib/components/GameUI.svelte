@@ -311,6 +311,9 @@
    * @returns {boolean}
    */
   function isCardPlayable(card) {
+    if (card.cardState === 'active') {
+      return false;
+    }
     const affordability = canAffordCard(card, energy, cooldowns);
     return affordability.canUse;
   }
@@ -320,8 +323,30 @@
    * @returns {string | undefined}
    */
   function getCardUnplayableReason(card) {
+    if (card.cardState === 'active') {
+      return card.category === 'sustain' ? '持续生效中' : '待触发中';
+    }
     const affordability = canAffordCard(card, energy, cooldowns);
     return affordability.reason;
+  }
+
+  /**
+   * @param {EventCard} card
+   * @returns {boolean}
+   */
+  function isCardActive(card) {
+    return card.cardState === 'active';
+  }
+
+  /**
+   * @param {EventCard} card
+   * @returns {string}
+   */
+  function getCardStateLabel(card) {
+    if (card.cardState === 'active') {
+      return card.category === 'sustain' ? '持续中' : '待触发';
+    }
+    return '';
   }
 
   /**
@@ -623,7 +648,8 @@
             tabindex="0"
             aria-label={card.name}
             class:selected={state?.selectedCardId === card.instanceId}
-            class:unplayable={!isCardPlayable(card)}
+            class:unplayable={!isCardPlayable(card) && !isCardActive(card)}
+            class:active={isCardActive(card)}
             style="border-color: {CARD_CATEGORY_COLORS[card.category]}"
             on:click={() => handleSelectCard(card)}
             on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardKeydown(card)}
@@ -633,13 +659,27 @@
               {CARD_CATEGORY_LABELS[card.category]}
             </div>
             <div class="card-cost" title="能量消耗">⚡{card.cost}</div>
+            {#if isCardActive(card)}
+              <div class="card-duration" title="剩余持续时间">
+                ⏱️ {card.remainingDuration}
+              </div>
+            {/if}
             <div class="card-icon">{card.icon}</div>
             <div class="card-name">{card.name}</div>
-            <div class="card-type">{getCardTypeLabel(card.type)}</div>
-            {#if !isCardPlayable(card)}
+            <div class="card-type">
+              {#if isCardActive(card)}
+                <span class="card-state-tag">{getCardStateLabel(card)}</span>
+              {:else}
+                {getCardTypeLabel(card.type)}
+              {/if}
+            </div>
+            {#if !isCardPlayable(card) && !isCardActive(card)}
               <div class="card-overlay">
                 <span class="card-unplayable-text">{getCardUnplayableReason(card)}</span>
               </div>
+            {/if}
+            {#if isCardActive(card)}
+              <div class="card-active-glow"></div>
             {/if}
           </div>
         {/each}
@@ -1249,6 +1289,54 @@
 
   .card.unplayable:hover {
     transform: none;
+  }
+
+  .card.active {
+    animation: cardPulse 2s ease-in-out infinite;
+    cursor: default;
+  }
+
+  .card.active:hover {
+    transform: none;
+    box-shadow: 0 0 20px rgba(46, 204, 113, 0.5);
+  }
+
+  @keyframes cardPulse {
+    0%, 100% {
+      box-shadow: 0 0 10px rgba(46, 204, 113, 0.4);
+    }
+    50% {
+      box-shadow: 0 0 25px rgba(46, 204, 113, 0.7);
+    }
+  }
+
+  .card-duration {
+    position: absolute;
+    top: 0;
+    right: 0;
+    font-size: 10px;
+    padding: 2px 5px;
+    background: rgba(46, 204, 113, 0.9);
+    color: white;
+    border-radius: 0 0 0 4px;
+    font-weight: bold;
+  }
+
+  .card-state-tag {
+    color: #2ecc71;
+    font-weight: bold;
+  }
+
+  .card-active-glow {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border: 2px solid #2ecc71;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0.6;
   }
 
   .card-category-badge {
