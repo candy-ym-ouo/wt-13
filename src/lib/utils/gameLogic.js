@@ -711,6 +711,7 @@ function heuristic(a, b) {
  * @property {number} defenderRemainingHp
  * @property {boolean} shieldBlocked
  * @property {boolean} canCounter
+ * @property {boolean} willCounter
  * @property {number} counterDamage
  * @property {boolean} counterWillKill
  * @property {number} attackerRemainingHp
@@ -738,12 +739,13 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
   const canCounter = gameRules.combat.counterAttack
     && distance <= defenderConfig.attackRange
     && !isHardCC(defender);
+  const willCounter = canCounter && !willKill;
 
   let counterDamage = 0;
   let counterWillKill = false;
   let attackerRemainingHp = attacker.currentHp;
 
-  if (canCounter) {
+  if (willCounter) {
     const fullCounterDamage = calculateDamage(defender, attacker, attackerTerrain);
     counterDamage = Math.max(1, Math.floor(fullCounterDamage * gameRules.combat.counterAttackDamageRatio));
     const attackerHasShield = attacker.buffs?.some(b => b.type === 'shield');
@@ -851,7 +853,7 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
     }
   }
 
-  if (canCounter) {
+  if (willCounter) {
     const defMorale = getMoraleTier(defender.morale ?? 80);
     terrainModifiers.push({
       label: `反击（×${gameRules.combat.counterAttackDamageRatio}）`,
@@ -869,7 +871,7 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
   } else if (gameRules.combat.counterAttack) {
     terrainModifiers.push({
       label: '无法反击',
-      value: distance > defenderConfig.attackRange ? '超出射程' : '被控制',
+      value: willKill ? '将被击杀' : (distance > defenderConfig.attackRange ? '超出射程' : '被控制'),
       color: '#9e9e9e'
     });
   }
@@ -880,6 +882,7 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
     defenderRemainingHp,
     shieldBlocked,
     canCounter,
+    willCounter,
     counterDamage,
     counterWillKill,
     attackerRemainingHp,

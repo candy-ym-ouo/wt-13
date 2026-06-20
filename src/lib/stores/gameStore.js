@@ -21,7 +21,9 @@ import {
   isImmuneToStatus,
   calculateAllSynergies,
   processTileEffectsOnUnits,
-  tickTileEffects as tickTileEffectsLogic
+  tickTileEffects as tickTileEffectsLogic,
+  calculateCombatPreview,
+  getTerrain
 } from '$lib/utils/gameLogic';
 
 /**
@@ -410,6 +412,24 @@ function createGameState() {
       const hasShield = defender?.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
       const finalDamage = hasShield ? 0 : damage;
 
+      const layout = state.boardLayout || null;
+      const atkTerrain = attacker ? getTerrain(attacker.x, attacker.y, layout) : null;
+      const defTerrain = defender ? getTerrain(defender.x, defender.y, layout) : null;
+
+      const preview = (attacker && defender)
+        ? calculateCombatPreview(attacker, defender, defTerrain || undefined, atkTerrain || undefined)
+        : null;
+
+      let counterDamage = 0;
+      let counterShieldBlocked = false;
+      if (preview && preview.willCounter) {
+        counterDamage = preview.counterDamage;
+        counterShieldBlocked = attacker?.buffs?.some(/** @param {any} b */ b => b.type === 'shield') || false;
+        if (counterShieldBlocked) {
+          counterDamage = 0;
+        }
+      }
+
       /** @type {MoraleChange[]} */
       const moraleChanges = [];
 
@@ -418,18 +438,31 @@ function createGameState() {
 
       let updatedUnits = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === attackerId) {
+          let updated = u;
           if (u.attackCount !== undefined) {
             const newCount = u.attackCount + 1;
             if (hasDoubleAttack && newCount < 2) {
-              return { ...u, attackCount: newCount };
+              updated = { ...u, attackCount: newCount };
+            } else {
+              updated = { ...u, hasAttacked: true, attackCount: 0 };
             }
-            return { ...u, hasAttacked: true, attackCount: 0 };
           } else {
             if (hasDoubleAttack) {
-              return { ...u, attackCount: 1 };
+              updated = { ...u, attackCount: 1 };
+            } else {
+              updated = { ...u, hasAttacked: true };
             }
-            return { ...u, hasAttacked: true };
           }
+
+          if (counterDamage > 0 && !counterShieldBlocked) {
+            const newHp = Math.max(0, updated.currentHp - counterDamage);
+            updated = { ...updated, currentHp: newHp };
+          } else if (counterShieldBlocked) {
+            const newBuffs = (updated.buffs || []).filter(/** @param {any} b */ b => b.type !== 'shield');
+            updated = { ...updated, buffs: newBuffs };
+          }
+
+          return updated;
         }
         if (u.id === defenderId) {
           const hasShieldLocal = u.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
@@ -445,6 +478,8 @@ function createGameState() {
 
       const updatedDefender = updatedUnits.find(/** @param {Unit} u */ u => u.id === defenderId);
       const defenderDead = updatedDefender && updatedDefender.currentHp <= 0;
+      const updatedAttacker = updatedUnits.find(/** @param {Unit} u */ u => u.id === attackerId);
+      const attackerDeadFromCounter = updatedAttacker && updatedAttacker.currentHp <= 0;
 
       if (defenderDead && attacker && defenderFaction) {
         updatedUnits = updatedUnits.map(/** @param {Unit} u */ u => {
@@ -495,13 +530,63 @@ function createGameState() {
         });
       }
 
+      if (attackerDeadFromCounter && defender && attackerFaction) {
+        const survivingDefender = updatedUnits.find(/** @param {Unit} u */ u => u.id === defenderId);
+        if (survivingDefender && !defenderDead) {
+          updatedUnits = updatedUnits.map(/** @param {Unit} u */ u => {
+            if (u.id === defenderId) {
+              const before = u.morale;
+              const newStreak = (u.winStreak || 0) + 1;
+              let delta = gameRules.morale.onKill;
+              if (newStreak >= gameRules.morale.winStreakThreshold) {
+                delta += gameRules.morale.winStreakBonus;
+              }
+              const after = clampMorale(before + delta);
+              moraleChanges.push({
+                unitId: u.id,
+                unitName: defenderName,
+                faction: u.faction,
+                before,
+                after,
+                delta: after - before,
+                reason: newStreak >= gameRules.morale.winStreakThreshold
+                  ? `反击击杀+连胜(${newStreak}连杀)`
+                  : `反击击杀`
+              });
+              return { ...u, morale: after, winStreak: newStreak };
+            }
+            if (u.faction === attackerFaction && u.id !== attackerId) {
+              const before = u.morale;
+              const delta = -gameRules.morale.onAllyDeath;
+              const after = clampMorale(before + delta);
+              moraleChanges.push({
+                unitId: u.id,
+                unitName: unitConfig[/** @type {UnitType} */ (u.type)].name,
+                faction: u.faction,
+                before,
+                after,
+                delta: after - before,
+                reason: `友军阵亡(${attackerName})`
+              });
+              return { ...u, morale: after, winStreak: 0 };
+            }
+            return u;
+          });
+        }
+      }
+
       updatedUnits = updatedUnits.filter(/** @param {Unit} u */ u => u.currentHp > 0);
 
       const atkFactionName = attackerFaction === 'red' ? '红方' : '蓝方';
       const defFactionName = defenderFaction === 'red' ? '红方' : '蓝方';
       const killTag = defenderDead ? '【击杀！】' : '';
       const shieldTag = hasShield ? '（护盾抵消）' : '';
-      const attackDesc = `${atkFactionName}${attackerName} 攻击 ${defFactionName}${defenderName}，造成 ${finalDamage} 伤害${shieldTag}${killTag}`;
+      const counterShieldTag = counterShieldBlocked ? '（护盾抵消反击）' : '';
+      const counterKillTag = attackerDeadFromCounter ? '【反击击杀！】' : '';
+      const counterTag = counterDamage > 0 || counterShieldBlocked
+        ? `；${defFactionName}${defenderName}反击造成${counterShieldBlocked ? 0 : counterDamage}伤害${counterShieldTag}${counterKillTag}`
+        : '';
+      const attackDesc = `${atkFactionName}${attackerName} 攻击 ${defFactionName}${defenderName}，造成 ${finalDamage} 伤害${shieldTag}${killTag}${counterTag}`;
 
       const attackLog = {
         id: `log_${Date.now()}_atk_${Math.random().toString(36).slice(2, 6)}`,
@@ -522,7 +607,11 @@ function createGameState() {
           defenderPosition: defender ? { x: defender.x, y: defender.y } : null,
           shieldBlocked: hasShield,
           defenderDead,
-          defenderRemainingHp: updatedDefender?.currentHp || 0
+          defenderRemainingHp: updatedDefender?.currentHp || 0,
+          counterDamage: counterShieldBlocked ? 0 : counterDamage,
+          counterShieldBlocked,
+          attackerDeadFromCounter,
+          attackerRemainingHp: updatedAttacker?.currentHp || 0
         },
         timestamp: Date.now()
       };

@@ -20,7 +20,8 @@
     getStatusEffect,
     getEffectiveMoveRange,
     getCounterInfo,
-    getTileEffectAt
+    getTileEffectAt,
+    calculateCombatPreview
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
@@ -1008,6 +1009,7 @@
     if (!state) return;
     const layout = state.boardLayout || boardConfig.layout;
     const defTerrain = getTerrain(defender.x, defender.y, layout);
+    const atkTerrain = getTerrain(attacker.x, attacker.y, layout);
     const damage = calculateDamage(attacker, defender, defTerrain || undefined);
 
     const attackerName = unitConfig[/** @type {UnitType} */ (attacker.type)].name;
@@ -1024,6 +1026,15 @@
 
     const killOccurred = defender.currentHp - damage <= 0;
     const newStreak = killOccurred ? (attacker.winStreak || 0) + 1 : 0;
+
+    const preview = calculateCombatPreview(attacker, defender, defTerrain || undefined, atkTerrain || undefined);
+    const willCounter = preview.willCounter;
+    const counterDmg = willCounter ? preview.counterDamage : 0;
+    const counterShielded = willCounter && attacker.buffs?.some(
+      /** @param {any} b */ b => b.type === 'shield'
+    );
+    const actualCounterDmg = counterShielded ? 0 : counterDmg;
+    const attackerKilledByCounter = actualCounterDmg > 0 && attacker.currentHp - actualCounterDmg <= 0;
 
     gameState.attack(attacker.id, defender.id, damage);
     
@@ -1057,20 +1068,41 @@
       moraleMsgs.push(`攻击方士气${attackerTier.label}，伤害提升至×${attackerTier.damageMultiplier}`);
     }
 
+    if (attackerKilledByCounter) {
+      const defFaction = defender.faction === 'red' ? '红方' : '蓝方';
+      moraleMsgs.push(`${defFaction}${defenderName}反击击杀${attackerName}`);
+      const atkFaction = attacker.faction === 'red' ? '红方' : '蓝方';
+      const atkAllyCount = state.units.filter(u => u.faction === attacker.faction && u.id !== attacker.id).length;
+      if (atkAllyCount > 0) {
+        moraleMsgs.push(`${atkFaction}全体-${gameRules.morale.onAllyDeath}士气(友军${attackerName}阵亡)`);
+      }
+    }
+
     const moraleMsg = moraleMsgs.length > 0 ? `\n士气：${moraleMsgs.join('；')}` : '';
 
     const killMsg = killOccurred ? '【击杀！】' : '';
     const streakMsg = killOccurred && newStreak >= gameRules.morale.winStreakThreshold
       ? `【${newStreak}连杀！】`
       : '';
-    
+
+    let counterMsg = '';
+    if (willCounter) {
+      if (counterShielded) {
+        counterMsg = `；${defenderName}反击被护盾抵消`;
+      } else if (attackerKilledByCounter) {
+        counterMsg = `；${defenderName}反击造成${actualCounterDmg}伤害【反击击杀！】`;
+      } else {
+        counterMsg = `；${defenderName}反击造成${actualCounterDmg}伤害`;
+      }
+    }
+
     if (willAttackAgain) {
       gameState.setMessage(
-        `${counterTag}${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！（连续攻击可再攻击一次）${moraleMsg}`
+        `${counterTag}${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！（连续攻击可再攻击一次）${counterMsg}${moraleMsg}`
       );
     } else {
       gameState.setMessage(
-        `${counterTag}${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！${moraleMsg}`
+        `${counterTag}${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}${counterMsg}！${moraleMsg}`
       );
     }
 

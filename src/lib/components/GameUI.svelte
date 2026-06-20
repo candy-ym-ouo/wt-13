@@ -1170,7 +1170,7 @@
               <span class="preview-hp-after" style="color: #3498db">护盾抵消</span>
             {/if}
           </div>
-          {#if combatPreview.canCounter}
+          {#if combatPreview.willCounter}
             <div class="combat-preview-counter">
               <span class="preview-counter-label">⚡ 反击</span>
               <span class="preview-counter-value" style="color: {combatPreview.counterWillKill ? '#e74c3c' : '#ff9800'}">
@@ -1187,7 +1187,7 @@
                 无法反击
               </span>
               <span class="preview-counter-after" style="color: #555">
-                {Math.abs(selectedUnitData.x - combatPreview.targetX) + Math.abs(selectedUnitData.y - combatPreview.targetY) > getUnitAttackRange(combatPreview.targetType) ? '（超出射程）' : '（被控制）'}
+                {combatPreview.willKill ? '（将被击杀）' : (Math.abs(selectedUnitData.x - combatPreview.targetX) + Math.abs(selectedUnitData.y - combatPreview.targetY) > getUnitAttackRange(combatPreview.targetType) ? '（超出射程）' : '（被控制）')}
               </span>
             </div>
           {/if}
