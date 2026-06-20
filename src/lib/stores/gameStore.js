@@ -29,6 +29,18 @@ import { gameRules } from '$lib/config/gameRules';
  * @property {number} revealTurns
  * @property {{turn: number, faction: string}[]} turnHistory
  * @property {string} message
+ * @property {MoraleChange[]} lastMoraleChanges
+ */
+
+/**
+ * @typedef {object} MoraleChange
+ * @property {string} unitId
+ * @property {string} unitName
+ * @property {string} faction
+ * @property {number} before
+ * @property {number} after
+ * @property {number} delta
+ * @property {string} reason
  */
 
 /**
@@ -61,7 +73,9 @@ function createInitialState() {
         hasAttacked: false,
         attackCount: 0,
         buffs: [],
-        stunned: 0
+        stunned: 0,
+        morale: gameRules.morale.initial,
+        winStreak: 0
       });
     }
   }
@@ -84,7 +98,8 @@ function createInitialState() {
     terrainChanged: null,
     revealTurns: 0,
     turnHistory: [],
-    message: '游戏开始！红方先行动'
+    message: '游戏开始！红方先行动',
+    lastMoraleChanges: []
   };
 }
 
@@ -136,11 +151,18 @@ function createGameState() {
      */
     attack: (attackerId, defenderId, damage) => update(state => {
       const attacker = state.units.find(/** @param {Unit} u */ u => u.id === attackerId);
+      const defender = state.units.find(/** @param {Unit} u */ u => u.id === defenderId);
       const hasDoubleAttack = attacker?.buffs?.some(
         /** @param {any} b */ b => b.type === 'doubleAttack'
       );
       
-      const units = state.units.map(/** @param {Unit} u */ u => {
+      /** @type {MoraleChange[]} */
+      const moraleChanges = [];
+
+      const clampMorale = (/** @type {number} */ v) =>
+        Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, v));
+
+      let updatedUnits = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === attackerId) {
           if (u.attackCount !== undefined) {
             const newCount = u.attackCount + 1;
@@ -160,12 +182,72 @@ function createGameState() {
           return { ...u, currentHp: newHp };
         }
         return u;
-      }).filter(/** @param {Unit} u */ u => u.currentHp > 0);
+      });
+
+      const updatedDefender = updatedUnits.find(/** @param {Unit} u */ u => u.id === defenderId);
+      const defenderDead = updatedDefender && updatedDefender.currentHp <= 0;
+      const attackerFaction = attacker?.faction;
+      const defenderFaction = defender?.faction;
+      const attackerName = attacker ? unitConfig[/** @type {UnitType} */ (attacker.type)].name : '';
+      const defenderName = defender ? unitConfig[/** @type {UnitType} */ (defender.type)].name : '';
+
+      if (defenderDead && attacker && defenderFaction) {
+        updatedUnits = updatedUnits.map(/** @param {Unit} u */ u => {
+          if (u.id === attackerId) {
+            const before = u.morale;
+            const newStreak = (u.winStreak || 0) + 1;
+            let delta = gameRules.morale.onKill;
+            if (newStreak >= gameRules.morale.winStreakThreshold) {
+              delta += gameRules.morale.winStreakBonus;
+            }
+            const after = clampMorale(before + delta);
+            moraleChanges.push({
+              unitId: u.id,
+              unitName: attackerName,
+              faction: u.faction,
+              before,
+              after,
+              delta: after - before,
+              reason: newStreak >= gameRules.morale.winStreakThreshold
+                ? `击杀+连胜(${newStreak}连杀)`
+                : `击杀敌军`
+            });
+            return { ...u, morale: after, winStreak: newStreak };
+          }
+          if (u.faction === defenderFaction && u.id !== defenderId) {
+            const before = u.morale;
+            const delta = -gameRules.morale.onAllyDeath;
+            const after = clampMorale(before + delta);
+            moraleChanges.push({
+              unitId: u.id,
+              unitName: unitConfig[/** @type {UnitType} */ (u.type)].name,
+              faction: u.faction,
+              before,
+              after,
+              delta: after - before,
+              reason: `友军阵亡(${defenderName})`
+            });
+            return { ...u, morale: after, winStreak: 0 };
+          }
+          return u;
+        });
+      } else if (attacker && attackerFaction) {
+        updatedUnits = updatedUnits.map(/** @param {Unit} u */ u => {
+          if (u.id === attackerId) {
+            return { ...u, winStreak: 0 };
+          }
+          return u;
+        });
+      }
+
+      updatedUnits = updatedUnits.filter(/** @param {Unit} u */ u => u.currentHp > 0);
+
       return {
         ...state,
-        units,
+        units: updatedUnits,
         selectedUnitId: attackerId,
-        gamePhase: 'idle'
+        gamePhase: 'idle',
+        lastMoraleChanges: moraleChanges
       };
     }),
     endTurn: () => update(state => {
@@ -283,13 +365,47 @@ function createGameState() {
      * @param {number} damage
      */
     damageUnit: (unitId, damage) => update(state => {
-      const units = state.units.map(/** @param {Unit} u */ u => {
+      /** @type {MoraleChange[]} */
+      const moraleChanges = [];
+      const clampMorale = (/** @type {number} */ v) =>
+        Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, v));
+
+      const target = state.units.find(/** @param {Unit} u */ u => u.id === unitId);
+      let updatedUnits = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
           return { ...u, currentHp: Math.max(0, u.currentHp - damage) };
         }
         return u;
-      }).filter(/** @param {Unit} u */ u => u.currentHp > 0);
-      return { ...state, units };
+      });
+
+      const updatedTarget = updatedUnits.find(/** @param {Unit} u */ u => u.id === unitId);
+      const targetDead = updatedTarget && updatedTarget.currentHp <= 0;
+      const targetFaction = target?.faction;
+      const targetName = target ? unitConfig[/** @type {UnitType} */ (target.type)].name : '';
+
+      if (targetDead && targetFaction) {
+        updatedUnits = updatedUnits.map(/** @param {Unit} u */ u => {
+          if (u.faction === targetFaction && u.id !== unitId) {
+            const before = u.morale;
+            const delta = -gameRules.morale.onAllyDeath;
+            const after = clampMorale(before + delta);
+            moraleChanges.push({
+              unitId: u.id,
+              unitName: unitConfig[/** @type {UnitType} */ (u.type)].name,
+              faction: u.faction,
+              before,
+              after,
+              delta: after - before,
+              reason: `友军阵亡(${targetName})`
+            });
+            return { ...u, morale: after, winStreak: 0 };
+          }
+          return u;
+        });
+      }
+
+      updatedUnits = updatedUnits.filter(/** @param {Unit} u */ u => u.currentHp > 0);
+      return { ...state, units: updatedUnits, lastMoraleChanges: moraleChanges };
     }),
     /**
      * @param {string} unitId
@@ -331,7 +447,39 @@ function createGameState() {
       revealTurns: duration
     })),
     /** @param {string} message */
-    setMessage: (message) => update(/** @param {GameState} state */ state => ({ ...state, message }))
+    setMessage: (message) => update(/** @param {GameState} state */ state => ({ ...state, message })),
+    /**
+     * @param {string} unitId
+     * @param {number} terrainMoraleBonus
+     * @param {string} terrainName
+     */
+    applyTerrainMorale: (unitId, terrainMoraleBonus, terrainName) => update(state => {
+      if (!terrainMoraleBonus) return { ...state, lastMoraleChanges: [] };
+      const clampMorale = (/** @type {number} */ v) =>
+        Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, v));
+      /** @type {MoraleChange[]} */
+      const moraleChanges = [];
+      const units = state.units.map(/** @param {Unit} u */ u => {
+        if (u.id === unitId) {
+          const before = u.morale;
+          const after = clampMorale(before + terrainMoraleBonus);
+          if (after !== before) {
+            moraleChanges.push({
+              unitId: u.id,
+              unitName: unitConfig[/** @type {UnitType} */ (u.type)].name,
+              faction: u.faction,
+              before,
+              after,
+              delta: after - before,
+              reason: `进入${terrainName}`
+            });
+          }
+          return { ...u, morale: after };
+        }
+        return u;
+      });
+      return { ...state, units, lastMoraleChanges: moraleChanges };
+    })
   };
 }
 

@@ -3,6 +3,7 @@
   import * as PIXI from 'pixi.js';
   import { boardConfig } from '$lib/config/boardConfig';
   import { unitConfig } from '$lib/config/unitConfig';
+  import { gameRules } from '$lib/config/gameRules';
   import { gameState, selectedUnit, currentHand } from '$lib/stores/gameStore';
   import {
     getTerrain,
@@ -11,7 +12,8 @@
     findPath,
     calculateDamage,
     getUnitAt,
-    checkVictory
+    checkVictory,
+    getMoraleTier
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect } from '$lib/utils/cardSystem';
 
@@ -210,6 +212,36 @@
     hpBar.drawRect(-20, -28, 40 * hpPercent, 5);
     hpBar.endFill();
     container.addChild(hpBar);
+
+    const moraleValue = unit.morale !== undefined ? unit.morale : 80;
+    const moralePercent = moraleValue / 100;
+    const moraleBarBg = new PIXI.Graphics();
+    moraleBarBg.beginFill(0x333333);
+    moraleBarBg.drawRect(-20, -21, 40, 4);
+    moraleBarBg.endFill();
+    container.addChild(moraleBarBg);
+
+    const moraleTier = getMoraleTier(moraleValue);
+    let moraleColor = 0xf1c40f;
+    if (moraleValue >= 80) moraleColor = 0x2ecc71;
+    else if (moraleValue >= 50) moraleColor = 0xf1c40f;
+    else if (moraleValue >= 30) moraleColor = 0xe67e22;
+    else moraleColor = 0xe74c3c;
+    const moraleBar = new PIXI.Graphics();
+    moraleBar.beginFill(moraleColor);
+    moraleBar.drawRect(-20, -21, 40 * moralePercent, 4);
+    moraleBar.endFill();
+    container.addChild(moraleBar);
+
+    const moraleText = new PIXI.Text(`${moraleValue}`, {
+      fontSize: 9,
+      fill: 0xffffff,
+      stroke: 0x000000,
+      strokeThickness: 2
+    });
+    moraleText.anchor.set(0.5);
+    moraleText.y = -13;
+    container.addChild(moraleText);
 
     const exhausted = unit.hasMoved && unit.hasAttacked;
     if (exhausted || (unit.stunned && unit.stunned > 0)) {
@@ -613,7 +645,9 @@
       hasAttacked: true,
       attackCount: 0,
       buffs: [],
-      stunned: 0
+      stunned: 0,
+      morale: gameRules.morale.initial,
+      winStreak: 0
     };
     gameState.addUnit(newUnit);
   }
@@ -624,8 +658,25 @@
    * @param {number} ty
    */
   function doMove(unit, tx, ty) {
+    if (!state) return;
+    const layout = state.boardLayout || boardConfig.layout;
+    const terrain = getTerrain(tx, ty, layout);
+    const unitName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
     gameState.moveUnit(unit.id, tx, ty, []);
-    gameState.setMessage(`${unitConfig[/** @type {UnitType} */ (unit.type)].name} 移动完成`);
+
+    let terrainBonusMsg = '';
+    if (terrain) {
+      const terrainMoraleBonus = (terrain.isBase && terrain.faction === unit.faction)
+        ? terrain.moraleBonus
+        : (terrain.isBase ? 0 : terrain.moraleBonus);
+      if (terrainMoraleBonus) {
+        gameState.applyTerrainMorale(unit.id, terrainMoraleBonus, terrain.name);
+        terrainBonusMsg = `（${terrain.name}+${terrainMoraleBonus}士气）`;
+      } else if (terrain.isBase && terrain.faction !== unit.faction) {
+        terrainBonusMsg = '';
+      }
+    }
+    gameState.setMessage(`${unitName} 移动完成${terrainBonusMsg}`);
     setTimeout(checkWin, 100);
   }
 
@@ -639,6 +690,16 @@
     const defTerrain = getTerrain(defender.x, defender.y, layout);
     const damage = calculateDamage(attacker, defender, defTerrain || undefined);
 
+    const attackerName = unitConfig[/** @type {UnitType} */ (attacker.type)].name;
+    const defenderName = unitConfig[/** @type {UnitType} */ (defender.type)].name;
+    const attackerTier = getMoraleTier(attacker.morale ?? 80);
+    const moraleTag = attackerTier.damageMultiplier !== 1.0
+      ? `[士气${attackerTier.label}×${attackerTier.damageMultiplier}]`
+      : '';
+
+    const killOccurred = defender.currentHp - damage <= 0;
+    const newStreak = killOccurred ? (attacker.winStreak || 0) + 1 : 0;
+
     gameState.attack(attacker.id, defender.id, damage);
     
     const hasDoubleAttack = attacker.buffs?.some(
@@ -647,17 +708,44 @@
     );
     const attackCount = attacker.attackCount || 0;
     const willAttackAgain = !!hasDoubleAttack && attackCount < 1;
-    
-    const attackerName = unitConfig[/** @type {UnitType} */ (attacker.type)].name;
-    const defenderName = unitConfig[/** @type {UnitType} */ (defender.type)].name;
+
+    /** @type {string[]} */
+    const moraleMsgs = [];
+    if (killOccurred) {
+      const attackerFaction = attacker.faction === 'red' ? '红方' : '蓝方';
+      let atkDelta = gameRules.morale.onKill;
+      let streakText = '';
+      if (newStreak >= gameRules.morale.winStreakThreshold) {
+        atkDelta += gameRules.morale.winStreakBonus;
+        streakText = `，${newStreak}连杀`;
+      }
+      moraleMsgs.push(`${attackerFaction}${attackerName}+${atkDelta}士气(击杀${streakText})`);
+
+      const defFaction = defender.faction === 'red' ? '红方' : '蓝方';
+      const allyCount = state.units.filter(u => u.faction === defender.faction && u.id !== defender.id).length;
+      if (allyCount > 0) {
+        moraleMsgs.push(`${defFaction}全体-${gameRules.morale.onAllyDeath}士气(友军${defenderName}阵亡)`);
+      }
+    } else if (attackerTier.damageMultiplier < 1.0) {
+      moraleMsgs.push(`攻击方士气${attackerTier.label}，伤害降低至×${attackerTier.damageMultiplier}`);
+    } else if (attackerTier.damageMultiplier > 1.0) {
+      moraleMsgs.push(`攻击方士气${attackerTier.label}，伤害提升至×${attackerTier.damageMultiplier}`);
+    }
+
+    const moraleMsg = moraleMsgs.length > 0 ? `\n士气：${moraleMsgs.join('；')}` : '';
+
+    const killMsg = killOccurred ? '【击杀！】' : '';
+    const streakMsg = killOccurred && newStreak >= gameRules.morale.winStreakThreshold
+      ? `【${newStreak}连杀！】`
+      : '';
     
     if (willAttackAgain) {
       gameState.setMessage(
-        `${attackerName} 对 ${defenderName} 造成 ${damage} 伤害！（连续攻击可再攻击一次）`
+        `${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！（连续攻击可再攻击一次）${moraleMsg}`
       );
     } else {
       gameState.setMessage(
-        `${attackerName} 对 ${defenderName} 造成 ${damage} 伤害！`
+        `${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！${moraleMsg}`
       );
     }
 

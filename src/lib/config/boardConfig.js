@@ -3,12 +3,12 @@ export const boardConfig = {
   height: 8,
   tileSize: 64,
   terrain: {
-    plain: { name: '平原', color: 0x4a7c59, moveCost: 1, defenseBonus: 0 },
-    forest: { name: '森林', color: 0x2d5a27, moveCost: 2, defenseBonus: 2 },
-    mountain: { name: '山地', color: 0x6b5b45, moveCost: 3, defenseBonus: 3 },
-    water: { name: '水域', color: 0x3498db, moveCost: 99, defenseBonus: 0, passable: false },
-    base_red: { name: '红方基地', color: 0xc0392b, moveCost: 1, defenseBonus: 1, isBase: true, faction: 'red' },
-    base_blue: { name: '蓝方基地', color: 0x2980b9, moveCost: 1, defenseBonus: 1, isBase: true, faction: 'blue' }
+    plain: { name: '平原', color: 0x4a7c59, moveCost: 1, defenseBonus: 0, moraleBonus: 0 },
+    forest: { name: '森林', color: 0x2d5a27, moveCost: 2, defenseBonus: 2, moraleBonus: 5 },
+    mountain: { name: '山地', color: 0x6b5b45, moveCost: 3, defenseBonus: 3, moraleBonus: 5 },
+    water: { name: '水域', color: 0x3498db, moveCost: 99, defenseBonus: 0, passable: false, moraleBonus: 0 },
+    base_red: { name: '红方基地', color: 0xc0392b, moveCost: 1, defenseBonus: 1, isBase: true, faction: 'red', moraleBonus: 10 },
+    base_blue: { name: '蓝方基地', color: 0x2980b9, moveCost: 1, defenseBonus: 1, isBase: true, faction: 'blue', moraleBonus: 10 }
   },
   layout: [
     ['base_red', 'plain', 'plain', 'forest', 'plain', 'plain', 'forest', 'plain', 'plain', 'base_blue'],

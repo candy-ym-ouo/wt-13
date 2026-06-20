@@ -3,7 +3,7 @@
   import { gameState, selectedUnit, currentHand } from '$lib/stores/gameStore';
   import { unitConfig } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
-  import { getTerrain } from '$lib/utils/gameLogic';
+  import { getTerrain, getMoraleTier } from '$lib/utils/gameLogic';
   import { drawCard, drawInitialHand } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
 
@@ -21,6 +21,8 @@
    * @property {string} victoryCondition
    * @property {number} turns
    * @property {number} totalUnits
+   * @property {number} [avgMoraleWinner]
+   * @property {number} [avgMoraleLoser]
    * @property {string} date
    */
 
@@ -83,11 +85,23 @@
 
   function saveRecord() {
     if (!state) return;
+    const winner = state.winner || '';
+    const loser = winner === 'red' ? 'blue' : 'red';
+    const winnerUnits = state.units.filter(u => u.faction === winner);
+    const loserUnits = state.units.filter(u => u.faction === loser);
+    const avgMoraleWinner = winnerUnits.length > 0
+      ? Math.round(winnerUnits.reduce((acc, u) => acc + (u.morale ?? 80), 0) / winnerUnits.length)
+      : 0;
+    const avgMoraleLoser = loserUnits.length > 0
+      ? Math.round(loserUnits.reduce((acc, u) => acc + (u.morale ?? 80), 0) / loserUnits.length)
+      : 0;
     const record = {
       winner: state.winner || '',
       victoryCondition: state.victoryCondition || '',
       turns: state.turn,
-      totalUnits: state.units.length
+      totalUnits: state.units.length,
+      avgMoraleWinner,
+      avgMoraleLoser
     };
     saveGameRecord(record);
     records = /** @type {GameRecord[]} */ (getGameRecords());
@@ -282,6 +296,39 @@
   }
 
   /**
+   * @param {number} morale
+   * @returns {string}
+   */
+  function getMoraleColor(morale) {
+    if (morale >= 90) return '#2ecc71';
+    if (morale >= 80) return '#27ae60';
+    if (morale >= 50) return '#f1c40f';
+    if (morale >= 30) return '#e67e22';
+    return '#e74c3c';
+  }
+
+  /**
+   * @param {any} s
+   * @returns {{loser: string, avgMoraleWinner: number, avgMoraleLoser: number}}
+   */
+  function getEndGameMoraleStats(s) {
+    if (!s || !s.winner) {
+      return { loser: 'red', avgMoraleWinner: 0, avgMoraleLoser: 0 };
+    }
+    const winner = s.winner;
+    const loser = winner === 'red' ? 'blue' : 'red';
+    const winnerUnits = s.units.filter(/** @param {Unit} u */ u => u.faction === winner);
+    const loserUnits = s.units.filter(/** @param {Unit} u */ u => u.faction === loser);
+    const avgMoraleWinner = winnerUnits.length > 0
+      ? Math.round(winnerUnits.reduce((/** @type {number} */ a, /** @type {Unit} */ u) => a + (u.morale ?? 80), 0) / winnerUnits.length)
+      : 0;
+    const avgMoraleLoser = loserUnits.length > 0
+      ? Math.round(loserUnits.reduce((/** @type {number} */ a, /** @type {Unit} */ u) => a + (u.morale ?? 80), 0) / loserUnits.length)
+      : 0;
+    return { loser, avgMoraleWinner, avgMoraleLoser };
+  }
+
+  /**
    * @param {EventCard} card
    */
   function handleCardKeydown(card) {
@@ -331,6 +378,16 @@
         </p>
         <p class="condition">{state.victoryCondition}</p>
         <p class="stat-line">共经历 {state.turn} 回合</p>
+        {#if state.winner}
+          <div class="morale-summary">
+            <div style="color: {getFactionColor(state.winner)}">
+              {getFactionName(state.winner)} 平均士气：{getEndGameMoraleStats(state).avgMoraleWinner}
+            </div>
+            <div style="color: {getFactionColor(getEndGameMoraleStats(state).loser)}">
+              {getFactionName(getEndGameMoraleStats(state).loser)} 平均士气：{getEndGameMoraleStats(state).avgMoraleLoser}
+            </div>
+          </div>
+        {/if}
         <button class="btn btn-primary" on:click={handleRestart}>再来一局</button>
       </div>
     </div>
@@ -363,6 +420,12 @@
                   <span>{record.victoryCondition}</span>
                   <span>第 {record.turns} 回合</span>
                 </div>
+                {#if record.avgMoraleWinner !== undefined && record.avgMoraleLoser !== undefined}
+                  <div class="record-morale">
+                    <span style="color: {getFactionColor(record.winner)}">胜方士气 {record.avgMoraleWinner}</span>
+                    <span style="color: {getFactionColor(record.winner === 'red' ? 'blue' : 'red')}">败方士气 {record.avgMoraleLoser}</span>
+                  </div>
+                {/if}
                 <div class="record-date">{formatDate(record.date)}</div>
               </div>
             {/each}
@@ -400,6 +463,22 @@
           </div>
           <span class="stat-value">{selectedUnitData.currentHp}/{selectedUnitData.maxHp}</span>
         </div>
+        <div class="stat">
+          <span class="stat-label">士气</span>
+          <div class="stat-bar">
+            <div 
+              class="stat-fill morale"
+              style="width: {selectedUnitData.morale ?? 80}%"
+            ></div>
+          </div>
+          <span class="stat-value">{selectedUnitData.morale ?? 80}</span>
+        </div>
+        <div class="morale-tier" style="color: {getMoraleColor(selectedUnitData.morale ?? 80)}">
+          士气状态：{getMoraleTier(selectedUnitData.morale ?? 80).label}（×{getMoraleTier(selectedUnitData.morale ?? 80).damageMultiplier}）
+          {#if (selectedUnitData.winStreak ?? 0) > 0}
+            <span class="streak-tag">🔥 {selectedUnitData.winStreak} 连胜</span>
+          {/if}
+        </div>
         <div class="stat-row">
           <div class="stat-item">
             <span class="stat-label">攻击</span>
@@ -426,6 +505,13 @@
           地形: {getUnitTerrain(selectedUnitData)?.name}
           {#if (getUnitTerrain(selectedUnitData)?.defenseBonus ?? 0) > 0}
             (+{getUnitTerrain(selectedUnitData)?.defenseBonus} 防御)
+          {/if}
+          {#if (getUnitTerrain(selectedUnitData)?.moraleBonus ?? 0) > 0}
+            {#if getUnitTerrain(selectedUnitData)?.isBase && getUnitTerrain(selectedUnitData)?.faction === selectedUnitData.faction}
+              (+{getUnitTerrain(selectedUnitData)?.moraleBonus} 士气)
+            {:else if !getUnitTerrain(selectedUnitData)?.isBase}
+              (+{getUnitTerrain(selectedUnitData)?.moraleBonus} 士气)
+            {/if}
           {/if}
         </div>
       {/if}
@@ -830,6 +916,46 @@
 
   .stat-fill.hp {
     background: #2ecc71;
+  }
+
+  .stat-fill.morale {
+    background: linear-gradient(90deg, #e74c3c 0%, #f1c40f 50%, #2ecc71 100%);
+  }
+
+  .morale-tier {
+    margin-top: 4px;
+    font-size: 12px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .streak-tag {
+    background: linear-gradient(90deg, #e74c3c, #f39c12);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: bold;
+    margin-left: auto;
+  }
+
+  .morale-summary {
+    margin: 15px 0 25px 0;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.8;
+  }
+
+  .record-morale {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    margin-top: 4px;
+    font-weight: bold;
   }
 
   .stat-value {

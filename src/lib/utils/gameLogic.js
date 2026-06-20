@@ -12,10 +12,19 @@ import { gameRules } from '$lib/config/gameRules';
  * @property {number} color
  * @property {number} moveCost
  * @property {number} defenseBonus
+ * @property {number} moraleBonus
  * @property {boolean} [passable]
  * @property {boolean} [isBase]
  * @property {string} [faction]
  * @property {string} type
+ */
+
+/**
+ * @typedef {object} MoraleTier
+ * @property {number} min
+ * @property {number} max
+ * @property {number} damageMultiplier
+ * @property {string} label
  */
 
 /**
@@ -62,7 +71,26 @@ export function getTerrain(x, y, boardLayout) {
   const layout = boardLayout || boardConfig.layout;
   const terrainType = /** @type {TerrainType} */ (layout[y][x]);
   const terrainData = boardConfig.terrain[terrainType];
-  return { ...terrainData, type: terrainType };
+  return { ...terrainData, type: terrainType, moraleBonus: terrainData.moraleBonus ?? 0 };
+}
+
+/**
+ * @param {number} morale
+ * @returns {MoraleTier}
+ */
+export function getMoraleTier(morale) {
+  const tiers = gameRules.morale.tiers;
+  const clamped = Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, morale));
+  const found = tiers.find(t => clamped >= t.min && clamped <= t.max);
+  return found || tiers[Math.floor(tiers.length / 2)];
+}
+
+/**
+ * @param {number} morale
+ * @returns {number}
+ */
+export function getMoraleDamageMultiplier(morale) {
+  return getMoraleTier(morale).damageMultiplier;
 }
 
 /**
@@ -217,6 +245,9 @@ export function calculateDamage(attacker, defender, terrain) {
 
   const hpRatio = attacker.currentHp / attackerConfig.hp;
   attack *= hpRatio;
+
+  const moraleMul = getMoraleDamageMultiplier(attacker.morale ?? gameRules.morale.initial);
+  attack *= moraleMul;
 
   const damage = Math.floor(attack * (100 / (100 + defense)));
   return Math.max(1, damage);

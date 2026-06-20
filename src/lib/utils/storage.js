@@ -6,6 +6,8 @@ const STORAGE_KEY = 'tactical_board_game_records';
  * @property {string} victoryCondition
  * @property {number} turns
  * @property {number} totalUnits
+ * @property {number} [avgMoraleWinner]
+ * @property {number} [avgMoraleLoser]
  */
 
 /**
@@ -15,6 +17,8 @@ const STORAGE_KEY = 'tactical_board_game_records';
  * @property {string} victoryCondition
  * @property {number} turns
  * @property {number} totalUnits
+ * @property {number} [avgMoraleWinner]
+ * @property {number} [avgMoraleLoser]
  * @property {string} date
  */
 

@@ -34,6 +34,8 @@ import { eventCards, cardConfig } from '$lib/config/eventCardConfig';
  * @property {number} attackCount
  * @property {any[]} buffs
  * @property {number} stunned
+ * @property {number} morale
+ * @property {number} winStreak
  */
 
 /**
