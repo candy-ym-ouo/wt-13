@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import { boardConfig } from '$lib/config/boardConfig';
+import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
 import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
@@ -19,7 +19,9 @@ import {
   isHardCC,
   getStatusResistance,
   isImmuneToStatus,
-  calculateAllSynergies
+  calculateAllSynergies,
+  processTileEffectsOnUnits,
+  tickTileEffects as tickTileEffectsLogic
 } from '$lib/utils/gameLogic';
 
 /**
@@ -70,6 +72,7 @@ import {
  * @property {string[]} lastStatusMessages
  * @property {TurnLog[]} actionLogs
  * @property {ActionLog | null} lastActionLog
+ * @property {Record<string, import('../utils/gameLogic').TileEffect>} tileEffects
  */
 
 /**
@@ -224,7 +227,8 @@ function createInitialState() {
         timestamp: Date.now()
       }]
     }],
-    lastActionLog: null
+    lastActionLog: null,
+    tileEffects: {}
   };
 }
 
@@ -678,6 +682,79 @@ function createGameState() {
         statusMessages.push(...synergyResult.messages);
       }
 
+      const tileEffectResults = processTileEffectsOnUnits(units, state.tileEffects);
+      if (tileEffectResults.length > 0) {
+        /** @type {{unitId: string, statusType: string, duration: number, value?: number}[]} */
+        const tileStatusQueue = [];
+        const tileDamageMap = new Map();
+        for (const result of tileEffectResults) {
+          tileDamageMap.set(result.unitId, result.damage);
+          if (result.damage > 0 || result.messages.length > 0) {
+            statusMessages.push(...result.messages);
+          }
+          if (result.statusApplications.length > 0) {
+            tileStatusQueue.push(...result.statusApplications);
+          }
+        }
+        units = units.map(u => {
+          const dmg = tileDamageMap.get(u.id) || 0;
+          if (dmg > 0) {
+            return { ...u, currentHp: Math.max(0, u.currentHp - dmg) };
+          }
+          return u;
+        });
+        for (const sa of tileStatusQueue) {
+          const target = units.find(u => u.id === sa.unitId);
+          if (target) {
+            const unitType = /** @type {UnitType} */ (target.type);
+            const checkResult = checkStatusApplication(target, sa.statusType, sa.duration, unitType);
+            if (checkResult.applied) {
+              units = units.map(u => {
+                if (u.id === sa.unitId) {
+                  const newEffects = [...(u.statusEffects || []).filter(s => s.type !== sa.statusType), {
+                    type: sa.statusType,
+                    duration: checkResult.duration,
+                    value: sa.value,
+                    id: `se_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+                  }];
+                  return { ...u, statusEffects: newEffects };
+                }
+                return u;
+              });
+            }
+          }
+        }
+        units = units.filter(u => {
+          if (u.currentHp <= 0) {
+            const unitName = unitConfig[/** @type {UnitType} */ (u.type)].name;
+            const factionName = u.faction === 'red' ? '红方' : '蓝方';
+            statusMessages.push(`${factionName}${unitName} 因地形效果阵亡`);
+            dotKilled = true;
+            moraleChanges.push(...units
+              .filter(x => x.faction === u.faction && x.id !== u.id && x.currentHp > 0)
+              .map(x => {
+                const before = x.morale;
+                const delta = -gameRules.morale.onAllyDeath;
+                const after = clampMorale(before + delta);
+                return {
+                  unitId: x.id,
+                  unitName: unitConfig[/** @type {UnitType} */ (x.type)].name,
+                  faction: x.faction,
+                  before,
+                  after,
+                  delta: after - before,
+                  reason: `友军${unitName}因地形效果阵亡`
+                };
+              })
+            );
+            return false;
+          }
+          return true;
+        });
+      }
+
+      const newTileEffects = tickTileEffectsLogic(state.tileEffects);
+
       let newRevealTurns = state.revealTurns ? state.revealTurns - 1 : 0;
       if (nextFaction === state.currentFaction) {
         newRevealTurns = state.revealTurns ? state.revealTurns : 0;
@@ -795,7 +872,8 @@ function createGameState() {
         lastStatusMessages: statusMessages,
         lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges,
         actionLogs: newActionLogs,
-        lastActionLog: turnEndLog
+        lastActionLog: turnEndLog,
+        tileEffects: newTileEffects
       };
     }),
     /**
@@ -1424,6 +1502,82 @@ function createGameState() {
       ...state,
       revealTurns: duration
     })),
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {string} effectType
+     * @param {number} duration
+     * @param {string} source
+     */
+    applyTileEffect: (x, y, effectType, duration, source) => update(state => {
+      const key = `${x},${y}`;
+      const config = tileEffectConfig[/** @type {keyof typeof tileEffectConfig} */ (effectType)];
+      if (!config) return state;
+
+      const newTileEffects = {
+        ...(state.tileEffects || {}),
+        [key]: {
+          type: effectType,
+          duration: duration || config.defaultDuration,
+          x,
+          y,
+          source: source || 'card'
+        }
+      };
+
+      const factionName = state.currentFaction === 'red' ? '红方' : '蓝方';
+      const effectDesc = `${factionName}在 (${x},${y}) 施放了【${config.name}】地形效果，持续 ${duration || config.defaultDuration} 回合`;
+
+      const effectLog = {
+        id: `log_${Date.now()}_terrain_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: state.currentFaction,
+        type: /** @type {ActionLogType} */ ('terrain'),
+        description: effectDesc,
+        details: {
+          x,
+          y,
+          effectType,
+          effectName: config.name,
+          duration: duration || config.defaultDuration,
+          source: source || 'card'
+        },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === state.currentFaction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, effectLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: state.currentFaction,
+          actions: [effectLog]
+        });
+      }
+
+      return {
+        ...state,
+        tileEffects: newTileEffects,
+        actionLogs: newActionLogs,
+        lastActionLog: effectLog
+      };
+    }),
+    /**
+     * @param {number} x
+     * @param {number} y
+     */
+    clearTileEffect: (x, y) => update(state => {
+      const key = `${x},${y}`;
+      if (!state.tileEffects || !state.tileEffects[key]) return state;
+      const newTileEffects = { ...state.tileEffects };
+      delete newTileEffects[key];
+      return { ...state, tileEffects: newTileEffects };
+    }),
     /**
      * @param {string} message
      */

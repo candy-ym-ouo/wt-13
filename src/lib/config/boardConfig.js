@@ -1,3 +1,47 @@
+export const TILE_EFFECT_TYPES = {
+  BURNING: 'burning',
+  FROZEN: 'frozen',
+  POISON_SWAMP: 'poison_swamp'
+};
+
+export const tileEffectConfig = {
+  [TILE_EFFECT_TYPES.BURNING]: {
+    name: '燃烧',
+    icon: '🔥',
+    color: 0xff4500,
+    overlayAlpha: 0.35,
+    moveCostAdd: 1,
+    damagePerTurn: 8,
+    defaultDuration: 3,
+    description: '燃烧地形，增加移动消耗，对驻留单位造成持续火焰伤害'
+  },
+  [TILE_EFFECT_TYPES.FROZEN]: {
+    name: '冰冻',
+    icon: '❄️',
+    color: 0x00bfff,
+    overlayAlpha: 0.4,
+    moveCostAdd: 2,
+    damagePerTurn: 0,
+    defaultDuration: 2,
+    applyStatus: 'freeze',
+    applyStatusDuration: 1,
+    description: '冰冻地形，大幅增加移动消耗，驻留单位可能被冰冻'
+  },
+  [TILE_EFFECT_TYPES.POISON_SWAMP]: {
+    name: '毒沼',
+    icon: '☠️',
+    color: 0x8b008b,
+    overlayAlpha: 0.35,
+    moveCostAdd: 1,
+    damagePerTurn: 5,
+    defaultDuration: 3,
+    applyStatus: 'poison',
+    applyStatusDuration: 2,
+    applyStatusValue: 6,
+    description: '毒沼地形，增加移动消耗，对驻留单位造成中毒和持续伤害'
+  }
+};
+
 export const boardConfig = {
   width: 10,
   height: 8,

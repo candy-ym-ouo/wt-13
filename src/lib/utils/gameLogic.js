@@ -1,4 +1,4 @@
-import { boardConfig } from '$lib/config/boardConfig';
+import { boardConfig, tileEffectConfig, TILE_EFFECT_TYPES } from '$lib/config/boardConfig';
 import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 
@@ -18,6 +18,23 @@ import { gameRules } from '$lib/config/gameRules';
  * @property {boolean} [isBase]
  * @property {string} [faction]
  * @property {string} type
+ */
+
+/**
+ * @typedef {object} TileEffect
+ * @property {string} type
+ * @property {number} duration
+ * @property {number} x
+ * @property {number} y
+ * @property {string} source
+ */
+
+/**
+ * @typedef {object} TileEffectResult
+ * @property {string} unitId
+ * @property {number} damage
+ * @property {string[]} messages
+ * @property {{unitId: string, statusType: string, duration: number, value?: number}[]} statusApplications
  */
 
 /**
@@ -205,6 +222,102 @@ export function getTerrain(x, y, boardLayout) {
 }
 
 /**
+ * @param {Record<string, TileEffect>} tileEffects
+ * @param {number} x
+ * @param {number} y
+ * @returns {TileEffect | null}
+ */
+export function getTileEffectAt(tileEffects, x, y) {
+  if (!tileEffects) return null;
+  return tileEffects[`${x},${y}`] || null;
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {Record<string, TileEffect> | null} tileEffects
+ * @param {string[][] | null} [boardLayout]
+ * @returns {number}
+ */
+export function getEffectiveMoveCost(x, y, tileEffects, boardLayout) {
+  const terrain = getTerrain(x, y, boardLayout);
+  if (!terrain) return 99;
+  let cost = terrain.moveCost;
+  const effect = getTileEffectAt(tileEffects || {}, x, y);
+  if (effect) {
+    const config = tileEffectConfig[/** @type {keyof typeof tileEffectConfig} */ (effect.type)];
+    if (config) {
+      cost += config.moveCostAdd;
+    }
+  }
+  return cost;
+}
+
+/**
+ * @param {Unit[]} units
+ * @param {Record<string, TileEffect>} tileEffects
+ * @returns {TileEffectResult[]}
+ */
+export function processTileEffectsOnUnits(units, tileEffects) {
+  /** @type {TileEffectResult[]} */
+  const results = [];
+  if (!tileEffects) return results;
+
+  for (const unit of units) {
+    const effect = getTileEffectAt(tileEffects, unit.x, unit.y);
+    if (!effect) continue;
+
+    const config = tileEffectConfig[/** @type {keyof typeof tileEffectConfig} */ (effect.type)];
+    if (!config) continue;
+
+    const unitName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+    const factionName = unit.faction === 'red' ? '红方' : '蓝方';
+    let damage = 0;
+    /** @type {string[]} */
+    const messages = [];
+    /** @type {{unitId: string, statusType: string, duration: number, value?: number}[]} */
+    const statusApplications = [];
+
+    if (config.damagePerTurn > 0) {
+      damage = config.damagePerTurn;
+      messages.push(`${factionName}${unitName} 受【${config.name}】地形效果，受到 ${damage} 点伤害`);
+    }
+
+    if (config.applyStatus) {
+      statusApplications.push({
+        unitId: unit.id,
+        statusType: config.applyStatus,
+        duration: config.applyStatusDuration || 1,
+        value: config.applyStatusValue
+      });
+      const statusInfo = getStatusInfo(config.applyStatus);
+      messages.push(`${factionName}${unitName} 受【${config.name}】地形效果，附加【${statusInfo.name}】状态`);
+    }
+
+    results.push({ unitId: unit.id, damage, messages, statusApplications });
+  }
+
+  return results;
+}
+
+/**
+ * @param {Record<string, TileEffect>} tileEffects
+ * @returns {Record<string, TileEffect>}
+ */
+export function tickTileEffects(tileEffects) {
+  if (!tileEffects) return {};
+  /** @type {Record<string, TileEffect>} */
+  const newEffects = {};
+  for (const [key, effect] of Object.entries(tileEffects)) {
+    const newDuration = effect.duration - 1;
+    if (newDuration > 0) {
+      newEffects[key] = { ...effect, duration: newDuration };
+    }
+  }
+  return newEffects;
+}
+
+/**
  * @param {number} morale
  * @returns {MoraleTier}
  */
@@ -239,9 +352,10 @@ export function isPassable(x, y, boardLayout) {
  * @param {Unit} unit
  * @param {Unit[]} units
  * @param {string[][] | null} [boardLayout]
+ * @param {Record<string, TileEffect> | null} [tileEffects]
  * @returns {MoveTile[]}
  */
-export function getMoveRange(unit, units, boardLayout) {
+export function getMoveRange(unit, units, boardLayout, tileEffects) {
   const moveRange = getEffectiveMoveRange(unit, /** @type {UnitType} */ (unit.type));
 
   /** @type {Map<string, number>} */
@@ -267,9 +381,7 @@ export function getMoveRange(unit, units, boardLayout) {
     for (const neighbor of neighbors) {
       if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
 
-      const terrain = getTerrain(neighbor.x, neighbor.y, boardLayout);
-      if (!terrain) continue;
-      const newCost = current.cost + terrain.moveCost;
+      const newCost = current.cost + getEffectiveMoveCost(neighbor.x, neighbor.y, tileEffects || null, boardLayout);
 
       if (newCost > moveRange) continue;
 
@@ -489,9 +601,10 @@ export function calculateDamage(attacker, defender, terrain) {
  * @param {Unit[]} units
  * @param {Unit} unit
  * @param {string[][] | null} [boardLayout]
+ * @param {Record<string, TileEffect> | null} [tileEffects]
  * @returns {PathResult | null}
  */
-export function findPath(start, end, units, unit, boardLayout) {
+export function findPath(start, end, units, unit, boardLayout, tileEffects) {
   const moveRange = getEffectiveMoveRange(unit, /** @type {UnitType} */ (unit.type));
 
   /** @type {Map<string, {x: number, y: number}>} */
@@ -551,9 +664,7 @@ export function findPath(start, end, units, unit, boardLayout) {
     for (const neighbor of neighbors) {
       if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
 
-      const terrain = getTerrain(neighbor.x, neighbor.y, boardLayout);
-      if (!terrain) continue;
-      const tentativeG = (gScore.get(currentKey) ?? Infinity) + terrain.moveCost;
+      const tentativeG = (gScore.get(currentKey) ?? Infinity) + getEffectiveMoveCost(neighbor.x, neighbor.y, tileEffects || null, boardLayout);
 
       if (tentativeG > moveRange) continue;
 

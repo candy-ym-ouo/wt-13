@@ -1,4 +1,5 @@
 import { STATUS_EFFECT_TYPES } from '$lib/config/unitConfig';
+import { TILE_EFFECT_TYPES } from '$lib/config/boardConfig';
 
 export const CARD_CATEGORY = {
   INSTANT: 'instant',
@@ -239,6 +240,39 @@ export const eventCards = [
     effect: { type: 'statusResistBoost', value: 0.5, duration: 3 },
     icon: '💪',
     cost: 3,
+    cooldown: 3
+  },
+  {
+    id: 'burning_terrain',
+    name: '燃烧之地',
+    category: CARD_CATEGORY.INSTANT,
+    type: 'special',
+    description: '在目标格子及周围1格施放燃烧地形，持续3回合，增加移动消耗并造成火焰伤害',
+    effect: { type: 'tileEffect', tileEffectType: TILE_EFFECT_TYPES.BURNING, duration: 3, radius: 1 },
+    icon: '🌋',
+    cost: 4,
+    cooldown: 3
+  },
+  {
+    id: 'frozen_terrain',
+    name: '冰霜覆盖',
+    category: CARD_CATEGORY.INSTANT,
+    type: 'special',
+    description: '在目标格子上施放冰冻地形，持续2回合，大幅增加移动消耗并可能冰冻驻留单位',
+    effect: { type: 'tileEffect', tileEffectType: TILE_EFFECT_TYPES.FROZEN, duration: 2 },
+    icon: '🧊',
+    cost: 3,
+    cooldown: 2
+  },
+  {
+    id: 'poison_swamp',
+    name: '毒沼蔓延',
+    category: CARD_CATEGORY.INSTANT,
+    type: 'special',
+    description: '在目标格子及周围1格施放毒沼地形，持续3回合，增加移动消耗并使驻留单位中毒',
+    effect: { type: 'tileEffect', tileEffectType: TILE_EFFECT_TYPES.POISON_SWAMP, duration: 3, radius: 1 },
+    icon: '🧪',
+    cost: 4,
     cooldown: 3
   }
 ];

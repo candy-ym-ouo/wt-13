@@ -16,6 +16,8 @@ import { STATUS_EFFECT_TYPES, unitConfig } from '$lib/config/unitConfig';
  * @property {number} [duration]
  * @property {string} [unitType]
  * @property {string} [terrain]
+ * @property {string} [tileEffectType]
+ * @property {number} [radius]
  */
 
 /**
@@ -80,6 +82,8 @@ import { STATUS_EFFECT_TYPES, unitConfig } from '$lib/config/unitConfig';
  * @property {string} [terrain]
  * @property {StatusEffect} [statusEffect]
  * @property {boolean} [resisted]
+ * @property {string} [tileEffectType]
+ * @property {number} [radius]
  */
 
 /**
@@ -184,6 +188,8 @@ export function canUseCard(card, selectedUnit, targetUnit, currentFaction) {
     case 'summon':
       return true;
     case 'terrainChange':
+      return true;
+    case 'tileEffect':
       return true;
     case 'reveal':
       return true;
@@ -297,6 +303,35 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
     case 'terrainChange':
       if (targetPos) {
         effects.push({ type: 'terrainChange', x: targetPos.x, y: targetPos.y, terrain: card.effect.terrain });
+      }
+      break;
+    case 'tileEffect':
+      if (targetPos) {
+        const radius = card.effect.radius || 0;
+        effects.push({
+          type: 'tileEffect',
+          x: targetPos.x,
+          y: targetPos.y,
+          tileEffectType: card.effect.tileEffectType,
+          duration: card.effect.duration,
+          radius
+        });
+        if (radius > 0) {
+          for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              if (Math.abs(dx) + Math.abs(dy) > radius) continue;
+              effects.push({
+                type: 'tileEffect',
+                x: targetPos.x + dx,
+                y: targetPos.y + dy,
+                tileEffectType: card.effect.tileEffectType,
+                duration: card.effect.duration,
+                radius: 0
+              });
+            }
+          }
+        }
       }
       break;
     case 'doubleAttack': {

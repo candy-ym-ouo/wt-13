@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import * as PIXI from 'pixi.js';
-  import { boardConfig } from '$lib/config/boardConfig';
+  import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
   import { unitConfig } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns } from '$lib/stores/gameStore';
@@ -19,7 +19,8 @@
     hasStatusEffect,
     getStatusEffect,
     getEffectiveMoveRange,
-    getCounterInfo
+    getCounterInfo,
+    getTileEffectAt
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
@@ -253,6 +254,63 @@
         boardLayer.addChild(tile);
       }
     }
+
+    if (state && state.tileEffects) {
+      for (const [key, effect] of Object.entries(state.tileEffects)) {
+        const config = tileEffectConfig[effect.type];
+        if (!config) continue;
+        const [ex, ey] = key.split(',').map(Number);
+        if (ex < 0 || ex >= boardConfig.width || ey < 0 || ey >= boardConfig.height) continue;
+
+        const overlay = new PIXI.Graphics();
+        overlay.beginFill(config.color, config.overlayAlpha);
+        overlay.drawRect(
+          ex * boardConfig.tileSize,
+          ey * boardConfig.tileSize,
+          boardConfig.tileSize,
+          boardConfig.tileSize
+        );
+        overlay.endFill();
+
+        const pulseAlpha = 0.15 * Math.sin(Date.now() / 500 + ex + ey);
+        overlay.beginFill(config.color, Math.max(0, pulseAlpha));
+        overlay.drawRect(
+          ex * boardConfig.tileSize,
+          ey * boardConfig.tileSize,
+          boardConfig.tileSize,
+          boardConfig.tileSize
+        );
+        overlay.endFill();
+
+        overlay.lineStyle(2, config.color, 0.7);
+        overlay.drawRect(
+          ex * boardConfig.tileSize + 1,
+          ey * boardConfig.tileSize + 1,
+          boardConfig.tileSize - 2,
+          boardConfig.tileSize - 2
+        );
+
+        boardLayer.addChild(overlay);
+
+        const iconText = new PIXI.Text(config.icon, { fontSize: 14 });
+        iconText.anchor.set(0.5);
+        iconText.x = ex * boardConfig.tileSize + boardConfig.tileSize / 2;
+        iconText.y = ey * boardConfig.tileSize + 12;
+        boardLayer.addChild(iconText);
+
+        const durText = new PIXI.Text(`${effect.duration}`, {
+          fontSize: 10,
+          fill: 0xffffff,
+          stroke: 0x000000,
+          strokeThickness: 2,
+          fontWeight: 'bold'
+        });
+        durText.anchor.set(0.5);
+        durText.x = ex * boardConfig.tileSize + boardConfig.tileSize / 2;
+        durText.y = ey * boardConfig.tileSize + boardConfig.tileSize - 8;
+        boardLayer.addChild(durText);
+      }
+    }
   }
 
   function renderBoard() {
@@ -465,7 +523,7 @@
     const ccLocked = isHardCC(selectedUnitData);
 
     if (!selectedUnitData.hasMoved && !ccLocked) {
-      const moveRange = getMoveRange(selectedUnitData, state.units, layout);
+      const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
       for (const tile of moveRange) {
         const h = new PIXI.Graphics();
         h.beginFill(0x00ff00, 0.3);
@@ -562,7 +620,8 @@
       { x: targetX, y: targetY },
       state.units,
       selectedUnitData,
-      layout
+      layout,
+      state.tileEffects
     );
 
     if (!result) return;
@@ -599,7 +658,7 @@
       const layout = state.boardLayout || boardConfig.layout;
       const ccLocked = isHardCC(selectedUnitData);
       if (!ccLocked) {
-        const moveRange = getMoveRange(selectedUnitData, state.units, layout);
+        const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
         const inRange = moveRange.some(
           /** @param {any} t */
           t => t.x === tx && t.y === ty
@@ -654,7 +713,7 @@
 
       if (!clickedUnit && !selectedUnitData.hasMoved && !ccLocked) {
         const layout = state.boardLayout || boardConfig.layout;
-        const moveRange = getMoveRange(selectedUnitData, state.units, layout);
+        const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
         const canMove = moveRange.some(
           /** @param {any} t */
           t => t.x === tx && t.y === ty
@@ -692,11 +751,11 @@
       return;
     }
 
-    if (card.effect.type === 'terrainChange') {
+    if (card.effect.type === 'terrainChange' || card.effect.type === 'tileEffect') {
       const layout = state.boardLayout || boardConfig.layout;
       const terrain = getTerrain(tx, ty, layout);
       if (terrain && terrain.isBase) {
-        gameState.setMessage('不能改变基地地形！');
+        gameState.setMessage('不能在基地格子上使用该卡牌！');
         return;
       }
     }
@@ -755,6 +814,17 @@
         case 'terrainChange':
           if (effect.x !== undefined && effect.y !== undefined && effect.terrain) {
             gameState.changeTerrain(effect.x, effect.y, effect.terrain);
+            gameState.clearTileEffect(effect.x, effect.y);
+          }
+          break;
+        case 'tileEffect':
+          if (effect.x !== undefined && effect.y !== undefined && effect.tileEffectType) {
+            if (effect.x >= 0 && effect.x < boardConfig.width && effect.y >= 0 && effect.y < boardConfig.height) {
+              const t = getTerrain(effect.x, effect.y, state.boardLayout || boardConfig.layout);
+              if (t && !t.isBase && t.passable !== false) {
+                gameState.applyTileEffect(effect.x, effect.y, effect.tileEffectType, effect.duration || 3, card.id);
+              }
+            }
           }
           break;
         case 'reveal':
@@ -800,6 +870,8 @@
         return '请点击敌方单位使用';
       case 'terrainChange':
         return '请点击非基地格子使用';
+      case 'tileEffect':
+        return '请点击非基地格子施放地形效果';
       case 'summon':
         return '点击任意位置确认召唤';
       case 'reveal':
@@ -870,7 +942,8 @@
       { x: tx, y: ty },
       state.units,
       unit,
-      layout
+      layout,
+      state.tileEffects
     );
     const pathTiles = pathResult ? pathResult.path : [];
     gameState.moveUnit(unit.id, tx, ty, pathTiles);
@@ -887,7 +960,17 @@
         terrainBonusMsg = '';
       }
     }
-    gameState.setMessage(`${unitName} 移动完成${terrainBonusMsg}`);
+
+    let tileEffectMsg = '';
+    const tileEffect = getTileEffectAt(state.tileEffects, tx, ty);
+    if (tileEffect) {
+      const effectConfig = tileEffectConfig[tileEffect.type];
+      if (effectConfig) {
+        tileEffectMsg = `【${effectConfig.name}地形】`;
+      }
+    }
+
+    gameState.setMessage(`${unitName} 移动完成${terrainBonusMsg}${tileEffectMsg}`);
     setTimeout(checkWin, 100);
   }
 
