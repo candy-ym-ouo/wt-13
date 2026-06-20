@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy, afterUpdate } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import * as PIXI from 'pixi.js';
   import { boardConfig } from '$lib/config/boardConfig';
   import { unitConfig } from '$lib/config/unitConfig';
@@ -15,40 +15,63 @@
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect } from '$lib/utils/cardSystem';
 
+  /**
+   * @typedef {import('../utils/cardSystem').Unit} Unit
+   * @typedef {import('../utils/cardSystem').EventCard} EventCard
+   * @typedef {import('../stores/gameStore').GameState} GameState
+   * @typedef {keyof typeof unitConfig} UnitType
+   */
+
+  /** @type {HTMLDivElement | undefined} */
   let canvasContainer;
+  /** @type {any} */
   let app;
+  /** @type {any} */
   let boardLayer;
+  /** @type {any} */
   let unitsLayer;
+  /** @type {any} */
   let overlayLayer;
 
+  /** @type {GameState | null} */
   let state = null;
+  /** @type {Unit | null} */
   let selectedUnitData = null;
+  /** @type {EventCard[]} */
   let handCards = [];
 
-  let unitSprites = new Map();
+  /** @type {Map<string, any>} */
+  const unitSprites = new Map();
+  /** @type {any[]} */
   let moveHighlights = [];
+  /** @type {any[]} */
   let attackHighlights = [];
+  /** @type {any[]} */
   let pathDots = [];
 
+  /** @type {(() => void) | undefined} */
   let unsubscribeState;
+  /** @type {(() => void) | undefined} */
   let unsubscribeSelected;
+  /** @type {(() => void) | undefined} */
   let unsubscribeHand;
 
   onMount(() => {
     initPixi();
     
-    unsubscribeState = gameState.subscribe(s => {
+    unsubscribeState = gameState.subscribe(/** @param {GameState} s */ s => {
       state = s;
+      renderBoard();
       renderUnits();
       updateHighlights();
     });
     
-    unsubscribeSelected = selectedUnit.subscribe(u => {
+    unsubscribeSelected = selectedUnit.subscribe(/** @param {Unit | null} u */ u => {
       selectedUnitData = u;
       updateHighlights();
     });
     
-    unsubscribeHand = currentHand.subscribe(h => {
+    unsubscribeHand = currentHand.subscribe(/** @param {EventCard[]} h */ h => {
       handCards = h;
     });
 
@@ -74,7 +97,9 @@
       antialias: true
     });
 
-    canvasContainer.appendChild(app.view);
+    if (canvasContainer) {
+      canvasContainer.appendChild(app.view);
+    }
 
     boardLayer = new PIXI.Container();
     app.stage.addChild(boardLayer);
@@ -94,11 +119,14 @@
   }
 
   function drawBoard() {
+    if (!boardLayer) return;
     boardLayer.removeChildren();
+    const layout = state?.boardLayout || boardConfig.layout;
 
     for (let y = 0; y < boardConfig.height; y++) {
       for (let x = 0; x < boardConfig.width; x++) {
-        const terrain = getTerrain(x, y);
+        const terrain = getTerrain(x, y, layout);
+        if (!terrain) continue;
         const tile = new PIXI.Graphics();
         
         tile.beginFill(terrain.color);
@@ -123,8 +151,12 @@
     }
   }
 
+  function renderBoard() {
+    drawBoard();
+  }
+
   function renderUnits() {
-    if (!state) return;
+    if (!state || !unitsLayer) return;
 
     for (const sprite of unitSprites.values()) {
       sprite.destroy();
@@ -139,8 +171,12 @@
     }
   }
 
+  /**
+   * @param {Unit} unit
+   * @returns {any}
+   */
   function createUnitSprite(unit) {
-    const config = unitConfig[unit.type];
+    const config = unitConfig[/** @type {UnitType} */ (unit.type)];
     const container = new PIXI.Container();
     
     container.x = unit.x * boardConfig.tileSize + boardConfig.tileSize / 2;
@@ -175,7 +211,8 @@
     hpBar.endFill();
     container.addChild(hpBar);
 
-    if (unit.hasMoved && unit.hasAttacked) {
+    const exhausted = unit.hasMoved && unit.hasAttacked;
+    if (exhausted || (unit.stunned && unit.stunned > 0)) {
       const shade = new PIXI.Graphics();
       shade.beginFill(0x000000, 0.5);
       shade.drawCircle(0, 0, boardConfig.tileSize * 0.35);
@@ -183,10 +220,35 @@
       container.addChild(shade);
     }
 
+    if (unit.buffs && unit.buffs.length > 0) {
+      let buffX = -10;
+      for (const buff of unit.buffs) {
+        const buffIcon = new PIXI.Text(getBuffEmoji(/** @type {string} */ (buff.type)), { fontSize: 10 });
+        buffIcon.anchor.set(0.5);
+        buffIcon.x = buffX;
+        buffIcon.y = 18;
+        container.addChild(buffIcon);
+        buffX += 10;
+      }
+    }
+
+    if (unit.stunned && unit.stunned > 0) {
+      const stunIcon = new PIXI.Text('💫', { fontSize: 14 });
+      stunIcon.anchor.set(0.5);
+      stunIcon.x = 12;
+      stunIcon.y = -12;
+      container.addChild(stunIcon);
+    }
+
     return container;
   }
 
+  /**
+   * @param {string} type
+   * @returns {string}
+   */
   function getUnitEmoji(type) {
+    /** @type {Record<string, string>} */
     const emojis = {
       infantry: '⚔',
       cavalry: '🐴',
@@ -197,7 +259,23 @@
     return emojis[type] || '?';
   }
 
+  /**
+   * @param {string} type
+   * @returns {string}
+   */
+  function getBuffEmoji(type) {
+    /** @type {Record<string, string>} */
+    const emojis = {
+      attackBoost: '⚔',
+      defenseBoost: '🛡',
+      moveBoost: '👟',
+      doubleAttack: '⚡'
+    };
+    return emojis[type] || '✨';
+  }
+
   function updateHighlights() {
+    if (!overlayLayer) return;
     for (const h of moveHighlights) h.destroy();
     for (const h of attackHighlights) h.destroy();
     for (const d of pathDots) d.destroy();
@@ -221,8 +299,15 @@
       overlayLayer.addChild(highlight);
     }
 
-    if (!selectedUnitData.hasMoved && !selectedUnitData.stunned) {
-      const moveRange = getMoveRange(selectedUnitData, state.units);
+    const layout = state.boardLayout || boardConfig.layout;
+    const hasDoubleAttack = selectedUnitData.buffs?.some(
+      /** @param {any} b */ b => b.type === 'doubleAttack'
+    );
+    const hasAttackedTwice = !!hasDoubleAttack && (selectedUnitData.attackCount || 0) >= 2;
+    const stunned = !!(selectedUnitData.stunned && selectedUnitData.stunned > 0);
+
+    if (!selectedUnitData.hasMoved && !stunned) {
+      const moveRange = getMoveRange(selectedUnitData, state.units, layout);
       for (const tile of moveRange) {
         const h = new PIXI.Graphics();
         h.beginFill(0x00ff00, 0.3);
@@ -238,7 +323,7 @@
       }
     }
 
-    if (!selectedUnitData.hasAttacked && !selectedUnitData.stunned) {
+    if (!selectedUnitData.hasAttacked && !stunned && !hasAttackedTwice) {
       const attackRange = getAttackRange(selectedUnitData, state.units);
       for (const tile of attackRange) {
         const h = new PIXI.Graphics();
@@ -256,17 +341,24 @@
     }
   }
 
+  /**
+   * @param {number} targetX
+   * @param {number} targetY
+   */
   function showPath(targetX, targetY) {
+    if (!overlayLayer) return;
     for (const d of pathDots) d.destroy();
     pathDots = [];
 
     if (!selectedUnitData || !state) return;
 
+    const layout = state.boardLayout || boardConfig.layout;
     const result = findPath(
       { x: selectedUnitData.x, y: selectedUnitData.y },
       { x: targetX, y: targetY },
       state.units,
-      selectedUnitData
+      selectedUnitData,
+      layout
     );
 
     if (!result) return;
@@ -285,8 +377,12 @@
     }
   }
 
+  /** @type {{x: number, y: number}} */
   let hoverTile = { x: -1, y: -1 };
 
+  /**
+   * @param {any} event
+   */
   function onPointerMove(event) {
     const pos = event.data.global;
     const tx = Math.floor(pos.x / boardConfig.tileSize);
@@ -296,14 +392,24 @@
     hoverTile = { x: tx, y: ty };
 
     if (selectedUnitData && !selectedUnitData.hasMoved && state && !state.gameOver) {
-      const moveRange = getMoveRange(selectedUnitData, state.units);
-      const inRange = moveRange.some(t => t.x === tx && t.y === ty);
-      if (inRange) {
-        showPath(tx, ty);
+      const layout = state.boardLayout || boardConfig.layout;
+      const stunned = !!(selectedUnitData.stunned && selectedUnitData.stunned > 0);
+      if (!stunned) {
+        const moveRange = getMoveRange(selectedUnitData, state.units, layout);
+        const inRange = moveRange.some(
+          /** @param {any} t */
+          t => t.x === tx && t.y === ty
+        );
+        if (inRange) {
+          showPath(tx, ty);
+        }
       }
     }
   }
 
+  /**
+   * @param {any} event
+   */
   function onPointerDown(event) {
     if (!state || state.gameOver) return;
 
@@ -321,18 +427,34 @@
     }
 
     if (selectedUnitData && selectedUnitData.faction === state.currentFaction) {
+      const hasDoubleAttack = selectedUnitData.buffs?.some(
+        /** @param {any} b */
+        b => b.type === 'doubleAttack'
+      );
+      const hasAttackedTwice = !!hasDoubleAttack && (selectedUnitData.attackCount || 0) >= 2;
+      const stunned = !!(selectedUnitData.stunned && selectedUnitData.stunned > 0);
+
       if (clickedUnit && clickedUnit.faction !== state.currentFaction) {
-        const attackRange = getAttackRange(selectedUnitData, state.units);
-        const canAttack = attackRange.some(t => t.x === tx && t.y === ty);
-        if (canAttack) {
-          doAttack(selectedUnitData, clickedUnit);
-          return;
+        if (!selectedUnitData.hasAttacked && !stunned && !hasAttackedTwice) {
+          const attackRange = getAttackRange(selectedUnitData, state.units);
+          const canAttack = attackRange.some(
+            /** @param {any} t */
+            t => t.x === tx && t.y === ty
+          );
+          if (canAttack) {
+            doAttack(selectedUnitData, clickedUnit);
+            return;
+          }
         }
       }
 
-      if (!clickedUnit && !selectedUnitData.hasMoved) {
-        const moveRange = getMoveRange(selectedUnitData, state.units);
-        const canMove = moveRange.some(t => t.x === tx && t.y === ty);
+      if (!clickedUnit && !selectedUnitData.hasMoved && !stunned) {
+        const layout = state.boardLayout || boardConfig.layout;
+        const moveRange = getMoveRange(selectedUnitData, state.units, layout);
+        const canMove = moveRange.some(
+          /** @param {any} t */
+          t => t.x === tx && t.y === ty
+        );
         if (canMove) {
           doMove(selectedUnitData, tx, ty);
           return;
@@ -347,49 +469,125 @@
     }
   }
 
+  /**
+   * @param {number} tx
+   * @param {number} ty
+   * @param {Unit | null} targetUnit
+   */
   function handleCardTarget(tx, ty, targetUnit) {
-    const card = handCards.find(c => c.instanceId === state.selectedCardId);
+    if (!state) return;
+    const card = handCards.find(
+      /** @param {EventCard} c */
+      c => c.instanceId === state?.selectedCardId
+    );
     if (!card) return;
+
+    if (card.effect.type === 'terrainChange') {
+      const layout = state.boardLayout || boardConfig.layout;
+      const terrain = getTerrain(tx, ty, layout);
+      if (terrain && terrain.isBase) {
+        gameState.setMessage('不能改变基地地形！');
+        return;
+      }
+    }
 
     const usable = canUseCard(card, selectedUnitData, targetUnit, state.currentFaction);
     if (!usable) {
-      gameState.setMessage('无法在此目标使用该卡牌');
+      const hint = getCardUsageHint(card);
+      gameState.setMessage(`无法在此目标使用该卡牌！${hint}`);
       return;
     }
 
-    const effects = applyCardEffect(card, state, targetUnit, { x: tx, y: ty });
+    const effects = applyCardEffect(card, state, selectedUnitData, targetUnit, { x: tx, y: ty });
+
+    if (effects.length === 0) {
+      gameState.setMessage('卡牌效果未产生作用，请检查目标是否正确');
+      return;
+    }
 
     for (const effect of effects) {
       switch (effect.type) {
         case 'heal':
-          gameState.healUnit(effect.unitId, effect.value);
+          if (effect.unitId && effect.value !== undefined) {
+            gameState.healUnit(effect.unitId, effect.value);
+          }
           break;
         case 'addBuff':
-          gameState.addBuff(effect.unitId, effect.buff);
+          if (effect.unitId && effect.buff !== undefined) {
+            gameState.addBuff(effect.unitId, effect.buff);
+          }
           break;
         case 'damage':
-          gameState.damageUnit(effect.unitId, effect.value);
+          if (effect.unitId && effect.value !== undefined) {
+            gameState.damageUnit(effect.unitId, effect.value);
+          }
           break;
         case 'stun':
-          gameState.stunUnit(effect.unitId, effect.duration);
+          if (effect.unitId && effect.duration !== undefined) {
+            gameState.stunUnit(effect.unitId, effect.duration);
+          }
           break;
         case 'summon':
-          doSummon(effect.unitType, effect.faction);
+          if (effect.unitType && effect.faction) {
+            doSummon(effect.unitType, effect.faction);
+          }
+          break;
+        case 'terrainChange':
+          if (effect.x !== undefined && effect.y !== undefined && effect.terrain) {
+            gameState.changeTerrain(effect.x, effect.y, effect.terrain);
+          }
+          break;
+        case 'reveal':
+          if (effect.duration !== undefined) {
+            gameState.setReveal(effect.duration);
+          }
           break;
       }
     }
 
-    gameState.useCard(state.currentFaction, card.instanceId);
+    gameState.useCard(/** @type {'red' | 'blue'} */ (state.currentFaction), /** @type {string} */ (card.instanceId));
     gameState.setMessage(`使用了 ${card.name}！`);
     checkWin();
   }
 
+  /**
+   * @param {EventCard} card
+   * @returns {string}
+   */
+  function getCardUsageHint(card) {
+    switch (card.effect.type) {
+      case 'heal':
+      case 'attackBoost':
+      case 'defenseBoost':
+      case 'moveBoost':
+      case 'doubleAttack':
+        return '请先选中己方单位，或直接点击己方单位使用';
+      case 'damage':
+      case 'stun':
+        return '请点击敌方单位使用';
+      case 'terrainChange':
+        return '请点击非基地格子使用';
+      case 'summon':
+        return '点击任意位置确认召唤';
+      case 'reveal':
+        return '点击任意位置触发侦查';
+      default:
+        return '请选择合适的目标';
+    }
+  }
+
+  /**
+   * @param {string} unitType
+   * @param {string} faction
+   */
   function doSummon(unitType, faction) {
+    if (!state) return;
     let bx = -1, by = -1;
+    const layout = state.boardLayout || boardConfig.layout;
     for (let y = 0; y < boardConfig.height; y++) {
       for (let x = 0; x < boardConfig.width; x++) {
-        const t = getTerrain(x, y);
-        if (t.isBase && t.faction === faction) {
+        const t = getTerrain(x, y, layout);
+        if (t && t.isBase && t.faction === faction) {
           const u = getUnitAt(state.units, x, y);
           if (!u) { bx = x; by = y; break; }
         }
@@ -398,11 +596,12 @@
     }
 
     if (bx < 0) {
-      gameState.setMessage('基地被占用，无法召唤');
+      gameState.setMessage('基地被占用，无法召唤单位');
       return;
     }
 
-    const cfg = unitConfig[unitType];
+    const cfg = unitConfig[/** @type {UnitType} */ (unitType)];
+    /** @type {Unit} */
     const newUnit = {
       id: `unit_${Date.now()}_${Math.random()}`,
       type: unitType,
@@ -412,33 +611,63 @@
       maxHp: cfg.hp,
       hasMoved: true,
       hasAttacked: true,
+      attackCount: 0,
       buffs: [],
       stunned: 0
     };
     gameState.addUnit(newUnit);
   }
 
+  /**
+   * @param {Unit} unit
+   * @param {number} tx
+   * @param {number} ty
+   */
   function doMove(unit, tx, ty) {
     gameState.moveUnit(unit.id, tx, ty, []);
-    gameState.setMessage(`${unitConfig[unit.type].name} 移动完成`);
+    gameState.setMessage(`${unitConfig[/** @type {UnitType} */ (unit.type)].name} 移动完成`);
     setTimeout(checkWin, 100);
   }
 
+  /**
+   * @param {Unit} attacker
+   * @param {Unit} defender
+   */
   function doAttack(attacker, defender) {
-    const defTerrain = getTerrain(defender.x, defender.y);
-    const damage = calculateDamage(attacker, defender, defTerrain);
+    if (!state) return;
+    const layout = state.boardLayout || boardConfig.layout;
+    const defTerrain = getTerrain(defender.x, defender.y, layout);
+    const damage = calculateDamage(attacker, defender, defTerrain || undefined);
 
     gameState.attack(attacker.id, defender.id, damage);
-    gameState.setMessage(
-      `${unitConfig[attacker.type].name} 对 ${unitConfig[defender.type].name} 造成 ${damage} 伤害！`
+    
+    const hasDoubleAttack = attacker.buffs?.some(
+      /** @param {any} b */
+      b => b.type === 'doubleAttack'
     );
+    const attackCount = attacker.attackCount || 0;
+    const willAttackAgain = !!hasDoubleAttack && attackCount < 1;
+    
+    const attackerName = unitConfig[/** @type {UnitType} */ (attacker.type)].name;
+    const defenderName = unitConfig[/** @type {UnitType} */ (defender.type)].name;
+    
+    if (willAttackAgain) {
+      gameState.setMessage(
+        `${attackerName} 对 ${defenderName} 造成 ${damage} 伤害！（连续攻击可再攻击一次）`
+      );
+    } else {
+      gameState.setMessage(
+        `${attackerName} 对 ${defenderName} 造成 ${damage} 伤害！`
+      );
+    }
 
     setTimeout(checkWin, 300);
   }
 
   function checkWin() {
     if (!state) return;
-    const victory = checkVictory(state.units, state.currentFaction);
+    const layout = state.boardLayout || boardConfig.layout;
+    const victory = checkVictory(state.units, state.currentFaction, layout);
     if (victory) {
       gameState.setVictory(victory.winner, victory.condition);
       gameState.setMessage(

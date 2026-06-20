@@ -2,39 +2,109 @@ import { boardConfig } from '$lib/config/boardConfig';
 import { unitConfig } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 
-export function getTerrain(x, y) {
+/**
+ * @typedef {import('./cardSystem').Unit} Unit
+ */
+
+/**
+ * @typedef {object} TerrainInfo
+ * @property {string} name
+ * @property {number} color
+ * @property {number} moveCost
+ * @property {number} defenseBonus
+ * @property {boolean} [passable]
+ * @property {boolean} [isBase]
+ * @property {string} [faction]
+ * @property {string} type
+ */
+
+/**
+ * @typedef {object} MoveTile
+ * @property {number} x
+ * @property {number} y
+ * @property {number} cost
+ */
+
+/**
+ * @typedef {object} AttackTile
+ * @property {number} x
+ * @property {number} y
+ * @property {Unit} target
+ */
+
+/**
+ * @typedef {object} PathResult
+ * @property {MoveTile[]} path
+ * @property {number} cost
+ */
+
+/**
+ * @typedef {object} VictoryResult
+ * @property {string} winner
+ * @property {string} condition
+ */
+
+/**
+ * @typedef {keyof typeof unitConfig} UnitType
+ * @typedef {keyof typeof boardConfig.terrain} TerrainType
+ */
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {string[][] | null} [boardLayout]
+ * @returns {TerrainInfo | null}
+ */
+export function getTerrain(x, y, boardLayout) {
   if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) {
     return null;
   }
-  const terrainType = boardConfig.layout[y][x];
-  return { ...boardConfig.terrain[terrainType], type: terrainType };
+  const layout = boardLayout || boardConfig.layout;
+  const terrainType = /** @type {TerrainType} */ (layout[y][x]);
+  const terrainData = boardConfig.terrain[terrainType];
+  return { ...terrainData, type: terrainType };
 }
 
-export function isPassable(x, y) {
-  const terrain = getTerrain(x, y);
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {string[][] | null} [boardLayout]
+ * @returns {boolean}
+ */
+export function isPassable(x, y, boardLayout) {
+  const terrain = getTerrain(x, y, boardLayout);
   if (!terrain) return false;
   return terrain.passable !== false;
 }
 
-export function getMoveRange(unit, units) {
-  const config = unitConfig[unit.type];
+/**
+ * @param {Unit} unit
+ * @param {Unit[]} units
+ * @param {string[][] | null} [boardLayout]
+ * @returns {MoveTile[]}
+ */
+export function getMoveRange(unit, units, boardLayout) {
+  const config = unitConfig[/** @type {UnitType} */ (unit.type)];
   let moveRange = config.moveRange;
   
   if (unit.buffs) {
     for (const buff of unit.buffs) {
       if (buff.type === 'moveBoost') {
-        moveRange += buff.value;
+        moveRange += /** @type {number} */ (buff.value);
       }
     }
   }
 
+  /** @type {Map<string, number>} */
   const visited = new Map();
+  /** @type {{x: number, y: number, cost: number}[]} */
   const queue = [{ x: unit.x, y: unit.y, cost: 0 }];
   visited.set(`${unit.x},${unit.y}`, 0);
 
   while (queue.length > 0) {
     queue.sort((a, b) => a.cost - b.cost);
     const current = queue.shift();
+    if (!current) continue;
 
     if (current.cost >= moveRange) continue;
 
@@ -46,17 +116,18 @@ export function getMoveRange(unit, units) {
     ];
 
     for (const neighbor of neighbors) {
-      if (!isPassable(neighbor.x, neighbor.y)) continue;
+      if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
 
-      const terrain = getTerrain(neighbor.x, neighbor.y);
+      const terrain = getTerrain(neighbor.x, neighbor.y, boardLayout);
+      if (!terrain) continue;
       const newCost = current.cost + terrain.moveCost;
 
       if (newCost > moveRange) continue;
 
       const key = `${neighbor.x},${neighbor.y}`;
-      if (visited.has(key) && visited.get(key) <= newCost) continue;
+      if (visited.has(key) && /** @type {number} */ (visited.get(key)) <= newCost) continue;
 
-      const unitAtPos = units.find(u => u.x === neighbor.x && u.y === neighbor.y);
+      const unitAtPos = units.find(/** @param {Unit} u */ u => u.x === neighbor.x && u.y === neighbor.y);
       if (unitAtPos && unitAtPos.faction !== unit.faction) continue;
 
       visited.set(key, newCost);
@@ -64,11 +135,12 @@ export function getMoveRange(unit, units) {
     }
   }
 
+  /** @type {MoveTile[]} */
   const result = [];
   for (const [key, cost] of visited.entries()) {
     const [x, y] = key.split(',').map(Number);
     if (x === unit.x && y === unit.y) continue;
-    const unitAtPos = units.find(u => u.x === x && u.y === y);
+    const unitAtPos = units.find(/** @param {Unit} u */ u => u.x === x && u.y === y);
     if (unitAtPos) continue;
     result.push({ x, y, cost });
   }
@@ -76,9 +148,15 @@ export function getMoveRange(unit, units) {
   return result;
 }
 
+/**
+ * @param {Unit} unit
+ * @param {Unit[]} units
+ * @returns {AttackTile[]}
+ */
 export function getAttackRange(unit, units) {
-  const config = unitConfig[unit.type];
+  const config = unitConfig[/** @type {UnitType} */ (unit.type)];
   const attackRange = config.attackRange;
+  /** @type {AttackTile[]} */
   const result = [];
 
   for (let dy = -attackRange; dy <= attackRange; dy++) {
@@ -91,7 +169,10 @@ export function getAttackRange(unit, units) {
 
       if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) continue;
 
-      const targetUnit = units.find(u => u.x === x && u.y === y && u.faction !== unit.faction);
+      const targetUnit = units.find(
+        /** @param {Unit} u */
+        u => u.x === x && u.y === y && u.faction !== unit.faction
+      );
       if (targetUnit) {
         result.push({ x, y, target: targetUnit });
       }
@@ -101,9 +182,15 @@ export function getAttackRange(unit, units) {
   return result;
 }
 
+/**
+ * @param {Unit} attacker
+ * @param {Unit} defender
+ * @param {TerrainInfo | null} [terrain]
+ * @returns {number}
+ */
 export function calculateDamage(attacker, defender, terrain) {
-  const attackerConfig = unitConfig[attacker.type];
-  const defenderConfig = unitConfig[defender.type];
+  const attackerConfig = unitConfig[/** @type {UnitType} */ (attacker.type)];
+  const defenderConfig = unitConfig[/** @type {UnitType} */ (defender.type)];
 
   let attack = attackerConfig.attack;
   let defense = defenderConfig.defense;
@@ -111,7 +198,7 @@ export function calculateDamage(attacker, defender, terrain) {
   if (attacker.buffs) {
     for (const buff of attacker.buffs) {
       if (buff.type === 'attackBoost') {
-        attack *= (1 + buff.value);
+        attack *= (1 + /** @type {number} */ (buff.value));
       }
     }
   }
@@ -119,7 +206,7 @@ export function calculateDamage(attacker, defender, terrain) {
   if (defender.buffs) {
     for (const buff of defender.buffs) {
       if (buff.type === 'defenseBoost') {
-        defense *= (1 + buff.value);
+        defense *= (1 + /** @type {number} */ (buff.value));
       }
     }
   }
@@ -135,21 +222,33 @@ export function calculateDamage(attacker, defender, terrain) {
   return Math.max(1, damage);
 }
 
-export function findPath(start, end, units, unit) {
-  const config = unitConfig[unit.type];
+/**
+ * @param {{x: number, y: number}} start
+ * @param {{x: number, y: number}} end
+ * @param {Unit[]} units
+ * @param {Unit} unit
+ * @param {string[][] | null} [boardLayout]
+ * @returns {PathResult | null}
+ */
+export function findPath(start, end, units, unit, boardLayout) {
+  const config = unitConfig[/** @type {UnitType} */ (unit.type)];
   let moveRange = config.moveRange;
   
   if (unit.buffs) {
     for (const buff of unit.buffs) {
       if (buff.type === 'moveBoost') {
-        moveRange += buff.value;
+        moveRange += /** @type {number} */ (buff.value);
       }
     }
   }
 
+  /** @type {Map<string, {x: number, y: number}>} */
   const openSet = new Map();
+  /** @type {Map<string, string>} */
   const cameFrom = new Map();
+  /** @type {Map<string, number>} */
   const gScore = new Map();
+  /** @type {Map<string, number>} */
   const fScore = new Map();
 
   const startKey = `${start.x},${start.y}`;
@@ -160,6 +259,7 @@ export function findPath(start, end, units, unit) {
   fScore.set(startKey, heuristic(start, end));
 
   while (openSet.size > 0) {
+    /** @type {string | null} */
     let currentKey = null;
     let lowestF = Infinity;
     for (const key of openSet.keys()) {
@@ -171,17 +271,22 @@ export function findPath(start, end, units, unit) {
     }
 
     if (currentKey === endKey) {
+      /** @type {MoveTile[]} */
       const path = [];
       let key = currentKey;
       while (cameFrom.has(key)) {
         const [x, y] = key.split(',').map(Number);
-        path.unshift({ x, y });
-        key = cameFrom.get(key);
+        path.unshift({ x, y, cost: 0 });
+        const prev = cameFrom.get(key);
+        if (!prev) break;
+        key = prev;
       }
-      return { path, cost: gScore.get(endKey) };
+      return { path, cost: gScore.get(endKey) ?? 0 };
     }
 
+    if (!currentKey) break;
     const current = openSet.get(currentKey);
+    if (!current) break;
     openSet.delete(currentKey);
 
     const neighbors = [
@@ -192,14 +297,15 @@ export function findPath(start, end, units, unit) {
     ];
 
     for (const neighbor of neighbors) {
-      if (!isPassable(neighbor.x, neighbor.y)) continue;
+      if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
 
-      const terrain = getTerrain(neighbor.x, neighbor.y);
+      const terrain = getTerrain(neighbor.x, neighbor.y, boardLayout);
+      if (!terrain) continue;
       const tentativeG = (gScore.get(currentKey) ?? Infinity) + terrain.moveCost;
 
       if (tentativeG > moveRange) continue;
 
-      const unitAtPos = units.find(u => u.x === neighbor.x && u.y === neighbor.y);
+      const unitAtPos = units.find(/** @param {Unit} u */ u => u.x === neighbor.x && u.y === neighbor.y);
       if (unitAtPos && unitAtPos.faction !== unit.faction) continue;
       if (unitAtPos && unitAtPos.faction === unit.faction && unitAtPos.id !== unit.id) continue;
 
@@ -219,13 +325,24 @@ export function findPath(start, end, units, unit) {
   return null;
 }
 
+/**
+ * @param {{x: number, y: number}} a
+ * @param {{x: number, y: number}} b
+ * @returns {number}
+ */
 function heuristic(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
-export function checkVictory(units, currentFaction) {
+/**
+ * @param {Unit[]} units
+ * @param {string} currentFaction
+ * @param {string[][] | null} [boardLayout]
+ * @returns {VictoryResult | null}
+ */
+export function checkVictory(units, currentFaction, boardLayout) {
   const enemyFaction = currentFaction === 'red' ? 'blue' : 'red';
-  const enemyUnits = units.filter(u => u.faction === enemyFaction);
+  const enemyUnits = units.filter(/** @param {Unit} u */ u => u.faction === enemyFaction);
 
   if (enemyUnits.length === 0) {
     return { winner: currentFaction, condition: '消灭所有敌军' };
@@ -233,9 +350,12 @@ export function checkVictory(units, currentFaction) {
 
   for (let y = 0; y < boardConfig.height; y++) {
     for (let x = 0; x < boardConfig.width; x++) {
-      const terrain = getTerrain(x, y);
-      if (terrain.isBase && terrain.faction === enemyFaction) {
-        const unitOnBase = units.find(u => u.x === x && u.y === y && u.faction === currentFaction);
+      const terrain = getTerrain(x, y, boardLayout);
+      if (terrain && terrain.isBase && terrain.faction === enemyFaction) {
+        const unitOnBase = units.find(
+          /** @param {Unit} u */
+          u => u.x === x && u.y === y && u.faction === currentFaction
+        );
         if (unitOnBase) {
           return { winner: currentFaction, condition: '占领敌方基地' };
         }
@@ -246,6 +366,12 @@ export function checkVictory(units, currentFaction) {
   return null;
 }
 
+/**
+ * @param {Unit[]} units
+ * @param {number} x
+ * @param {number} y
+ * @returns {Unit | null}
+ */
 export function getUnitAt(units, x, y) {
-  return units.find(u => u.x === x && u.y === y) || null;
+  return units.find(/** @param {Unit} u */ u => u.x === x && u.y === y) || null;
 }

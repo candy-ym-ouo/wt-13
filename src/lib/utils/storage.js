@@ -1,5 +1,27 @@
 const STORAGE_KEY = 'tactical_board_game_records';
 
+/**
+ * @typedef {object} GameRecordInput
+ * @property {string} winner
+ * @property {string} victoryCondition
+ * @property {number} turns
+ * @property {number} totalUnits
+ */
+
+/**
+ * @typedef {object} GameRecord
+ * @property {number} id
+ * @property {string} winner
+ * @property {string} victoryCondition
+ * @property {number} turns
+ * @property {number} totalUnits
+ * @property {string} date
+ */
+
+/**
+ * @param {GameRecordInput} record
+ * @returns {boolean}
+ */
 export function saveGameRecord(record) {
   try {
     const records = getGameRecords();
@@ -19,16 +41,22 @@ export function saveGameRecord(record) {
   }
 }
 
+/**
+ * @returns {GameRecord[]}
+ */
 export function getGameRecords() {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
+    return data ? /** @type {GameRecord[]} */ (JSON.parse(data)) : [];
   } catch (e) {
     console.error('读取游戏记录失败:', e);
     return [];
   }
 }
 
+/**
+ * @returns {boolean}
+ */
 export function clearGameRecords() {
   try {
     localStorage.removeItem(STORAGE_KEY);
@@ -39,6 +67,10 @@ export function clearGameRecords() {
   }
 }
 
+/**
+ * @param {any} state
+ * @returns {boolean}
+ */
 export function saveGameState(state) {
   try {
     localStorage.setItem('tactical_board_game_save', JSON.stringify(state));
@@ -49,6 +81,9 @@ export function saveGameState(state) {
   }
 }
 
+/**
+ * @returns {any}
+ */
 export function loadGameState() {
   try {
     const data = localStorage.getItem('tactical_board_game_save');
@@ -59,6 +94,10 @@ export function loadGameState() {
   }
 }
 
+/**
+ * @param {string} isoString
+ * @returns {string}
+ */
 export function formatDate(isoString) {
   const date = new Date(isoString);
   return date.toLocaleString('zh-CN', {

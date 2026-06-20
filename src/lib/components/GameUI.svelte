@@ -7,34 +7,59 @@
   import { drawCard, drawInitialHand } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
 
+  /**
+   * @typedef {import('../utils/cardSystem').Unit} Unit
+   * @typedef {import('../utils/cardSystem').EventCard} EventCard
+   * @typedef {import('../stores/gameStore').GameState} GameState
+   * @typedef {keyof typeof unitConfig} UnitType
+   */
+
+  /**
+   * @typedef {object} GameRecord
+   * @property {number} id
+   * @property {string} winner
+   * @property {string} victoryCondition
+   * @property {number} turns
+   * @property {number} totalUnits
+   * @property {string} date
+   */
+
+  /** @type {GameState | null} */
   let state;
+  /** @type {Unit | null} */
   let selectedUnitData;
+  /** @type {EventCard[]} */
   let handCards;
   let showRecords = false;
+  /** @type {GameRecord[]} */
   let records = [];
 
+  /** @type {(() => void) | undefined} */
   let unsubscribe;
+  /** @type {(() => void) | undefined} */
   let unsubscribeSelected;
+  /** @type {(() => void) | undefined} */
   let unsubscribeHand;
 
+  let recordSaved = false;
+
   onMount(() => {
-    unsubscribe = gameState.subscribe(s => {
+    unsubscribe = gameState.subscribe(/** @param {GameState} s */ s => {
       state = s;
       if (s.gameOver && s.winner && !recordSaved) {
         saveRecord();
         recordSaved = true;
       }
     });
-    unsubscribeSelected = selectedUnit.subscribe(u => {
+    unsubscribeSelected = selectedUnit.subscribe(/** @param {Unit | null} u */ u => {
       selectedUnitData = u;
     });
-    unsubscribeHand = currentHand.subscribe(h => {
+    unsubscribeHand = currentHand.subscribe(/** @param {EventCard[]} h */ h => {
       handCards = h;
     });
-    records = getGameRecords();
+    records = /** @type {GameRecord[]} */ (getGameRecords());
 
-    const hand = drawInitialHand();
-    if (hand && hand.length > 0 && (!state || !state.hands || state.hands.red.length === 0)) {
+    if (!state || !state.hands || state.hands.red.length === 0) {
       initHands();
     }
   });
@@ -44,8 +69,6 @@
     if (unsubscribeSelected) unsubscribeSelected();
     if (unsubscribeHand) unsubscribeHand();
   });
-
-  let recordSaved = false;
 
   function initHands() {
     const redHand = drawInitialHand();
@@ -61,17 +84,18 @@
   function saveRecord() {
     if (!state) return;
     const record = {
-      winner: state.winner,
-      victoryCondition: state.victoryCondition,
+      winner: state.winner || '',
+      victoryCondition: state.victoryCondition || '',
       turns: state.turn,
       totalUnits: state.units.length
     };
     saveGameRecord(record);
-    records = getGameRecords();
+    records = /** @type {GameRecord[]} */ (getGameRecords());
   }
 
   function handleEndTurn() {
     if (!state || state.gameOver) return;
+    /** @type {'red' | 'blue'} */
     const nextFaction = state.currentFaction === 'red' ? 'blue' : 'red';
     gameState.endTurn();
     
@@ -93,22 +117,51 @@
     gameState.setMessage('游戏开始！红方先行动');
   }
 
+  /**
+   * @param {EventCard} card
+   */
   function handleSelectCard(card) {
     if (!state || state.gameOver) return;
     if (state.selectedCardId === card.instanceId) {
       gameState.selectCard(null);
       gameState.setMessage('');
     } else {
-      gameState.selectCard(card.instanceId);
-      gameState.selectUnit(null);
-      gameState.setMessage(`选择目标使用 ${card.name}`);
+      gameState.selectCard(card.instanceId || null);
+      const hint = getCardHint(card);
+      gameState.setMessage(`${hint}`);
+    }
+  }
+
+  /**
+   * @param {EventCard} card
+   * @returns {string}
+   */
+  function getCardHint(card) {
+    switch (card.effect.type) {
+      case 'heal':
+      case 'attackBoost':
+      case 'defenseBoost':
+      case 'moveBoost':
+      case 'doubleAttack':
+        return `已选中 ${card.name}，请点击己方单位使用（也可先选中单位再选卡）`;
+      case 'damage':
+      case 'stun':
+        return `已选中 ${card.name}，请点击敌方单位使用`;
+      case 'terrainChange':
+        return `已选中 ${card.name}，请点击任意非基地格子改变地形`;
+      case 'summon':
+        return `已选中 ${card.name}，点击任意位置确认召唤（需基地为空）`;
+      case 'reveal':
+        return `已选中 ${card.name}，点击任意位置触发侦查效果`;
+      default:
+        return `已选中 ${card.name}，请选择目标`;
     }
   }
 
   function handleShowRecords() {
     showRecords = !showRecords;
     if (showRecords) {
-      records = getGameRecords();
+      records = /** @type {GameRecord[]} */ (getGameRecords());
     }
   }
 
@@ -119,19 +172,36 @@
     }
   }
 
+  /**
+   * @param {Unit} unit
+   */
   function getUnitTerrain(unit) {
-    return getTerrain(unit.x, unit.y);
+    const layout = state?.boardLayout || null;
+    return getTerrain(unit.x, unit.y, layout);
   }
 
+  /**
+   * @param {string} faction
+   * @returns {string}
+   */
   function getFactionName(faction) {
-    return gameRules.factionNames[faction] || faction;
+    return gameRules.factionNames[/** @type {'red' | 'blue'} */ (faction)] || faction;
   }
 
+  /**
+   * @param {string} faction
+   * @returns {string}
+   */
   function getFactionColor(faction) {
-    return gameRules.factionColors[faction] || '#999';
+    return gameRules.factionColors[/** @type {'red' | 'blue'} */ (faction)] || '#999';
   }
 
+  /**
+   * @param {string} type
+   * @returns {string}
+   */
   function getUnitIcon(type) {
+    /** @type {Record<string, string>} */
     const icons = {
       infantry: '⚔️',
       cavalry: '🐴',
@@ -139,16 +209,83 @@
       mage: '🔮',
       tank: '🛡️'
     };
-    return icons[type] || '?';
+    return icons[type] || '❓';
   }
 
+  /**
+   * @param {string} type
+   * @returns {string}
+   */
+  function getUnitName(type) {
+    return unitConfig[/** @type {UnitType} */ (type)].name;
+  }
+
+  /**
+   * @param {string} type
+   * @returns {number}
+   */
+  function getUnitAttack(type) {
+    return unitConfig[/** @type {UnitType} */ (type)].attack;
+  }
+
+  /**
+   * @param {string} type
+   * @returns {number}
+   */
+  function getUnitDefense(type) {
+    return unitConfig[/** @type {UnitType} */ (type)].defense;
+  }
+
+  /**
+   * @param {string} type
+   * @returns {number}
+   */
+  function getUnitMoveRange(type) {
+    return unitConfig[/** @type {UnitType} */ (type)].moveRange;
+  }
+
+  /**
+   * @param {string} type
+   * @returns {number}
+   */
+  function getUnitAttackRange(type) {
+    return unitConfig[/** @type {UnitType} */ (type)].attackRange;
+  }
+
+  /**
+   * @param {string} type
+   * @returns {string}
+   */
   function getCardTypeLabel(type) {
+    /** @type {Record<string, string>} */
     const labels = {
       buff: '增益',
       debuff: '减益',
       special: '特殊'
     };
     return labels[type] || type;
+  }
+
+  /**
+   * @param {string} buffType
+   * @returns {string}
+   */
+  function getBuffName(buffType) {
+    /** @type {Record<string, string>} */
+    const names = {
+      attackBoost: '攻击强化',
+      defenseBoost: '防御强化',
+      moveBoost: '移动强化',
+      doubleAttack: '连续攻击'
+    };
+    return names[buffType] || buffType;
+  }
+
+  /**
+   * @param {EventCard} card
+   */
+  function handleCardKeydown(card) {
+    handleSelectCard(card);
   }
 </script>
 
@@ -157,6 +294,9 @@
     <div class="turn-info">
       <span class="turn-label">回合</span>
       <span class="turn-number">{state?.turn || 1}</span>
+      {#if (state?.revealTurns ?? 0) > 0}
+        <span class="reveal-tag">👁️ 侦查中</span>
+      {/if}
     </div>
     <div class="faction-info">
       <span 
@@ -186,21 +326,29 @@
     <div class="game-over-overlay">
       <div class="game-over-content">
         <h2>游戏结束</h2>
-        <p class="winner" style="color: {getFactionColor(state.winner)}">
-          {getFactionName(state.winner)} 胜利！
+        <p class="winner" style="color: {state.winner ? getFactionColor(state.winner) : '#999'}">
+          {state.winner ? getFactionName(state.winner) : ''} 胜利！
         </p>
         <p class="condition">{state.victoryCondition}</p>
+        <p class="stat-line">共经历 {state.turn} 回合</p>
         <button class="btn btn-primary" on:click={handleRestart}>再来一局</button>
       </div>
     </div>
   {/if}
 
   {#if showRecords}
-    <div class="records-overlay" on:click|self={handleShowRecords}>
+    <div 
+      class="records-overlay" 
+      on:click|self={handleShowRecords}
+      role="dialog"
+      aria-label="游戏记录"
+      tabindex="0"
+      on:keydown={(e) => e.key === 'Escape' && handleShowRecords()}
+    >
       <div class="records-panel">
         <div class="records-header">
           <h3>游戏记录</h3>
-          <button class="btn-close" on:click={handleShowRecords}>×</button>
+          <button class="btn-close" on:click={handleShowRecords} aria-label="关闭">×</button>
         </div>
         <div class="records-list">
           {#if records.length === 0}
@@ -233,7 +381,7 @@
     <div class="unit-panel">
       <div class="unit-header">
         <span class="unit-icon">{getUnitIcon(selectedUnitData.type)}</span>
-        <span class="unit-name">{unitConfig[selectedUnitData.type].name}</span>
+        <span class="unit-name">{getUnitName(selectedUnitData.type)}</span>
         <span 
           class="unit-faction"
           style="color: {getFactionColor(selectedUnitData.faction)}"
@@ -255,30 +403,37 @@
         <div class="stat-row">
           <div class="stat-item">
             <span class="stat-label">攻击</span>
-            <span class="stat-value">{unitConfig[selectedUnitData.type].attack}</span>
+            <span class="stat-value">{getUnitAttack(selectedUnitData.type)}</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">防御</span>
-            <span class="stat-value">{unitConfig[selectedUnitData.type].defense}</span>
+            <span class="stat-value">{getUnitDefense(selectedUnitData.type)}</span>
           </div>
         </div>
         <div class="stat-row">
           <div class="stat-item">
             <span class="stat-label">移动</span>
-            <span class="stat-value">{unitConfig[selectedUnitData.type].moveRange}</span>
+            <span class="stat-value">{getUnitMoveRange(selectedUnitData.type)}</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">射程</span>
-            <span class="stat-value">{unitConfig[selectedUnitData.type].attackRange}</span>
+            <span class="stat-value">{getUnitAttackRange(selectedUnitData.type)}</span>
           </div>
         </div>
       </div>
       {#if getUnitTerrain(selectedUnitData)}
         <div class="terrain-info">
-          地形: {getUnitTerrain(selectedUnitData).name}
-          {#if getUnitTerrain(selectedUnitData).defenseBonus > 0}
-            (+{getUnitTerrain(selectedUnitData).defenseBonus} 防御)
+          地形: {getUnitTerrain(selectedUnitData)?.name}
+          {#if (getUnitTerrain(selectedUnitData)?.defenseBonus ?? 0) > 0}
+            (+{getUnitTerrain(selectedUnitData)?.defenseBonus} 防御)
           {/if}
+        </div>
+      {/if}
+      {#if selectedUnitData.buffs && selectedUnitData.buffs.length > 0}
+        <div class="buffs-info">
+          {#each selectedUnitData.buffs as buff (buff.type)}
+            <span class="buff-tag">{getBuffName(String(buff.type))}({buff.duration}回合)</span>
+          {/each}
         </div>
       {/if}
       <div class="unit-status">
@@ -289,7 +444,7 @@
           <span class="status-tag attacked">已攻击</span>
         {/if}
         {#if selectedUnitData.stunned > 0}
-          <span class="status-tag stunned">眩晕</span>
+          <span class="status-tag stunned">眩晕({selectedUnitData.stunned})</span>
         {/if}
       </div>
     </div>
@@ -302,8 +457,13 @@
         {#each handCards || [] as card (card.instanceId)}
           <div 
             class="card"
+            role="button"
+            tabindex="0"
+            aria-label={card.name}
             class:selected={state?.selectedCardId === card.instanceId}
             on:click={() => handleSelectCard(card)}
+            on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardKeydown(card)}
+            title={card.description}
           >
             <div class="card-icon">{card.icon}</div>
             <div class="card-name">{card.name}</div>
@@ -360,7 +520,7 @@
   .turn-info {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 15px;
   }
 
   .turn-label {
@@ -372,6 +532,15 @@
     font-size: 24px;
     font-weight: bold;
     color: #f1c40f;
+  }
+
+  .reveal-tag {
+    background: #9b59b6;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: bold;
   }
 
   .faction-info {
@@ -396,6 +565,7 @@
     font-size: 14px;
     font-weight: bold;
     transition: all 0.2s;
+    font-family: inherit;
   }
 
   .btn:hover {
@@ -451,11 +621,13 @@
     left: 50%;
     transform: translateX(-50%);
     padding: 8px 20px;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.85);
     color: white;
     border-radius: 20px;
-    font-size: 14px;
+    font-size: 13px;
     z-index: 100;
+    max-width: 80%;
+    text-align: center;
   }
 
   .game-over-overlay {
@@ -464,7 +636,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.85);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -478,6 +650,7 @@
     padding: 40px 60px;
     border-radius: 10px;
     border: 2px solid #3498db;
+    max-width: 400px;
   }
 
   .game-over-content h2 {
@@ -494,7 +667,13 @@
 
   .condition {
     color: #888;
+    margin: 0 0 10px 0;
+  }
+
+  .stat-line {
+    color: #666;
     margin: 0 0 30px 0;
+    font-size: 13px;
   }
 
   .records-overlay {
@@ -542,6 +721,7 @@
     padding: 0;
     width: 30px;
     height: 30px;
+    line-height: 1;
   }
 
   .btn-close:hover {
@@ -593,6 +773,7 @@
     border-radius: 8px;
     padding: 15px;
     color: white;
+    z-index: 50;
   }
 
   .unit-header {
@@ -676,6 +857,22 @@
     color: #888;
   }
 
+  .buffs-info {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .buff-tag {
+    background: #9b59b6;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+  }
+
   .unit-status {
     display: flex;
     flex-wrap: wrap;
@@ -749,9 +946,11 @@
     flex-direction: column;
     align-items: center;
     color: white;
+    outline: none;
   }
 
-  .card:hover {
+  .card:hover,
+  .card:focus {
     transform: translateY(-5px);
     border-color: #f1c40f;
   }
