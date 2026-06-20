@@ -882,7 +882,7 @@
   }
 
   /**
-   * @param {string} unitType
+   * @param {import('$lib/config/unitConfig').UnitType} unitType
    * @param {string} faction
    */
   function doSummon(unitType, faction) {
@@ -905,7 +905,7 @@
       return;
     }
 
-    const cfg = unitConfig[/** @type {UnitType} */ (unitType)];
+    const cfg = unitConfig[unitType];
     /** @type {Unit} */
     const newUnit = {
       id: `unit_${Date.now()}_${Math.random()}`,

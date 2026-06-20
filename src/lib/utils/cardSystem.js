@@ -14,7 +14,7 @@ import { STATUS_EFFECT_TYPES, unitConfig } from '$lib/config/unitConfig';
  * @property {string} type
  * @property {number} [value]
  * @property {number} [duration]
- * @property {string} [unitType]
+ * @property {UnitType} [unitType]
  * @property {string} [terrain]
  * @property {string} [tileEffectType]
  * @property {number} [radius]
@@ -75,7 +75,7 @@ import { STATUS_EFFECT_TYPES, unitConfig } from '$lib/config/unitConfig';
  * @property {number} [value]
  * @property {any} [buff]
  * @property {number} [duration]
- * @property {string} [unitType]
+ * @property {UnitType} [unitType]
  * @property {string} [faction]
  * @property {number} [x]
  * @property {number} [y]

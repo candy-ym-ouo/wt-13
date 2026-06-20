@@ -117,7 +117,8 @@ export const COUNTER_RELATIONSHIPS = {
   infantry: { cavalry: 1.3 },
   cavalry: { archer: 1.3 },
   archer: { mage: 1.3 },
-  mage: { infantry: 1.3 }
+  mage: { infantry: 1.3 },
+  tank: { cavalry: 1.25, infantry: 1.2 }
 };
 
 /**
@@ -128,7 +129,8 @@ export const COUNTER_LABELS = {
   infantry: { cavalry: '枪阵破骑' },
   cavalry: { archer: '骑突克射' },
   archer: { mage: '先射断法' },
-  mage: { infantry: '法破重甲' }
+  mage: { infantry: '法破重甲' },
+  tank: { cavalry: '坚甲拒马', infantry: '盾阵压迫' }
 };
 
 /**
@@ -277,6 +279,14 @@ export const unitConfig = {
   }
 };
 
+/**
+ * @typedef {object} InitialUnitDef
+ * @property {UnitType} type
+ * @property {number} x
+ * @property {number} y
+ */
+
+/** @type {Record<'red' | 'blue', InitialUnitDef[]>} */
 export const initialUnits = {
   red: [
     { type: 'infantry', x: 0, y: 0 },

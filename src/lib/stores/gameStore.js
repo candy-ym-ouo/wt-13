@@ -157,7 +157,7 @@ function createInitialState() {
   const factions = ['red', 'blue'];
   for (const faction of factions) {
     for (const unitDef of initialUnits[faction]) {
-      const config = unitConfig[/** @type {UnitType} */ (unitDef.type)];
+      const config = unitConfig[unitDef.type];
       units.push({
         id: `unit_${unitId++}`,
         type: unitDef.type,
@@ -1451,6 +1451,13 @@ function createGameState() {
       const oldTerrain = newLayout[y][x];
       newLayout[y][x] = terrainType;
 
+      const key = `${x},${y}`;
+      let newTileEffects = state.tileEffects;
+      if (newTileEffects && newTileEffects[key]) {
+        newTileEffects = { ...newTileEffects };
+        delete newTileEffects[key];
+      }
+
       const terrainData = boardConfig.terrain[/** @type {keyof typeof boardConfig.terrain} */ (terrainType)];
       const terrainName = terrainData?.name || terrainType;
       const factionName = state.currentFaction === 'red' ? '红方' : '蓝方';
@@ -1490,6 +1497,7 @@ function createGameState() {
       return {
         ...state,
         boardLayout: newLayout,
+        tileEffects: newTileEffects,
         terrainChanged: { ...(state.terrainChanged || {}), [`${x},${y}`]: terrainType },
         actionLogs: newActionLogs,
         lastActionLog: terrainLog
