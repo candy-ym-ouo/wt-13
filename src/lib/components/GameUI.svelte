@@ -232,7 +232,7 @@
       case 'terrainChange':
         return `已选中 ${card.name}，请点击任意非基地格子改变地形`;
       case 'summon':
-        return `已选中 ${card.name}，点击任意位置确认召唤（需基地为空）`;
+        return `已选中 ${card.name}，点击任意位置确认召唤（优先基地→邻格→空位，满编/阻挡/异常地形将自动校验）`;
       case 'reveal':
         return `已选中 ${card.name}，点击任意位置触发侦查效果`;
       default:

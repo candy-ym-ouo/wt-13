@@ -1101,3 +1101,341 @@ export function getStatusFlags(unit) {
     healBlocked: hasStatusEffect(unit, STATUS_EFFECT_TYPES.HEAL_BLOCK)
   };
 }
+
+/**
+ * @typedef {object} SummonCheckResult
+ * @property {boolean} canSummon
+ * @property {string | null} reason
+ * @property {number} currentCount
+ * @property {number} maxCount
+ */
+
+/**
+ * @param {Unit[]} units
+ * @param {string} faction
+ * @returns {SummonCheckResult}
+ */
+export function checkSummonFeasibility(units, faction) {
+  const summonRules = gameRules.summon;
+  const maxUnits = summonRules.maxUnitsPerFaction;
+  const factionUnits = units.filter(u => u.faction === faction);
+  const currentCount = factionUnits.length;
+
+  if (currentCount >= maxUnits) {
+    return {
+      canSummon: false,
+      reason: `部队已满编（${currentCount}/${maxUnits}），无法继续召唤`,
+      currentCount,
+      maxCount: maxUnits
+    };
+  }
+
+  return {
+    canSummon: true,
+    reason: null,
+    currentCount,
+    maxCount: maxUnits
+  };
+}
+
+/**
+ * @typedef {object} SummonTileValidation
+ * @property {boolean} valid
+ * @property {string | null} reason
+ * @property {TerrainInfo | null} terrain
+ */
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {Unit[]} units
+ * @param {string[][] | null} [boardLayout]
+ * @param {Record<string, TileEffect> | null} [tileEffects]
+ * @returns {SummonTileValidation}
+ */
+export function validateSummonTile(x, y, units, boardLayout, tileEffects) {
+  if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) {
+    return { valid: false, reason: '超出棋盘范围', terrain: null };
+  }
+
+  const terrain = getTerrain(x, y, boardLayout);
+  if (!terrain) {
+    return { valid: false, reason: '地形数据异常', terrain: null };
+  }
+
+  if (terrain.passable === false) {
+    return { valid: false, reason: `${terrain.name}不可通行`, terrain };
+  }
+
+  const summonRules = gameRules.summon;
+  if (summonRules.forbiddenTerrains.includes(terrain.type)) {
+    return { valid: false, reason: `${terrain.name}禁止部署单位`, terrain };
+  }
+
+  const unitAtPos = getUnitAt(units, x, y);
+  if (unitAtPos) {
+    const unitName = unitConfig[/** @type {UnitType} */ (unitAtPos.type)].name;
+    const factionName = unitAtPos.faction === 'red' ? '红方' : '蓝方';
+    return { valid: false, reason: `被${factionName}${unitName}占据`, terrain };
+  }
+
+  if (tileEffects && summonRules.forbiddenTileEffects.length > 0) {
+    const effect = getTileEffectAt(tileEffects, x, y);
+    const forbiddenEffects = /** @type {string[]} */ (summonRules.forbiddenTileEffects);
+    if (effect && forbiddenEffects.includes(effect.type)) {
+      const effectConfig = tileEffectConfig[/** @type {keyof typeof tileEffectConfig} */ (effect.type)];
+      return { valid: false, reason: `${effectConfig?.name || '异常'}地形效果阻挡`, terrain };
+    }
+  }
+
+  return { valid: true, reason: null, terrain };
+}
+
+/**
+ * @typedef {object} SummonCandidate
+ * @property {number} x
+ * @property {number} y
+ * @property {number} priority
+ * @property {number} distance
+ * @property {TerrainInfo | null} terrain
+ */
+
+/**
+ * @param {BaseState[] | null} bases
+ * @param {string} faction
+ * @param {string[][] | null} [boardLayout]
+ * @returns {{x: number, y: number}[]}
+ */
+function getOwnBasePositions(bases, faction, boardLayout) {
+  /** @type {{x: number, y: number}[]} */
+  const positions = [];
+
+  if (bases && bases.length > 0) {
+    for (const base of bases) {
+      if (base.faction === faction) {
+        positions.push({ x: base.x, y: base.y });
+      }
+    }
+  }
+
+  if (positions.length === 0) {
+    const layout = boardLayout || boardConfig.layout;
+    for (let y = 0; y < boardConfig.height; y++) {
+      for (let x = 0; x < boardConfig.width; x++) {
+        const terrainType = /** @type {keyof typeof boardConfig.terrain} */ (layout[y][x]);
+        /** @type {any} */
+        const terrain = boardConfig.terrain[terrainType];
+        if (terrain && terrain.isBase && terrain.faction === faction) {
+          positions.push({ x, y });
+        }
+      }
+    }
+  }
+
+  return positions;
+}
+
+/**
+ * @param {{x: number, y: number}} basePos
+ * @param {number} radius
+ * @returns {{x: number, y: number, distance: number}[]}
+ */
+function getAdjacentPositions(basePos, radius) {
+  /** @type {{x: number, y: number, distance: number}[]} */
+  const positions = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const distance = Math.abs(dx) + Math.abs(dy);
+      if (distance === 0 || distance > radius) continue;
+      positions.push({
+        x: basePos.x + dx,
+        y: basePos.y + dy,
+        distance
+      });
+    }
+  }
+  return positions.sort((a, b) => a.distance - b.distance);
+}
+
+/**
+ * @param {string} faction
+ * @returns {{x: number, y: number}[]}
+ */
+function getOwnHalfPositions(faction) {
+  /** @type {{x: number, y: number}[]} */
+  const positions = [];
+  const halfWidth = Math.floor(boardConfig.width / 2);
+  const startX = faction === 'red' ? 0 : halfWidth;
+  const endX = faction === 'red' ? halfWidth : boardConfig.width;
+
+  for (let y = 0; y < boardConfig.height; y++) {
+    for (let x = startX; x < endX; x++) {
+      positions.push({ x, y });
+    }
+  }
+  return positions;
+}
+
+/**
+ * @typedef {object} SummonPositionResult
+ * @property {boolean} found
+ * @property {number} x
+ * @property {number} y
+ * @property {string | null} reason
+ * @property {string} [tier]
+ * @property {TerrainInfo | null} [terrain]
+ */
+
+/**
+ * @param {Unit[]} units
+ * @param {string} faction
+ * @param {BaseState[] | null} [bases]
+ * @param {string[][] | null} [boardLayout]
+ * @param {Record<string, TileEffect> | null} [tileEffects]
+ * @returns {SummonPositionResult}
+ */
+export function findSummonPosition(units, faction, bases, boardLayout, tileEffects) {
+  const layout = boardLayout || boardConfig.layout;
+  const summonRules = gameRules.summon;
+  const basePositions = getOwnBasePositions(bases || null, faction, layout);
+
+  /** @type {SummonCandidate[]} */
+  const candidates = [];
+
+  /** @type {Set<string>} */
+  const checked = new Set();
+
+  for (const base of basePositions) {
+    const baseKey = `${base.x},${base.y}`;
+    if (checked.has(baseKey)) continue;
+    checked.add(baseKey);
+
+    const validation = validateSummonTile(base.x, base.y, units, layout, tileEffects || null);
+    if (validation.valid) {
+      candidates.push({
+        x: base.x,
+        y: base.y,
+        priority: 0,
+        distance: 0,
+        terrain: validation.terrain
+      });
+    }
+  }
+
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => a.distance - b.distance);
+    return {
+      found: true,
+      x: candidates[0].x,
+      y: candidates[0].y,
+      reason: null,
+      tier: '基地',
+      terrain: candidates[0].terrain
+    };
+  }
+
+  const searchRadius = summonRules.adjacentSearchRadius;
+  for (const base of basePositions) {
+    const adjacent = getAdjacentPositions(base, searchRadius);
+    for (const pos of adjacent) {
+      const key = `${pos.x},${pos.y}`;
+      if (checked.has(key)) continue;
+      checked.add(key);
+
+      const validation = validateSummonTile(pos.x, pos.y, units, layout, tileEffects || null);
+      if (validation.valid) {
+        candidates.push({
+          x: pos.x,
+          y: pos.y,
+          priority: 1,
+          distance: pos.distance,
+          terrain: validation.terrain
+        });
+      }
+    }
+  }
+
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => a.distance - b.distance);
+    return {
+      found: true,
+      x: candidates[0].x,
+      y: candidates[0].y,
+      reason: null,
+      tier: '基地邻格',
+      terrain: candidates[0].terrain
+    };
+  }
+
+  if (summonRules.preferOwnHalf) {
+    const ownPositions = getOwnHalfPositions(faction);
+    for (const pos of ownPositions) {
+      const key = `${pos.x},${pos.y}`;
+      if (checked.has(key)) continue;
+      checked.add(key);
+
+      const validation = validateSummonTile(pos.x, pos.y, units, layout, tileEffects || null);
+      if (validation.valid) {
+        const distToNearestBase = basePositions.length > 0
+          ? Math.min(...basePositions.map(b => Math.abs(b.x - pos.x) + Math.abs(b.y - pos.y)))
+          : 99;
+        candidates.push({
+          x: pos.x,
+          y: pos.y,
+          priority: 2,
+          distance: distToNearestBase,
+          terrain: validation.terrain
+        });
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    for (let y = 0; y < boardConfig.height; y++) {
+      for (let x = 0; x < boardConfig.width; x++) {
+        const key = `${x},${y}`;
+        if (checked.has(key)) continue;
+        checked.add(key);
+
+        const validation = validateSummonTile(x, y, units, layout, tileEffects || null);
+        if (validation.valid) {
+          const distToNearestBase = basePositions.length > 0
+            ? Math.min(...basePositions.map(b => Math.abs(b.x - x) + Math.abs(b.y - y)))
+            : 99;
+          candidates.push({
+            x,
+            y,
+            priority: 3,
+            distance: distToNearestBase,
+            terrain: validation.terrain
+          });
+        }
+      }
+    }
+  }
+
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.distance - b.distance;
+    });
+    const tier = candidates[0].priority === 2 ? '己方半场空位' : '全局空位';
+    return {
+      found: true,
+      x: candidates[0].x,
+      y: candidates[0].y,
+      reason: null,
+      tier,
+      terrain: candidates[0].terrain
+    };
+  }
+
+  return {
+    found: false,
+    x: -1,
+    y: -1,
+    reason: '棋盘无可用空位，所有可通行格子均被占据或为异常地形',
+    tier: undefined,
+    terrain: null
+  };
+}

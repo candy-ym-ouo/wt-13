@@ -21,9 +21,12 @@
     getEffectiveMoveRange,
     getCounterInfo,
     getTileEffectAt,
-    calculateCombatPreview
+    calculateCombatPreview,
+    checkSummonFeasibility,
+    findSummonPosition,
+    validateSummonTile
   } from '$lib/utils/gameLogic';
-  import { canUseCard, applyCardEffect, canAffordCard } from '$lib/utils/cardSystem';
+  import { canUseCard, applyCardEffect, canAffordCard, canUseSummonCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
 
   /**
@@ -778,6 +781,14 @@
       return;
     }
 
+    if (card.effect.type === 'summon') {
+      const summonCheck = canUseSummonCard(card, state);
+      if (!summonCheck.canUse) {
+        gameState.setMessage(`${card.name} 无法使用：${summonCheck.reason}`);
+        return;
+      }
+    }
+
     if (card.effect.type === 'terrainChange' || card.effect.type === 'tileEffect') {
       const layout = state.boardLayout || boardConfig.layout;
       const terrain = getTerrain(tx, ty, layout);
@@ -835,7 +846,11 @@
           break;
         case 'summon':
           if (effect.unitType && effect.faction) {
-            doSummon(effect.unitType, effect.faction);
+            const summonResult = doSummon(effect.unitType, effect.faction);
+            if (!summonResult.success) {
+              gameState.setMessage(summonResult.message);
+              return;
+            }
           }
           break;
         case 'terrainChange':
@@ -899,8 +914,16 @@
         return '请点击非基地格子使用';
       case 'tileEffect':
         return '请点击非基地格子施放地形效果';
-      case 'summon':
+      case 'summon': {
+        if (state) {
+          const feasibility = checkSummonFeasibility(state.units, state.currentFaction);
+          if (!feasibility.canSummon) {
+            return `（${feasibility.reason}）`;
+          }
+          return `点击任意位置确认召唤（当前 ${feasibility.currentCount}/${feasibility.maxCount}，按基地→邻格→空位优先落点）`;
+        }
         return '点击任意位置确认召唤';
+      }
       case 'reveal':
         return '点击任意位置触发侦查';
       default:
@@ -909,40 +932,68 @@
   }
 
   /**
+   * @typedef {object} DoSummonResult
+   * @property {boolean} success
+   * @property {string} message
+   * @property {{x: number, y: number} | null} position
+   */
+
+  /**
    * @param {import('$lib/config/unitConfig').UnitType} unitType
    * @param {string} faction
+   * @returns {DoSummonResult}
    */
   function doSummon(unitType, faction) {
-    if (!state) return;
-    let bx = -1, by = -1;
-    const layout = state.boardLayout || boardConfig.layout;
-    for (let y = 0; y < boardConfig.height; y++) {
-      for (let x = 0; x < boardConfig.width; x++) {
-        const t = getTerrain(x, y, layout);
-        if (t && t.isBase && t.faction === faction) {
-          const u = getUnitAt(state.units, x, y);
-          if (!u) { bx = x; by = y; break; }
-        }
-      }
-      if (bx >= 0) break;
+    if (!state) {
+      return { success: false, message: '游戏状态异常', position: null };
     }
 
-    if (bx < 0) {
-      gameState.setMessage('基地被占用，无法召唤单位');
-      return;
+    const layout = state.boardLayout || boardConfig.layout;
+
+    const feasibility = checkSummonFeasibility(state.units, faction);
+    if (!feasibility.canSummon) {
+      return { success: false, message: feasibility.reason || '无法召唤', position: null };
+    }
+
+    const posResult = findSummonPosition(
+      state.units,
+      faction,
+      state.bases || null,
+      layout,
+      state.tileEffects || null
+    );
+
+    if (!posResult.found) {
+      return { success: false, message: posResult.reason || '无可用落点', position: null };
+    }
+
+    const tileValidation = validateSummonTile(
+      posResult.x,
+      posResult.y,
+      state.units,
+      layout,
+      state.tileEffects || null
+    );
+
+    if (!tileValidation.valid) {
+      return { success: false, message: `落点校验失败：${tileValidation.reason}`, position: null };
     }
 
     const cfg = unitConfig[unitType];
+    const summonRules = gameRules.summon;
+    const factionName = faction === 'red' ? '红方' : '蓝方';
+
     /** @type {Unit} */
     const newUnit = {
       id: `unit_${Date.now()}_${Math.random()}`,
       type: unitType,
       faction,
-      x: bx, y: by,
+      x: posResult.x,
+      y: posResult.y,
       currentHp: cfg.hp,
       maxHp: cfg.hp,
-      hasMoved: true,
-      hasAttacked: true,
+      hasMoved: summonRules.summonExhausted,
+      hasAttacked: summonRules.summonExhausted,
       attackCount: 0,
       buffs: [],
       stunned: 0,
@@ -951,6 +1002,18 @@
       statusEffects: []
     };
     gameState.addUnit(newUnit);
+
+    const unitName = cfg.name;
+    const terrainName = posResult.terrain?.name || '平原';
+    const tierLabel = posResult.tier ? `【${posResult.tier}】` : '';
+    const msg = `${factionName}召唤${unitName}${tierLabel}于 (${posResult.x},${posResult.y}) ${terrainName}（${feasibility.currentCount + 1}/${feasibility.maxCount}）`;
+    gameState.setMessage(msg);
+
+    return {
+      success: true,
+      message: msg,
+      position: { x: posResult.x, y: posResult.y }
+    };
   }
 
   /**

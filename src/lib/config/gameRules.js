@@ -77,5 +77,13 @@ export const gameRules = {
     resistanceCheck: {
       minDurationOnResist: 1
     }
+  },
+  summon: {
+    maxUnitsPerFaction: 12,
+    adjacentSearchRadius: 2,
+    preferOwnHalf: true,
+    forbiddenTerrains: ['water'],
+    forbiddenTileEffects: [],
+    summonExhausted: true
   }
 };

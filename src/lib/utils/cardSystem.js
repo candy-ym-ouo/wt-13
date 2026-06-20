@@ -1,5 +1,6 @@
 import { eventCards, cardConfig, CARD_CATEGORY } from '$lib/config/eventCardConfig';
 import { STATUS_EFFECT_TYPES, unitConfig } from '$lib/config/unitConfig';
+import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
 
 /**
  * @typedef {'instant' | 'sustain' | 'counter'} CardCategory
@@ -196,6 +197,41 @@ export function canUseCard(card, selectedUnit, targetUnit, currentFaction) {
     default:
       return false;
   }
+}
+
+/**
+ * @param {EventCard | null | undefined} card
+ * @param {any} gameState
+ * @returns {{ canUse: boolean; reason?: string }}
+ */
+export function canUseSummonCard(card, gameState) {
+  if (!card || card.effect.type !== 'summon') {
+    return { canUse: false, reason: '不是召唤类卡牌' };
+  }
+
+  const feasibility = checkSummonFeasibility(
+    gameState.units || [],
+    gameState.currentFaction
+  );
+
+  if (!feasibility.canSummon) {
+    return { canUse: false, reason: feasibility.reason || '无法召唤' };
+  }
+
+  const layout = gameState.boardLayout || null;
+  const position = findSummonPosition(
+    gameState.units || [],
+    gameState.currentFaction,
+    gameState.bases || null,
+    layout,
+    gameState.tileEffects || null
+  );
+
+  if (!position.found) {
+    return { canUse: false, reason: position.reason || '无可用落点' };
+  }
+
+  return { canUse: true };
 }
 
 /**
