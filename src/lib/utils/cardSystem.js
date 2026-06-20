@@ -211,7 +211,7 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
         unitId: targetUnit.id,
         statusEffect: {
           type: effectType,
-          duration: card.effect.duration,
+          duration: card.effect.duration ?? 2,
           value: card.effect.value,
           source: card.id
         }
@@ -281,7 +281,7 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
           unitId: targetUnit.id,
           statusEffect: {
             type: STATUS_EFFECT_TYPES.STUN,
-            duration: card.effect.duration,
+            duration: card.effect.duration ?? 2,
             source: card.id
           }
         });

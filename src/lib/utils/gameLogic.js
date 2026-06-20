@@ -103,7 +103,7 @@ export function hasStatusEffect(unit, statusType) {
  */
 export function isHardCC(unit) {
   const hardTypes = [STATUS_EFFECT_TYPES.STUN, STATUS_EFFECT_TYPES.FREEZE];
-  return hardTypes.some(t => hasStatusEffect(unit, t)) || (unit.stunned && unit.stunned > 0);
+  return hardTypes.some(t => hasStatusEffect(unit, t)) || unit.stunned > 0;
 }
 
 /**
@@ -161,7 +161,7 @@ export function getStatusResistance(unit, statusType, unitType) {
  */
 export function isImmuneToStatus(unit, statusType, unitType) {
   const config = unitConfig[unitType];
-  const immunities = config.statusImmunities || [];
+  const immunities = /** @type {string[]} */ (config.statusImmunities || []);
   return immunities.includes(statusType);
 }
 
@@ -181,9 +181,7 @@ export function checkStatusApplication(unit, statusType, duration, unitType) {
   if (resistance > 0) {
     const roll = Math.random();
     if (roll < resistance) {
-      const minDur = gameRules.statusEffects.resistanceCheck.minDurationOnResist;
-      const resistedDuration = Math.max(minDur, Math.ceil(duration * (1 - resistance)));
-      return { applied: true, duration: resistedDuration, resisted: true, immune: false };
+      return { applied: false, duration: 0, resisted: true, immune: false };
     }
   }
 

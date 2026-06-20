@@ -193,17 +193,29 @@ function createGameState() {
     set,
     update,
     reset: () => set(createInitialState()),
+    /**
+     * @param {string | null} unitId
+     */
     selectUnit: (unitId) => update(state => ({
       ...state,
       selectedUnitId: unitId,
       selectedCardId: null,
       gamePhase: unitId ? 'unitSelected' : 'idle'
     })),
+    /**
+     * @param {string | null} cardId
+     */
     selectCard: (cardId) => update(state => ({
       ...state,
       selectedCardId: cardId,
       gamePhase: cardId ? 'cardSelected' : 'idle'
     })),
+    /**
+     * @param {string} unitId
+     * @param {number} x
+     * @param {number} y
+     * @param {number[]} path
+     */
     moveUnit: (unitId, x, y, path) => update(state => {
       const unit = state.units.find(u => u.id === unitId);
       const pathLength = path ? path.length : Math.abs(x - (unit?.x || 0)) + Math.abs(y - (unit?.y || 0));
@@ -239,6 +251,11 @@ function createGameState() {
         lastStatusMessages: statusMsgs
       };
     }),
+    /**
+     * @param {string} attackerId
+     * @param {string} defenderId
+     * @param {number} damage
+     */
     attack: (attackerId, defenderId, damage) => update(state => {
       const attacker = state.units.find(/** @param {Unit} u */ u => u.id === attackerId);
       const defender = state.units.find(/** @param {Unit} u */ u => u.id === defenderId);
@@ -469,6 +486,10 @@ function createGameState() {
         lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges
       };
     }),
+    /**
+     * @param {string} winner
+     * @param {string} condition
+     */
     setVictory: (winner, condition) => update(state => ({
       ...state,
       gameOver: true,
@@ -476,6 +497,10 @@ function createGameState() {
       victoryCondition: condition,
       gamePhase: 'gameOver'
     })),
+    /**
+     * @param {'red' | 'blue'} faction
+     * @param {EventCard} card
+     */
     addCard: (faction, card) => update(state => {
       const hands = {
         red: [...state.hands.red],
@@ -492,6 +517,12 @@ function createGameState() {
       }
       return { ...state, hands };
     }),
+    /**
+     * @param {'red' | 'blue'} faction
+     * @param {string} cardInstanceId
+     * @param {number} cost
+     * @param {string} cardId
+     */
     useCard: (faction, cardInstanceId, cost, cardId) => update(state => {
       const hands = {
         red: [...state.hands.red],
@@ -569,6 +600,10 @@ function createGameState() {
         lastCardAction: usedCard ? { cardId: usedCard.id, type: isInstant ? 'play' : 'activate' } : null
       };
     }),
+    /**
+     * @param {string} unitId
+     * @param {number} amount
+     */
     healUnit: (unitId, amount) => update(state => {
       /** @type {string[]} */
       const statusMsgs = [];
@@ -587,6 +622,10 @@ function createGameState() {
       });
       return { ...state, units, lastStatusMessages: statusMsgs };
     }),
+    /**
+     * @param {string} unitId
+     * @param {{ type: string; duration: number; value?: number }} buff
+     */
     addBuff: (unitId, buff) => update(state => {
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
@@ -600,6 +639,10 @@ function createGameState() {
       });
       return { ...state, units };
     }),
+    /**
+     * @param {string} unitId
+     * @param {number} damage
+     */
     damageUnit: (unitId, damage) => update(state => {
       /** @type {MoraleChange[]} */
       const moraleChanges = [];
@@ -649,6 +692,10 @@ function createGameState() {
       updatedUnits = updatedUnits.filter(/** @param {Unit} u */ u => u.currentHp > 0);
       return { ...state, units: updatedUnits, lastMoraleChanges: moraleChanges };
     }),
+    /**
+     * @param {string} unitId
+     * @param {number} duration
+     */
     stunUnit: (unitId, duration) => update(state => {
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
@@ -658,6 +705,10 @@ function createGameState() {
       });
       return { ...state, units };
     }),
+    /**
+     * @param {string} unitId
+     * @param {StatusEffect} statusEffect
+     */
     applyStatusEffect: (unitId, statusEffect) => update(state => {
       /** @type {string[]} */
       const statusMsgs = [];
@@ -676,10 +727,13 @@ function createGameState() {
         return { ...state, lastStatusMessages: statusMsgs };
       }
 
+      if (result.resisted) {
+        statusMsgs.push(`${factionName}${unitName} 成功抵抗了【${statusInfo.name}】效果！`);
+        return { ...state, lastStatusMessages: statusMsgs };
+      }
+
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
-          if (!result.applied) return u;
-
           const effectiveEffect = { ...statusEffect, duration: result.duration, id: `se_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` };
           let newEffects = (u.statusEffects || []).filter(s => s.type !== statusEffect.type);
           newEffects.push(effectiveEffect);
@@ -698,18 +752,13 @@ function createGameState() {
         return u;
       });
 
-      if (result.applied) {
-        if (result.resisted) {
-          statusMsgs.push(`${factionName}${unitName} 部分抵抗【${statusInfo.name}】，持续时间缩短至 ${result.duration} 回合`);
-        } else {
-          statusMsgs.push(`${factionName}${unitName} 受到【${statusInfo.name}】效果，持续 ${result.duration} 回合`);
-        }
-      } else {
-        statusMsgs.push(`${factionName}${unitName} 完全抵抗了【${statusInfo.name}】效果！`);
-      }
+      statusMsgs.push(`${factionName}${unitName} 受到【${statusInfo.name}】效果，持续 ${result.duration} 回合`);
 
       return { ...state, units, lastStatusMessages: statusMsgs };
     }),
+    /**
+     * @param {string} unitId
+     */
     cleanseUnit: (unitId) => update(state => {
       /** @type {string[]} */
       const statusMsgs = [];
@@ -727,10 +776,18 @@ function createGameState() {
       });
       return { ...state, units, lastStatusMessages: statusMsgs };
     }),
+    /**
+     * @param {Unit} unit
+     */
     addUnit: (unit) => update(state => ({
       ...state,
       units: [...state.units, { ...unit, statusEffects: unit.statusEffects || [] }]
     })),
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {string} terrainType
+     */
     changeTerrain: (x, y, terrainType) => update(state => {
       const newLayout = state.boardLayout
         ? state.boardLayout.map(/** @param {string[]} row */ row => [...row])
@@ -742,11 +799,22 @@ function createGameState() {
         terrainChanged: { ...(state.terrainChanged || {}), [`${x},${y}`]: terrainType }
       };
     }),
+    /**
+     * @param {number} duration
+     */
     setReveal: (duration) => update(/** @param {GameState} state */ state => ({
       ...state,
       revealTurns: duration
     })),
+    /**
+     * @param {string} message
+     */
     setMessage: (message) => update(/** @param {GameState} state */ state => ({ ...state, message })),
+    /**
+     * @param {string} unitId
+     * @param {number} terrainMoraleBonus
+     * @param {string} terrainName
+     */
     applyTerrainMorale: (unitId, terrainMoraleBonus, terrainName) => update(state => {
       if (!terrainMoraleBonus) return { ...state, lastMoraleChanges: [] };
       const clampMorale = (/** @type {number} */ v) =>
@@ -775,6 +843,11 @@ function createGameState() {
       return { ...state, units, lastMoraleChanges: moraleChanges };
     }),
     clearLastCardAction: () => update(state => ({ ...state, lastCardAction: null })),
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {number} delta
+     */
     damageBase: (x, y, delta) => update(state => {
       const bases = state.bases.map(b => {
         if (b.x === x && b.y === y) {
@@ -784,6 +857,11 @@ function createGameState() {
       });
       return { ...state, bases };
     }),
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {number} delta
+     */
     repairBase: (x, y, delta) => update(state => {
       const bases = state.bases.map(b => {
         if (b.x === x && b.y === y) {
@@ -793,6 +871,12 @@ function createGameState() {
       });
       return { ...state, bases };
     }),
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {string} capturingFaction
+     * @param {number} progressDelta
+     */
     updateBaseCapture: (x, y, capturingFaction, progressDelta) => update(state => {
       const bases = state.bases.map(b => {
         if (b.x === x && b.y === y) {
@@ -817,6 +901,9 @@ function createGameState() {
       });
       return { ...state, bases };
     }),
+    /**
+     * @param {BaseState[]} newBases
+     */
     setBases: (newBases) => update(state => ({ ...state, bases: newBases }))
   };
 }

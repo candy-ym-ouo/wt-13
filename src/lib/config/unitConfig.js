@@ -9,6 +9,19 @@ export const STATUS_EFFECT_TYPES = {
   BLEED: 'bleed'
 };
 
+/**
+ * @typedef {object} StatusEffectInfo
+ * @property {string} name
+ * @property {string} icon
+ * @property {string} color
+ * @property {string} description
+ * @property {boolean} isDebuff
+ * @property {boolean} isHardCC
+ * @property {string} category
+ * @property {string | null} valueLabel
+ */
+
+/** @type {Record<string, StatusEffectInfo>} */
 export const STATUS_EFFECT_INFO = {
   [STATUS_EFFECT_TYPES.STUN]: {
     name: '眩晕',
@@ -201,6 +214,10 @@ export const initialUnits = {
   ]
 };
 
+/**
+ * @param {string} type
+ * @returns {StatusEffectInfo}
+ */
 export function getStatusInfo(type) {
   return STATUS_EFFECT_INFO[type] || {
     name: type,
@@ -208,10 +225,16 @@ export function getStatusInfo(type) {
     color: '#888',
     description: '',
     isDebuff: false,
-    isHardCC: false
+    isHardCC: false,
+    category: 'other',
+    valueLabel: null
   };
 }
 
+/**
+ * @param {number} value
+ * @returns {string}
+ */
 export function getResistanceLabel(value) {
   if (value >= 0.5) return '极高抗性';
   if (value >= 0.3) return '高抗性';
