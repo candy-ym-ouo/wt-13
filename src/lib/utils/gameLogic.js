@@ -332,8 +332,8 @@ export function getAttackRange(unit, units) {
 }
 
 /**
- * @param {string} attackerType
- * @param {string} defenderType
+ * @param {UnitType} attackerType
+ * @param {UnitType} defenderType
  * @returns {number}
  */
 export function getCounterMultiplier(attackerType, defenderType) {
@@ -345,8 +345,8 @@ export function getCounterMultiplier(attackerType, defenderType) {
 }
 
 /**
- * @param {string} attackerType
- * @param {string} defenderType
+ * @param {UnitType} attackerType
+ * @param {UnitType} defenderType
  * @returns {{ label: string | null; isAdvantage: boolean }}
  */
 export function getCounterInfo(attackerType, defenderType) {

@@ -1,8 +1,12 @@
 import { eventCards, cardConfig, CARD_CATEGORY } from '$lib/config/eventCardConfig';
-import { STATUS_EFFECT_TYPES } from '$lib/config/unitConfig';
+import { STATUS_EFFECT_TYPES, unitConfig } from '$lib/config/unitConfig';
 
 /**
  * @typedef {'instant' | 'sustain' | 'counter'} CardCategory
+ */
+
+/**
+ * @typedef {keyof typeof unitConfig} UnitType
  */
 
 /**
@@ -45,7 +49,7 @@ import { STATUS_EFFECT_TYPES } from '$lib/config/unitConfig';
 /**
  * @typedef {object} Unit
  * @property {string} id
- * @property {string} type
+ * @property {UnitType} type
  * @property {string} faction
  * @property {number} x
  * @property {number} y

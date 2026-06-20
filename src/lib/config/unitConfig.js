@@ -105,6 +105,14 @@ export const STATUS_EFFECT_INFO = {
   }
 };
 
+/**
+ * @typedef {keyof typeof unitConfig} UnitType
+ */
+
+/**
+ * 兵种克制关系表 - 定义各兵种对特定兵种的伤害加成
+ * @type {Record<UnitType, Partial<Record<UnitType, number>>>}
+ */
 export const COUNTER_RELATIONSHIPS = {
   infantry: { cavalry: 1.3 },
   cavalry: { archer: 1.3 },
@@ -112,6 +120,10 @@ export const COUNTER_RELATIONSHIPS = {
   mage: { infantry: 1.3 }
 };
 
+/**
+ * 兵种克制标签 - 定义克制关系的描述性名称
+ * @type {Record<UnitType, Partial<Record<UnitType, string>>>}
+ */
 export const COUNTER_LABELS = {
   infantry: { cavalry: '枪阵破骑' },
   cavalry: { archer: '骑突克射' },
@@ -119,6 +131,27 @@ export const COUNTER_LABELS = {
   mage: { infantry: '法破重甲' }
 };
 
+/**
+ * @typedef {object} SynergyEffect
+ * @property {string} type - 效果类型（attackBoost/defenseBoost/moveBoost 等）
+ * @property {number} value - 效果数值
+ * @property {number} duration - 持续回合数
+ */
+
+/**
+ * @typedef {object} SynergyConfigEntry
+ * @property {string} name - 协同名称
+ * @property {string} description - 协同描述
+ * @property {UnitType[]} requiredTypes - 需要的兵种类型组合
+ * @property {number} range - 生效范围（曼哈顿距离）
+ * @property {SynergyEffect} effect - 协同效果
+ * @property {UnitType | 'both'} beneficiaryType - 受益兵种（'both' 表示双方都受益）
+ */
+
+/**
+ * 兵种协同配置表
+ * @type {Record<string, SynergyConfigEntry>}
+ */
 export const SYNERGY_CONFIG = {
   infantry_archer: {
     name: '步弓阵',

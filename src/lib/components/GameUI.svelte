@@ -529,32 +529,33 @@
   }
 
   /**
-   * @param {string} unitType
-   * @returns {{ target: string; label: string }[]}
+   * @param {UnitType} unitType
+   * @returns {{ target: UnitType; label: string }[]}
    */
   function getCounterAdvantages(unitType) {
     const counters = COUNTER_RELATIONSHIPS[unitType];
     const labels = COUNTER_LABELS[unitType];
     if (!counters) return [];
-    return Object.keys(counters).map(target => ({
+    return /** @type {UnitType[]} */ (Object.keys(counters)).map(target => ({
       target,
-      label: labels?.[target] || `${unitConfig[/** @type {UnitType} */ (unitType)].name}克制${unitConfig[/** @type {UnitType} */ (target)].name}`
+      label: labels?.[target] || `${unitConfig[unitType].name}克制${unitConfig[target].name}`
     }));
   }
 
   /**
-   * @param {string} unitType
-   * @returns {{ attacker: string; label: string }[]}
+   * @param {UnitType} unitType
+   * @returns {{ attacker: UnitType; label: string }[]}
    */
   function getCounterWeaknesses(unitType) {
-    /** @type {{ attacker: string; label: string }[]} */
+    /** @type {{ attacker: UnitType; label: string }[]} */
     const weaknesses = [];
     for (const [attackerType, targets] of Object.entries(COUNTER_RELATIONSHIPS)) {
+      const attackerUnitType = /** @type {UnitType} */ (attackerType);
       if (targets[unitType]) {
-        const labels = COUNTER_LABELS[attackerType];
+        const labels = COUNTER_LABELS[attackerUnitType];
         weaknesses.push({
-          attacker: attackerType,
-          label: labels?.[unitType] || `${unitConfig[/** @type {UnitType} */ (attackerType)].name}克制${unitConfig[/** @type {UnitType} */ (unitType)].name}`
+          attacker: attackerUnitType,
+          label: labels?.[unitType] || `${unitConfig[attackerUnitType].name}克制${unitConfig[unitType].name}`
         });
       }
     }
@@ -562,15 +563,17 @@
   }
 
   /**
-   * @param {string} unitType
-   * @returns {{ key: string; name: string; description: string; partnerType: string }[]}
+   * @param {UnitType} unitType
+   * @returns {{ key: string; name: string; description: string; partnerType: UnitType }[]}
    */
   function getSynergiesForUnit(unitType) {
-    /** @type {{ key: string; name: string; description: string; partnerType: string }[]} */
+    /** @type {{ key: string; name: string; description: string; partnerType: UnitType }[]} */
     const result = [];
     for (const [key, config] of Object.entries(SYNERGY_CONFIG)) {
       if (config.requiredTypes.includes(unitType)) {
-        const partnerType = config.requiredTypes.find(t => t !== unitType) || config.requiredTypes[0];
+        const partnerType = /** @type {UnitType} */ (
+          config.requiredTypes.find(t => t !== unitType) || config.requiredTypes[0]
+        );
         result.push({
           key,
           name: config.name,
