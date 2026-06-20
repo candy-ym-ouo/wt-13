@@ -83,7 +83,7 @@ export const gameRules = {
     adjacentSearchRadius: 2,
     preferOwnHalf: true,
     forbiddenTerrains: ['water'],
-    forbiddenTileEffects: [],
+    forbiddenTileEffects: ['burning', 'frozen', 'poison_swamp'],
     summonExhausted: true
   }
 };
