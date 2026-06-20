@@ -4,7 +4,7 @@
   import { boardConfig } from '$lib/config/boardConfig';
   import { unitConfig } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
-  import { gameState, selectedUnit, currentHand } from '$lib/stores/gameStore';
+  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns } from '$lib/stores/gameStore';
   import {
     getTerrain,
     getMoveRange,
@@ -15,7 +15,7 @@
     checkVictory,
     getMoraleTier
   } from '$lib/utils/gameLogic';
-  import { canUseCard, applyCardEffect } from '$lib/utils/cardSystem';
+  import { canUseCard, applyCardEffect, canAffordCard } from '$lib/utils/cardSystem';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -41,6 +41,9 @@
   let selectedUnitData = null;
   /** @type {EventCard[]} */
   let handCards = [];
+  let energy = 0;
+  /** @type {import('../utils/cardSystem').CooldownEntry[]} */
+  let cooldowns = [];
 
   /** @type {Map<string, any>} */
   const unitSprites = new Map();
@@ -57,6 +60,10 @@
   let unsubscribeSelected;
   /** @type {(() => void) | undefined} */
   let unsubscribeHand;
+  /** @type {(() => void) | undefined} */
+  let unsubscribeEnergy;
+  /** @type {(() => void) | undefined} */
+  let unsubscribeCooldowns;
 
   onMount(() => {
     initPixi();
@@ -76,6 +83,12 @@
     unsubscribeHand = currentHand.subscribe(/** @param {EventCard[]} h */ h => {
       handCards = h;
     });
+    unsubscribeEnergy = currentEnergy.subscribe(/** @param {number} e */ e => {
+      energy = e;
+    });
+    unsubscribeCooldowns = currentCooldowns.subscribe(/** @param {import('../utils/cardSystem').CooldownEntry[]} c */ c => {
+      cooldowns = c;
+    });
 
     window.addEventListener('resize', handleResize);
     handleResize();
@@ -85,6 +98,8 @@
     if (unsubscribeState) unsubscribeState();
     if (unsubscribeSelected) unsubscribeSelected();
     if (unsubscribeHand) unsubscribeHand();
+    if (unsubscribeEnergy) unsubscribeEnergy();
+    if (unsubscribeCooldowns) unsubscribeCooldowns();
     window.removeEventListener('resize', handleResize);
     if (app) {
       app.destroy(true, true);
@@ -514,6 +529,12 @@
     );
     if (!card) return;
 
+    const affordability = canAffordCard(card, energy, cooldowns);
+    if (!affordability.canUse) {
+      gameState.setMessage(`${card.name} 无法使用：${affordability.reason}`);
+      return;
+    }
+
     if (card.effect.type === 'terrainChange') {
       const layout = state.boardLayout || boardConfig.layout;
       const terrain = getTerrain(tx, ty, layout);
@@ -577,8 +598,13 @@
       }
     }
 
-    gameState.useCard(/** @type {'red' | 'blue'} */ (state.currentFaction), /** @type {string} */ (card.instanceId));
-    gameState.setMessage(`使用了 ${card.name}！`);
+    gameState.useCard(
+      /** @type {'red' | 'blue'} */ (state.currentFaction),
+      /** @type {string} */ (card.instanceId),
+      card.cost,
+      card.id
+    );
+    gameState.setMessage(`使用了 ${card.name}！（消耗 ${card.cost} 能量）`);
     checkWin();
   }
 

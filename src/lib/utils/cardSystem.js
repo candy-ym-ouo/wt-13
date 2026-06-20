@@ -1,4 +1,8 @@
-import { eventCards, cardConfig } from '$lib/config/eventCardConfig';
+import { eventCards, cardConfig, CARD_CATEGORY } from '$lib/config/eventCardConfig';
+
+/**
+ * @typedef {'instant' | 'sustain' | 'counter'} CardCategory
+ */
 
 /**
  * @typedef {object} CardEffect
@@ -13,11 +17,19 @@ import { eventCards, cardConfig } from '$lib/config/eventCardConfig';
  * @typedef {object} EventCard
  * @property {string} id
  * @property {string} name
+ * @property {CardCategory} category
  * @property {string} type
  * @property {string} description
  * @property {CardEffect} effect
  * @property {string} icon
+ * @property {number} cost
+ * @property {number} cooldown
+ * @property {string} [trigger]
  * @property {string} [instanceId]
+ * @property {'available' | 'active' | 'cooling'} [cardState]
+ * @property {number} [remainingDuration]
+ * @property {number} [remainingCooldown]
+ * @property {string} [targetUnitId]
  */
 
 /**
@@ -53,11 +65,22 @@ import { eventCards, cardConfig } from '$lib/config/eventCardConfig';
  */
 
 /**
+ * @typedef {object} CooldownEntry
+ * @property {string} cardId
+ * @property {number} remainingCooldown
+ */
+
+/**
  * @returns {EventCard}
  */
 export function drawCard() {
   const randomIndex = Math.floor(Math.random() * eventCards.length);
-  return /** @type {EventCard} */ ({ ...eventCards[randomIndex] });
+  return /** @type {EventCard} */ ({
+    ...eventCards[randomIndex],
+    cardState: 'available',
+    remainingDuration: 0,
+    remainingCooldown: 0
+  });
 }
 
 /**
@@ -67,9 +90,33 @@ export function drawInitialHand() {
   /** @type {EventCard[]} */
   const hand = [];
   for (let i = 0; i < cardConfig.initialHandSize; i++) {
-    hand.push({ ...drawCard(), instanceId: String(Date.now() + i + Math.random()) });
+    hand.push({
+      ...drawCard(),
+      instanceId: String(Date.now() + i + Math.random())
+    });
   }
   return hand;
+}
+
+/**
+ * @param {EventCard | null | undefined} card
+ * @param {number} currentEnergy
+ * @param {CooldownEntry[]} cooldowns
+ * @returns {{ canUse: boolean; reason?: string }}
+ */
+export function canAffordCard(card, currentEnergy, cooldowns) {
+  if (!card) return { canUse: false, reason: '卡牌不存在' };
+
+  const cdEntry = cooldowns.find(c => c.cardId === card.id);
+  if (cdEntry && cdEntry.remainingCooldown > 0) {
+    return { canUse: false, reason: `冷却中（还需 ${cdEntry.remainingCooldown} 回合）` };
+  }
+
+  if (currentEnergy < card.cost) {
+    return { canUse: false, reason: `能量不足（需要 ${card.cost}，当前 ${currentEnergy}）` };
+  }
+
+  return { canUse: true };
 }
 
 /**
@@ -87,7 +134,9 @@ export function canUseCard(card, selectedUnit, targetUnit, currentFaction) {
     case 'attackBoost':
     case 'defenseBoost':
     case 'moveBoost':
-    case 'doubleAttack': {
+    case 'doubleAttack':
+    case 'counterAttack':
+    case 'shield': {
       const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)
         ? selectedUnit
         : (targetUnit && targetUnit.faction === currentFaction ? targetUnit : null);
@@ -119,7 +168,7 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
   /** @type {AppliedEffect[]} */
   const effects = [];
   const currentFaction = /** @type {string} */ (gameState.currentFaction);
-  
+
   switch (card.effect.type) {
     case 'heal': {
       const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)
@@ -203,7 +252,94 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
     case 'reveal':
       effects.push({ type: 'reveal', duration: card.effect.duration });
       break;
+    case 'counterAttack': {
+      const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)
+        ? selectedUnit
+        : (targetUnit && targetUnit.faction === currentFaction ? targetUnit : null);
+      if (friendlyUnit) {
+        effects.push({
+          type: 'addBuff',
+          unitId: friendlyUnit.id,
+          buff: { type: 'counterAttack', value: card.effect.value, duration: card.effect.duration }
+        });
+      }
+      break;
+    }
+    case 'shield': {
+      const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)
+        ? selectedUnit
+        : (targetUnit && targetUnit.faction === currentFaction ? targetUnit : null);
+      if (friendlyUnit) {
+        effects.push({
+          type: 'addBuff',
+          unitId: friendlyUnit.id,
+          buff: { type: 'shield', duration: card.effect.duration }
+        });
+      }
+      break;
+    }
   }
 
   return effects;
+}
+
+/**
+ * @param {EventCard[]} hand
+ * @returns {EventCard[]}
+ */
+export function tickActiveCards(hand) {
+  return hand.map(card => {
+    if (card.cardState === 'active' && card.remainingDuration !== undefined) {
+      const newDuration = card.remainingDuration - 1;
+      if (newDuration <= 0) {
+        return { ...card, cardState: 'cooling', remainingDuration: 0, remainingCooldown: card.cooldown };
+      }
+      return { ...card, remainingDuration: newDuration };
+    }
+    return card;
+  });
+}
+
+/**
+ * @param {CooldownEntry[]} cooldowns
+ * @returns {CooldownEntry[]}
+ */
+export function tickCooldowns(cooldowns) {
+  return cooldowns
+    .map(cd => ({ ...cd, remainingCooldown: cd.remainingCooldown - 1 }))
+    .filter(cd => cd.remainingCooldown > 0);
+}
+
+/**
+ * @param {EventCard} card
+ * @returns {EventCard}
+ */
+export function activateCard(card) {
+  if (card.category === CARD_CATEGORY.SUSTAIN || card.category === CARD_CATEGORY.COUNTER) {
+    return {
+      ...card,
+      cardState: 'active',
+      remainingDuration: card.effect.duration || 1
+    };
+  }
+  return { ...card, cardState: 'cooling', remainingCooldown: card.cooldown };
+}
+
+/**
+ * @param {EventCard} card
+ * @returns {CooldownEntry}
+ */
+export function createCooldownEntry(card) {
+  return {
+    cardId: card.id,
+    remainingCooldown: card.cooldown
+  };
+}
+
+/**
+ * @param {number} currentEnergy
+ * @returns {number}
+ */
+export function refillEnergy(currentEnergy) {
+  return Math.min(currentEnergy + cardConfig.energyPerTurn, cardConfig.maxEnergy);
 }

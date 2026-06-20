@@ -2,10 +2,18 @@ import { writable, derived } from 'svelte/store';
 import { boardConfig } from '$lib/config/boardConfig';
 import { unitConfig, initialUnits } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
+import { cardConfig } from '$lib/config/eventCardConfig';
+import {
+  tickActiveCards,
+  tickCooldowns,
+  refillEnergy,
+  createCooldownEntry
+} from '$lib/utils/cardSystem';
 
 /**
  * @typedef {import('../utils/cardSystem').Unit} Unit
  * @typedef {import('../utils/cardSystem').EventCard} EventCard
+ * @typedef {import('../utils/cardSystem').CooldownEntry} CooldownEntry
  */
 
 /**
@@ -24,12 +32,15 @@ import { gameRules } from '$lib/config/gameRules';
  * @property {string | null} winner
  * @property {string | null} victoryCondition
  * @property {{red: EventCard[], blue: EventCard[]}} hands
+ * @property {{red: CooldownEntry[], blue: CooldownEntry[]}} cooldowns
+ * @property {{red: number, blue: number}} energy
  * @property {string[][] | null} boardLayout
  * @property {Record<string, string> | null} terrainChanged
  * @property {number} revealTurns
  * @property {{turn: number, faction: string}[]} turnHistory
  * @property {string} message
  * @property {MoraleChange[]} lastMoraleChanges
+ * @property {{cardId: string, type: 'play' | 'activate' | 'expire'} | null} lastCardAction
  */
 
 /**
@@ -55,7 +66,7 @@ function createInitialState() {
   let unitId = 0;
   /** @type {Unit[]} */
   const units = [];
-  
+
   /** @type {FactionKey[]} */
   const factions = ['red', 'blue'];
   for (const faction of factions) {
@@ -83,6 +94,15 @@ function createInitialState() {
   /** @type {{red: EventCard[], blue: EventCard[]}} */
   const hands = { red: [], blue: [] };
 
+  /** @type {{red: CooldownEntry[], blue: CooldownEntry[]}} */
+  const cooldowns = { red: [], blue: [] };
+
+  /** @type {{red: number, blue: number}} */
+  const energy = {
+    red: cardConfig.initialEnergy,
+    blue: cardConfig.initialEnergy
+  };
+
   return {
     units,
     currentFaction: 'red',
@@ -94,12 +114,15 @@ function createInitialState() {
     winner: null,
     victoryCondition: null,
     hands,
+    cooldowns,
+    energy,
     boardLayout: null,
     terrainChanged: null,
     revealTurns: 0,
     turnHistory: [],
     message: '游戏开始！红方先行动',
-    lastMoraleChanges: []
+    lastMoraleChanges: [],
+    lastCardAction: null
   };
 }
 
@@ -155,7 +178,7 @@ function createGameState() {
       const hasDoubleAttack = attacker?.buffs?.some(
         /** @param {any} b */ b => b.type === 'doubleAttack'
       );
-      
+
       /** @type {MoraleChange[]} */
       const moraleChanges = [];
 
@@ -178,8 +201,13 @@ function createGameState() {
           }
         }
         if (u.id === defenderId) {
-          const newHp = Math.max(0, u.currentHp - damage);
-          return { ...u, currentHp: newHp };
+          const hasShield = u.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
+          const finalDamage = hasShield ? 0 : damage;
+          const newHp = Math.max(0, u.currentHp - finalDamage);
+          const newBuffs = hasShield
+            ? (u.buffs || []).filter(/** @param {any} b */ b => b.type !== 'shield')
+            : u.buffs;
+          return { ...u, currentHp: newHp, buffs: newBuffs };
         }
         return u;
       });
@@ -272,6 +300,22 @@ function createGameState() {
       if (nextFaction === state.currentFaction) {
         newRevealTurns = state.revealTurns ? state.revealTurns : 0;
       }
+
+      const nextHands = {
+        red: nextFaction === 'red' ? tickActiveCards(state.hands.red) : state.hands.red,
+        blue: nextFaction === 'blue' ? tickActiveCards(state.hands.blue) : state.hands.blue
+      };
+
+      const nextCooldowns = {
+        red: nextFaction === 'red' ? tickCooldowns(state.cooldowns.red) : state.cooldowns.red,
+        blue: nextFaction === 'blue' ? tickCooldowns(state.cooldowns.blue) : state.cooldowns.blue
+      };
+
+      const nextEnergy = {
+        red: nextFaction === 'red' ? refillEnergy(state.energy.red) : state.energy.red,
+        blue: nextFaction === 'blue' ? refillEnergy(state.energy.blue) : state.energy.blue
+      };
+
       return {
         ...state,
         currentFaction: nextFaction,
@@ -280,6 +324,9 @@ function createGameState() {
         selectedUnitId: null,
         selectedCardId: null,
         gamePhase: 'idle',
+        hands: nextHands,
+        cooldowns: nextCooldowns,
+        energy: nextEnergy,
         revealTurns: newRevealTurns,
         turnHistory: [...state.turnHistory, { turn: state.turn, faction: state.currentFaction }]
       };
@@ -304,29 +351,66 @@ function createGameState() {
         red: [...state.hands.red],
         blue: [...state.hands.blue]
       };
-      if (hands[faction].length < 5) {
-        hands[faction] = [...hands[faction], { ...card, instanceId: String(Date.now() + Math.random()) }];
+      if (hands[faction].length < cardConfig.maxHandSize) {
+        hands[faction] = [...hands[faction], {
+          ...card,
+          instanceId: String(Date.now() + Math.random()),
+          cardState: 'available',
+          remainingDuration: 0,
+          remainingCooldown: 0
+        }];
       }
       return { ...state, hands };
     }),
     /**
      * @param {'red' | 'blue'} faction
      * @param {string} cardInstanceId
+     * @param {number} cost
+     * @param {string} cardId
      */
-    useCard: (faction, cardInstanceId) => update(state => {
+    useCard: (faction, cardInstanceId, cost, cardId) => update(state => {
       const hands = {
         red: [...state.hands.red],
         blue: [...state.hands.blue]
       };
+      const usedCard = hands[faction].find(
+        /** @param {EventCard} c */
+        c => c.instanceId === cardInstanceId
+      );
+
       hands[faction] = hands[faction].filter(
         /** @param {EventCard} c */
         c => c.instanceId !== cardInstanceId
       );
+
+      const newCooldowns = {
+        red: [...state.cooldowns.red],
+        blue: [...state.cooldowns.blue]
+      };
+
+      if (usedCard && usedCard.cooldown > 0) {
+        const existingCd = newCooldowns[faction].find(c => c.cardId === cardId);
+        if (existingCd) {
+          existingCd.remainingCooldown = Math.max(existingCd.remainingCooldown, usedCard.cooldown);
+        } else {
+          newCooldowns[faction] = [...newCooldowns[faction], createCooldownEntry(usedCard)];
+        }
+      }
+
+      const newEnergy = {
+        red: state.energy.red,
+        blue: state.energy.blue
+      };
+      newEnergy[faction] = Math.max(0, newEnergy[faction] - cost);
+
       return {
         ...state,
         hands,
+        cooldowns: newCooldowns,
+        energy: newEnergy,
         selectedCardId: null,
-        gamePhase: 'idle'
+        gamePhase: 'idle',
+        lastCardAction: usedCard ? { cardId: usedCard.id, type: 'play' } : null
       };
     }),
     /**
@@ -373,7 +457,13 @@ function createGameState() {
       const target = state.units.find(/** @param {Unit} u */ u => u.id === unitId);
       let updatedUnits = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
-          return { ...u, currentHp: Math.max(0, u.currentHp - damage) };
+          const hasShield = u.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
+          const finalDamage = hasShield ? 0 : damage;
+          const newHp = Math.max(0, u.currentHp - finalDamage);
+          const newBuffs = hasShield
+            ? (u.buffs || []).filter(/** @param {any} b */ b => b.type !== 'shield')
+            : u.buffs;
+          return { ...u, currentHp: newHp, buffs: newBuffs };
         }
         return u;
       });
@@ -479,7 +569,8 @@ function createGameState() {
         return u;
       });
       return { ...state, units, lastMoraleChanges: moraleChanges };
-    })
+    }),
+    clearLastCardAction: () => update(state => ({ ...state, lastCardAction: null }))
   };
 }
 
@@ -499,4 +590,12 @@ export const selectedUnit = derived(gameState, /** @param {GameState} $state */ 
 
 export const currentHand = derived(gameState, /** @param {GameState} $state */ $state =>
   $state.hands[/** @type {'red' | 'blue'} */ ($state.currentFaction)] || []
+);
+
+export const currentEnergy = derived(gameState, /** @param {GameState} $state */ $state =>
+  $state.energy[/** @type {'red' | 'blue'} */ ($state.currentFaction)] || 0
+);
+
+export const currentCooldowns = derived(gameState, /** @param {GameState} $state */ $state =>
+  $state.cooldowns[/** @type {'red' | 'blue'} */ ($state.currentFaction)] || []
 );

@@ -1,15 +1,17 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { gameState, selectedUnit, currentHand } from '$lib/stores/gameStore';
+  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns } from '$lib/stores/gameStore';
   import { unitConfig } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
+  import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, eventCards } from '$lib/config/eventCardConfig';
   import { getTerrain, getMoraleTier } from '$lib/utils/gameLogic';
-  import { drawCard, drawInitialHand } from '$lib/utils/cardSystem';
+  import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
    * @typedef {import('../utils/cardSystem').EventCard} EventCard
+   * @typedef {import('../utils/cardSystem').CooldownEntry} CooldownEntry
    * @typedef {import('../stores/gameStore').GameState} GameState
    * @typedef {keyof typeof unitConfig} UnitType
    */
@@ -32,6 +34,9 @@
   let selectedUnitData;
   /** @type {EventCard[]} */
   let handCards;
+  let energy = 0;
+  /** @type {CooldownEntry[]} */
+  let cooldowns;
   let showRecords = false;
   /** @type {GameRecord[]} */
   let records = [];
@@ -42,6 +47,10 @@
   let unsubscribeSelected;
   /** @type {(() => void) | undefined} */
   let unsubscribeHand;
+  /** @type {(() => void) | undefined} */
+  let unsubscribeEnergy;
+  /** @type {(() => void) | undefined} */
+  let unsubscribeCooldowns;
 
   let recordSaved = false;
 
@@ -59,6 +68,12 @@
     unsubscribeHand = currentHand.subscribe(/** @param {EventCard[]} h */ h => {
       handCards = h;
     });
+    unsubscribeEnergy = currentEnergy.subscribe(/** @param {number} e */ e => {
+      energy = e;
+    });
+    unsubscribeCooldowns = currentCooldowns.subscribe(/** @type {CooldownEntry[]} c */ c => {
+      cooldowns = c;
+    });
     records = /** @type {GameRecord[]} */ (getGameRecords());
 
     if (!state || !state.hands || state.hands.red.length === 0) {
@@ -70,6 +85,8 @@
     if (unsubscribe) unsubscribe();
     if (unsubscribeSelected) unsubscribeSelected();
     if (unsubscribeHand) unsubscribeHand();
+    if (unsubscribeEnergy) unsubscribeEnergy();
+    if (unsubscribeCooldowns) unsubscribeCooldowns();
   });
 
   function initHands() {
@@ -112,14 +129,14 @@
     /** @type {'red' | 'blue'} */
     const nextFaction = state.currentFaction === 'red' ? 'blue' : 'red';
     gameState.endTurn();
-    
+
     const newCard = drawCard();
     gameState.addCard(nextFaction, newCard);
-    
+
     const nextName = nextFaction === 'red' ? '红方' : '蓝方';
     const turnNum = nextFaction === 'red' ? state.turn + 1 : state.turn;
-    gameState.setMessage(`第 ${turnNum} 回合 - ${nextName}行动`);
-    
+    gameState.setMessage(`第 ${turnNum} 回合 - ${nextName}行动（获得 ${cardConfig.energyPerTurn} 能量）`);
+
     gameState.selectUnit(null);
     gameState.selectCard(null);
   }
@@ -136,13 +153,20 @@
    */
   function handleSelectCard(card) {
     if (!state || state.gameOver) return;
+
+    const affordability = canAffordCard(card, energy, cooldowns);
+    if (!affordability.canUse) {
+      gameState.setMessage(`${card.name}：${affordability.reason}`);
+      return;
+    }
+
     if (state.selectedCardId === card.instanceId) {
       gameState.selectCard(null);
       gameState.setMessage('');
     } else {
       gameState.selectCard(card.instanceId || null);
       const hint = getCardHint(card);
-      gameState.setMessage(`${hint}`);
+      gameState.setMessage(`${hint}（消耗 ${card.cost} 能量）`);
     }
   }
 
@@ -157,6 +181,8 @@
       case 'defenseBoost':
       case 'moveBoost':
       case 'doubleAttack':
+      case 'counterAttack':
+      case 'shield':
         return `已选中 ${card.name}，请点击己方单位使用（也可先选中单位再选卡）`;
       case 'damage':
       case 'stun':
@@ -281,6 +307,24 @@
   }
 
   /**
+   * @param {EventCard} card
+   * @returns {boolean}
+   */
+  function isCardPlayable(card) {
+    const affordability = canAffordCard(card, energy, cooldowns);
+    return affordability.canUse;
+  }
+
+  /**
+   * @param {EventCard} card
+   * @returns {string | undefined}
+   */
+  function getCardUnplayableReason(card) {
+    const affordability = canAffordCard(card, energy, cooldowns);
+    return affordability.reason;
+  }
+
+  /**
    * @param {string} buffType
    * @returns {string}
    */
@@ -290,7 +334,9 @@
       attackBoost: '攻击强化',
       defenseBoost: '防御强化',
       moveBoost: '移动强化',
-      doubleAttack: '连续攻击'
+      doubleAttack: '连续攻击',
+      counterAttack: '反击姿态',
+      shield: '护盾屏障'
     };
     return names[buffType] || buffType;
   }
@@ -334,6 +380,15 @@
   function handleCardKeydown(card) {
     handleSelectCard(card);
   }
+
+  /**
+   * @param {string} cardId
+   * @returns {string}
+   */
+  function getCardNameById(cardId) {
+    const card = eventCards.find(c => c.id === cardId);
+    return card ? card.name : cardId;
+  }
 </script>
 
 <div class="game-ui">
@@ -346,12 +401,22 @@
       {/if}
     </div>
     <div class="faction-info">
-      <span 
+      <span
         class="current-faction"
         style="color: {state ? getFactionColor(state.currentFaction) : '#999'}"
       >
         {state ? getFactionName(state.currentFaction) : ''}行动
       </span>
+      <div class="energy-bar-wrapper" title="能量">
+        <span class="energy-icon">⚡</span>
+        <div class="energy-bar">
+          <div
+            class="energy-fill"
+            style="width: {(energy / cardConfig.maxEnergy) * 100}%"
+          ></div>
+        </div>
+        <span class="energy-text">{energy}/{cardConfig.maxEnergy}</span>
+      </div>
     </div>
     <div class="top-actions">
       <button class="btn btn-secondary" on:click={handleShowRecords}>
@@ -362,6 +427,17 @@
       </button>
     </div>
   </div>
+
+  {#if cooldowns && cooldowns.length > 0}
+    <div class="cooldown-bar">
+      <span class="cooldown-label">冷却中：</span>
+      {#each cooldowns as cd (cd.cardId)}
+        <span class="cooldown-tag">
+          {getCardNameById(cd.cardId)} ({cd.remainingCooldown})
+        </span>
+      {/each}
+    </div>
+  {/if}
 
   {#if state?.message}
     <div class="message-bar">
@@ -394,8 +470,8 @@
   {/if}
 
   {#if showRecords}
-    <div 
-      class="records-overlay" 
+    <div
+      class="records-overlay"
       on:click|self={handleShowRecords}
       role="dialog"
       aria-label="游戏记录"
@@ -445,7 +521,7 @@
       <div class="unit-header">
         <span class="unit-icon">{getUnitIcon(selectedUnitData.type)}</span>
         <span class="unit-name">{getUnitName(selectedUnitData.type)}</span>
-        <span 
+        <span
           class="unit-faction"
           style="color: {getFactionColor(selectedUnitData.faction)}"
         >
@@ -456,8 +532,8 @@
         <div class="stat">
           <span class="stat-label">生命</span>
           <div class="stat-bar">
-            <div 
-              class="stat-fill hp" 
+            <div
+              class="stat-fill hp"
               style="width: {(selectedUnitData.currentHp / selectedUnitData.maxHp) * 100}%"
             ></div>
           </div>
@@ -466,7 +542,7 @@
         <div class="stat">
           <span class="stat-label">士气</span>
           <div class="stat-bar">
-            <div 
+            <div
               class="stat-fill morale"
               style="width: {selectedUnitData.morale ?? 80}%"
             ></div>
@@ -538,28 +614,39 @@
 
   <div class="bottom-panel">
     <div class="hand-cards">
-      <span class="hand-label">手牌 ({handCards?.length || 0}/5)</span>
+      <span class="hand-label">手牌 ({handCards?.length || 0}/{cardConfig.maxHandSize})</span>
       <div class="cards-container">
         {#each handCards || [] as card (card.instanceId)}
-          <div 
+          <div
             class="card"
             role="button"
             tabindex="0"
             aria-label={card.name}
             class:selected={state?.selectedCardId === card.instanceId}
+            class:unplayable={!isCardPlayable(card)}
+            style="border-color: {CARD_CATEGORY_COLORS[card.category]}"
             on:click={() => handleSelectCard(card)}
             on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardKeydown(card)}
-            title={card.description}
+            title={isCardPlayable(card) ? card.description : `${card.description}\n[${getCardUnplayableReason(card)}]`}
           >
+            <div class="card-category-badge" style="background: {CARD_CATEGORY_COLORS[card.category]}">
+              {CARD_CATEGORY_LABELS[card.category]}
+            </div>
+            <div class="card-cost" title="能量消耗">⚡{card.cost}</div>
             <div class="card-icon">{card.icon}</div>
             <div class="card-name">{card.name}</div>
             <div class="card-type">{getCardTypeLabel(card.type)}</div>
+            {#if !isCardPlayable(card)}
+              <div class="card-overlay">
+                <span class="card-unplayable-text">{getCardUnplayableReason(card)}</span>
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
     </div>
     <div class="action-buttons">
-      <button 
+      <button
         class="btn btn-primary btn-large"
         on:click={handleEndTurn}
         disabled={state?.gameOver}
@@ -630,12 +717,77 @@
   }
 
   .faction-info {
-    font-size: 18px;
-    font-weight: bold;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
   }
 
   .current-faction {
+    font-size: 18px;
+    font-weight: bold;
     text-shadow: 0 0 10px currentColor;
+  }
+
+  .energy-bar-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 4px 12px;
+    border-radius: 20px;
+  }
+
+  .energy-icon {
+    font-size: 16px;
+  }
+
+  .energy-bar {
+    width: 120px;
+    height: 10px;
+    background: #333;
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  .energy-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #f39c12, #f1c40f);
+    transition: width 0.3s ease;
+  }
+
+  .energy-text {
+    font-size: 12px;
+    font-weight: bold;
+    color: #f1c40f;
+    min-width: 50px;
+    text-align: center;
+  }
+
+  .cooldown-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 20px;
+    background: rgba(155, 89, 182, 0.2);
+    border-bottom: 1px solid #9b59b6;
+    color: white;
+    flex-wrap: wrap;
+  }
+
+  .cooldown-label {
+    font-size: 12px;
+    color: #bb8fce;
+    font-weight: bold;
+  }
+
+  .cooldown-tag {
+    background: rgba(155, 89, 182, 0.4);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    border: 1px solid #9b59b6;
   }
 
   .top-actions {
@@ -703,7 +855,7 @@
 
   .message-bar {
     position: absolute;
-    top: 60px;
+    top: 90px;
     left: 50%;
     transform: translateX(-50%);
     padding: 8px 20px;
@@ -852,7 +1004,7 @@
   .unit-panel {
     position: absolute;
     left: 20px;
-    top: 80px;
+    top: 110px;
     width: 200px;
     background: rgba(26, 26, 46, 0.95);
     border: 2px solid #3498db;
@@ -1060,12 +1212,12 @@
   }
 
   .card {
-    width: 80px;
-    height: 100px;
+    width: 90px;
+    min-height: 120px;
     background: #2c3e50;
     border: 2px solid #3498db;
     border-radius: 6px;
-    padding: 8px;
+    padding: 6px;
     cursor: pointer;
     transition: all 0.2s;
     display: flex;
@@ -1073,35 +1225,92 @@
     align-items: center;
     color: white;
     outline: none;
+    position: relative;
+    overflow: hidden;
   }
 
   .card:hover,
   .card:focus {
     transform: translateY(-5px);
-    border-color: #f1c40f;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.4);
   }
 
   .card.selected {
-    border-color: #e74c3c;
+    border-color: #e74c3c !important;
     box-shadow: 0 0 15px rgba(231, 76, 60, 0.5);
     transform: translateY(-5px);
   }
 
+  .card.unplayable {
+    opacity: 0.5;
+    cursor: not-allowed;
+    filter: grayscale(0.5);
+  }
+
+  .card.unplayable:hover {
+    transform: none;
+  }
+
+  .card-category-badge {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 0 0 4px 0;
+    font-weight: bold;
+  }
+
+  .card-cost {
+    position: absolute;
+    top: 0;
+    right: 0;
+    font-size: 10px;
+    padding: 2px 5px;
+    background: rgba(241, 196, 15, 0.9);
+    color: #1a1a2e;
+    border-radius: 0 0 0 4px;
+    font-weight: bold;
+  }
+
   .card-icon {
-    font-size: 28px;
-    margin-bottom: 5px;
+    font-size: 26px;
+    margin-top: 14px;
+    margin-bottom: 4px;
   }
 
   .card-name {
     font-size: 11px;
     font-weight: bold;
     text-align: center;
+    line-height: 1.2;
   }
 
   .card-type {
-    font-size: 10px;
+    font-size: 9px;
     color: #888;
     margin-top: auto;
+  }
+
+  .card-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+  }
+
+  .card-unplayable-text {
+    font-size: 9px;
+    color: #e74c3c;
+    text-align: center;
+    padding: 4px;
+    font-weight: bold;
   }
 
   .action-buttons {
