@@ -4,7 +4,7 @@
   import { unitConfig } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, eventCards } from '$lib/config/eventCardConfig';
-  import { getTerrain, getMoraleTier } from '$lib/utils/gameLogic';
+  import { getTerrain, getMoraleTier, settleBases, checkVictory } from '$lib/utils/gameLogic';
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
 
@@ -128,6 +128,11 @@
     if (!state || state.gameOver) return;
     /** @type {'red' | 'blue'} */
     const nextFaction = state.currentFaction === 'red' ? 'blue' : 'red';
+    const layout = state.boardLayout || null;
+
+    const baseResult = settleBases(state.bases, state.units, nextFaction, layout);
+    gameState.setBases(baseResult.bases);
+
     gameState.endTurn();
 
     const newCard = drawCard();
@@ -135,10 +140,19 @@
 
     const nextName = nextFaction === 'red' ? '红方' : '蓝方';
     const turnNum = nextFaction === 'red' ? state.turn + 1 : state.turn;
-    gameState.setMessage(`第 ${turnNum} 回合 - ${nextName}行动（获得 ${cardConfig.energyPerTurn} 能量）`);
+
+    let msg = `第 ${turnNum} 回合 - ${nextName}行动（获得 ${cardConfig.energyPerTurn} 能量）`;
+    if (baseResult.messages.length > 0) {
+      msg += '\n' + baseResult.messages.join('；');
+    }
+    gameState.setMessage(msg);
 
     gameState.selectUnit(null);
     gameState.selectCard(null);
+
+    if (baseResult.victory) {
+      gameState.setVictory(baseResult.victory.winner, baseResult.victory.condition);
+    }
   }
 
   function handleRestart() {
@@ -466,7 +480,34 @@
 
   {#if state?.message}
     <div class="message-bar">
-      {state.message}
+      {#each state.message.split('\n') as line}
+        <div>{line}</div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if state?.bases && state.bases.length > 0 && !state.gameOver}
+    <div class="base-status-panel">
+      <div class="base-status-title">基地状态</div>
+      {#each state.bases as base}
+        <div class="base-status-item">
+          <span class="base-faction" style="color: {getFactionColor(base.faction)}">
+            {getFactionName(base.faction)}基地
+          </span>
+          <div class="base-durability-bar">
+            <div
+              class="base-durability-fill"
+              style="width: {(base.durability / base.maxDurability) * 100}%; background: {base.durability / base.maxDurability > 0.6 ? '#2ecc71' : base.durability / base.maxDurability > 0.3 ? '#f1c40f' : '#e74c3c'}"
+            ></div>
+          </div>
+          <span class="base-durability-text">{Math.floor(base.durability)}/{base.maxDurability}</span>
+          {#if base.captureProgress > 0}
+            <span class="base-capture-text" style="color: {getFactionColor(base.capturingFaction)}">
+              占领中 {base.captureProgress}/{gameRules.victoryConditions.captureBase.captureTurnsRequired}
+            </span>
+          {/if}
+        </div>
+      {/each}
     </div>
   {/if}
 
@@ -613,6 +654,29 @@
             {:else if !getUnitTerrain(selectedUnitData)?.isBase}
               (+{getUnitTerrain(selectedUnitData)?.moraleBonus} 士气)
             {/if}
+          {/if}
+          {#if getUnitTerrain(selectedUnitData)?.isBase && state?.bases}
+            {#each state.bases as b}
+              {#if b.x === selectedUnitData.x && b.y === selectedUnitData.y}
+                <div class="base-detail">
+                  耐久: {Math.floor(b.durability)}/{b.maxDurability}
+                  {#if b.captureProgress > 0}
+                    <span style="color: {getFactionColor(b.capturingFaction)}">
+                      （占领中 {b.captureProgress}/{gameRules.victoryConditions.captureBase.captureTurnsRequired}）
+                    </span>
+                  {/if}
+                </div>
+                {#if selectedUnitData.faction === b.faction}
+                  <div class="base-repair-hint">
+                    💡 驻守修复 +{b.repairPerTurn + (gameRules.victoryConditions.captureBase.garrisonRepairBonus || 0)}/回合
+                  </div>
+                {:else}
+                  <div class="base-capture-hint">
+                    ⚔️ 持续占领可攻破基地
+                  </div>
+                {/if}
+              {/if}
+            {/each}
           {/if}
         </div>
       {/if}
@@ -906,6 +970,64 @@
     z-index: 100;
     max-width: 80%;
     text-align: center;
+    line-height: 1.5;
+  }
+
+  .base-status-panel {
+    position: absolute;
+    right: 20px;
+    top: 110px;
+    width: 180px;
+    background: rgba(26, 26, 46, 0.95);
+    border: 2px solid #3498db;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: white;
+    z-index: 50;
+  }
+
+  .base-status-title {
+    font-size: 13px;
+    font-weight: bold;
+    margin-bottom: 8px;
+    color: #f1c40f;
+    border-bottom: 1px solid #333;
+    padding-bottom: 5px;
+  }
+
+  .base-status-item {
+    margin-bottom: 8px;
+    font-size: 11px;
+  }
+
+  .base-faction {
+    font-weight: bold;
+    display: block;
+    margin-bottom: 3px;
+  }
+
+  .base-durability-bar {
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 2px;
+  }
+
+  .base-durability-fill {
+    height: 100%;
+    transition: width 0.3s;
+  }
+
+  .base-durability-text {
+    font-size: 10px;
+    color: #888;
+  }
+
+  .base-capture-text {
+    font-size: 10px;
+    font-weight: bold;
+    margin-left: 8px;
   }
 
   .game-over-overlay {
@@ -1173,6 +1295,22 @@
     border-top: 1px solid #333;
     font-size: 12px;
     color: #888;
+    line-height: 1.5;
+  }
+
+  .base-detail {
+    margin-top: 6px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    font-size: 11px;
+  }
+
+  .base-repair-hint,
+  .base-capture-hint {
+    margin-top: 4px;
+    font-size: 10px;
+    color: #666;
   }
 
   .buffs-info {

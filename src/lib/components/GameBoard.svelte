@@ -13,7 +13,8 @@
     calculateDamage,
     getUnitAt,
     checkVictory,
-    getMoraleTier
+    getMoraleTier,
+    getBaseAt
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard } from '$lib/utils/cardSystem';
 
@@ -135,6 +136,86 @@
     app.stage.on('pointerdown', onPointerDown);
   }
 
+  function drawBaseStatus() {
+    if (!state || !state.bases || !boardLayer) return;
+    
+    for (const base of state.bases) {
+      const terrain = getTerrain(base.x, base.y, state.boardLayout || boardConfig.layout);
+      if (!terrain || !terrain.isBase) continue;
+
+      const x = base.x * boardConfig.tileSize;
+      const y = base.y * boardConfig.tileSize;
+      const size = boardConfig.tileSize;
+
+      const durabilityPercent = base.durability / base.maxDurability;
+      const barWidth = size - 8;
+      const barHeight = 6;
+      const barX = x + 4;
+      const barY = y + size - 12;
+
+      const barBg = new PIXI.Graphics();
+      barBg.beginFill(0x333333, 0.9);
+      barBg.drawRect(barX, barY, barWidth, barHeight);
+      barBg.endFill();
+      boardLayer.addChild(barBg);
+
+      const durColor = durabilityPercent > 0.6 ? 0x2ecc71 : durabilityPercent > 0.3 ? 0xf1c40f : 0xe74c3c;
+      const barFill = new PIXI.Graphics();
+      barFill.beginFill(durColor);
+      barFill.drawRect(barX, barY, barWidth * durabilityPercent, barHeight);
+      barFill.endFill();
+      boardLayer.addChild(barFill);
+
+      const durText = new PIXI.Text(`${Math.floor(base.durability)}`, {
+        fontSize: 10,
+        fill: 0xffffff,
+        stroke: 0x000000,
+        strokeThickness: 2,
+        fontWeight: 'bold'
+      });
+      durText.anchor.set(0.5);
+      durText.x = x + size / 2;
+      durText.y = y + size - 8;
+      boardLayer.addChild(durText);
+
+      if (base.captureProgress > 0) {
+        const captureTurns = gameRules.victoryConditions.captureBase.captureTurnsRequired || 3;
+        const capturePercent = base.captureProgress / captureTurns;
+        const captureBarY = y + size - 22;
+        
+        const captureBg = new PIXI.Graphics();
+        captureBg.beginFill(0x333333, 0.9);
+        captureBg.drawRect(barX, captureBarY, barWidth, 5);
+        captureBg.endFill();
+        boardLayer.addChild(captureBg);
+
+        const captureColor = base.capturingFaction === 'red' ? 0xe74c3c : 0x3498db;
+        const captureFill = new PIXI.Graphics();
+        captureFill.beginFill(captureColor);
+        captureFill.drawRect(barX, captureBarY, barWidth * capturePercent, 5);
+        captureFill.endFill();
+        boardLayer.addChild(captureFill);
+
+        const captureText = new PIXI.Text(`占领${base.captureProgress}/${captureTurns}`, {
+          fontSize: 8,
+          fill: 0xffffff,
+          stroke: 0x000000,
+          strokeThickness: 2
+        });
+        captureText.anchor.set(0.5);
+        captureText.x = x + size / 2;
+        captureText.y = y + size - 19;
+        boardLayer.addChild(captureText);
+      }
+
+      const baseIcon = new PIXI.Text('🏰', { fontSize: 20 });
+      baseIcon.anchor.set(0.5);
+      baseIcon.x = x + size / 2;
+      baseIcon.y = y + size / 2 - 5;
+      boardLayer.addChild(baseIcon);
+    }
+  }
+
   function drawBoard() {
     if (!boardLayer) return;
     boardLayer.removeChildren();
@@ -170,6 +251,7 @@
 
   function renderBoard() {
     drawBoard();
+    drawBaseStatus();
   }
 
   function renderUnits() {
@@ -781,7 +863,7 @@
   function checkWin() {
     if (!state) return;
     const layout = state.boardLayout || boardConfig.layout;
-    const victory = checkVictory(state.units, state.currentFaction, layout);
+    const victory = checkVictory(state.units, state.currentFaction, layout, state.bases);
     if (victory) {
       gameState.setVictory(victory.winner, victory.condition);
       gameState.setMessage(

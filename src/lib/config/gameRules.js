@@ -17,7 +17,12 @@ export const gameRules = {
     },
     captureBase: {
       enabled: true,
-      description: '占领敌方基地'
+      description: '占领敌方基地',
+      captureTurnsRequired: 3,
+      durabilityDamagePerTurn: 15,
+      durabilityDamagePerUnit: 5,
+      garrisonRepairBonus: 10,
+      garrisonUnitRequired: true
     }
   },
   combat: {

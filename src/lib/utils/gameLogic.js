@@ -54,6 +54,25 @@ import { gameRules } from '$lib/config/gameRules';
  */
 
 /**
+ * @typedef {object} BaseState
+ * @property {string} faction
+ * @property {number} x
+ * @property {number} y
+ * @property {number} durability
+ * @property {number} maxDurability
+ * @property {number} captureProgress
+ * @property {string} capturingFaction
+ * @property {number} repairPerTurn
+ */
+
+/**
+ * @typedef {object} BaseSettlementResult
+ * @property {BaseState[]} bases
+ * @property {string[]} messages
+ * @property {VictoryResult | null} victory
+ */
+
+/**
  * @typedef {keyof typeof unitConfig} UnitType
  * @typedef {keyof typeof boardConfig.terrain} TerrainType
  */
@@ -369,27 +388,24 @@ function heuristic(a, b) {
  * @param {Unit[]} units
  * @param {string} currentFaction
  * @param {string[][] | null} [boardLayout]
+ * @param {BaseState[]} [bases]
  * @returns {VictoryResult | null}
  */
-export function checkVictory(units, currentFaction, boardLayout) {
+export function checkVictory(units, currentFaction, boardLayout, bases) {
   const enemyFaction = currentFaction === 'red' ? 'blue' : 'red';
   const enemyUnits = units.filter(/** @param {Unit} u */ u => u.faction === enemyFaction);
 
-  if (enemyUnits.length === 0) {
+  if (gameRules.victoryConditions.destroyAll.enabled && enemyUnits.length === 0) {
     return { winner: currentFaction, condition: '消灭所有敌军' };
   }
 
-  for (let y = 0; y < boardConfig.height; y++) {
-    for (let x = 0; x < boardConfig.width; x++) {
-      const terrain = getTerrain(x, y, boardLayout);
-      if (terrain && terrain.isBase && terrain.faction === enemyFaction) {
-        const unitOnBase = units.find(
-          /** @param {Unit} u */
-          u => u.x === x && u.y === y && u.faction === currentFaction
-        );
-        if (unitOnBase) {
-          return { winner: currentFaction, condition: '占领敌方基地' };
-        }
+  if (gameRules.victoryConditions.captureBase.enabled && bases && bases.length > 0) {
+    const captureTurnsRequired = gameRules.victoryConditions.captureBase.captureTurnsRequired || 3;
+    for (const base of bases) {
+      if (base.faction === enemyFaction && base.captureProgress >= captureTurnsRequired) {
+        const terrain = getTerrain(base.x, base.y, boardLayout);
+        const baseName = terrain?.name || '敌方基地';
+        return { winner: currentFaction, condition: `占领${baseName}` };
       }
     }
   }
@@ -405,4 +421,110 @@ export function checkVictory(units, currentFaction, boardLayout) {
  */
 export function getUnitAt(units, x, y) {
   return units.find(/** @param {Unit} u */ u => u.x === x && u.y === y) || null;
+}
+
+/**
+ * @param {BaseState[]} bases
+ * @param {Unit[]} units
+ * @param {string} currentFaction
+ * @param {string[][] | null} [boardLayout]
+ * @returns {BaseSettlementResult}
+ */
+export function settleBases(bases, units, currentFaction, boardLayout) {
+  /** @type {string[]} */
+  const messages = [];
+  /** @type {VictoryResult | null} */
+  let victoryResult = null;
+
+  const captureRule = gameRules.victoryConditions.captureBase;
+  const captureTurnsRequired = captureRule.captureTurnsRequired || 3;
+
+  const newBases = bases.map(base => {
+    const newBase = { ...base };
+    const unitsOnBase = units.filter(u => u.x === base.x && u.y === base.y);
+    const friendlyUnits = unitsOnBase.filter(u => u.faction === base.faction);
+    const enemyUnits = unitsOnBase.filter(u => u.faction !== base.faction);
+
+    const terrain = getTerrain(base.x, base.y, boardLayout);
+    const baseName = terrain?.name || '基地';
+
+    if (enemyUnits.length > 0 && friendlyUnits.length === 0) {
+      const damagePerUnit = captureRule.durabilityDamagePerUnit || 5;
+      const baseDamage = captureRule.durabilityDamagePerTurn || 15;
+      const totalDamage = baseDamage + (enemyUnits.length - 1) * damagePerUnit;
+      
+      newBase.durability = Math.max(0, newBase.durability - totalDamage);
+      messages.push(`${baseName} 受到 ${totalDamage} 点耐久损伤（${enemyUnits.length} 个敌军）`);
+
+      if (newBase.durability <= 0) {
+        const enemyFaction = enemyUnits[0].faction;
+        if (newBase.capturingFaction === enemyFaction) {
+          newBase.captureProgress += 1;
+        } else {
+          newBase.captureProgress = 1;
+          newBase.capturingFaction = enemyFaction;
+        }
+        
+        const factionName = enemyFaction === 'red' ? '红方' : '蓝方';
+        messages.push(`${baseName} 耐久归零！${factionName} 占领进度：${newBase.captureProgress}/${captureTurnsRequired}`);
+
+        if (newBase.captureProgress >= captureTurnsRequired) {
+          victoryResult = {
+            winner: enemyFaction,
+            condition: `占领${baseName}`
+          };
+        }
+      } else {
+        newBase.captureProgress = 0;
+        newBase.capturingFaction = '';
+      }
+    } else if (friendlyUnits.length > 0) {
+      const baseRepair = newBase.repairPerTurn || 5;
+      const garrisonBonus = captureRule.garrisonRepairBonus || 10;
+      const totalRepair = baseRepair + garrisonBonus;
+      
+      if (newBase.durability < newBase.maxDurability) {
+        newBase.durability = Math.min(newBase.maxDurability, newBase.durability + totalRepair);
+        messages.push(`${baseName} 驻守修复 +${totalRepair} 耐久`);
+      }
+      
+      if (newBase.captureProgress > 0) {
+        newBase.captureProgress = 0;
+        newBase.capturingFaction = '';
+        messages.push(`${baseName} 占领进度已清除`);
+      }
+    } else {
+      if (newBase.durability < newBase.maxDurability && newBase.captureProgress === 0) {
+        const baseRepair = newBase.repairPerTurn || 5;
+        newBase.durability = Math.min(newBase.maxDurability, newBase.durability + baseRepair);
+      }
+    }
+
+    return newBase;
+  });
+
+  return {
+    bases: newBases,
+    messages,
+    victory: victoryResult
+  };
+}
+
+/**
+ * @param {BaseState[]} bases
+ * @param {string} faction
+ * @returns {BaseState | null}
+ */
+export function getBaseByFaction(bases, faction) {
+  return bases.find(b => b.faction === faction) || null;
+}
+
+/**
+ * @param {BaseState[]} bases
+ * @param {number} x
+ * @param {number} y
+ * @returns {BaseState | null}
+ */
+export function getBaseAt(bases, x, y) {
+  return bases.find(b => b.x === x && b.y === y) || null;
 }

@@ -21,6 +21,18 @@ import {
  */
 
 /**
+ * @typedef {object} BaseState
+ * @property {string} faction
+ * @property {number} x
+ * @property {number} y
+ * @property {number} durability
+ * @property {number} maxDurability
+ * @property {number} captureProgress
+ * @property {string} capturingFaction
+ * @property {number} repairPerTurn
+ */
+
+/**
  * @typedef {object} GameState
  * @property {Unit[]} units
  * @property {string} currentFaction
@@ -41,6 +53,7 @@ import {
  * @property {string} message
  * @property {MoraleChange[]} lastMoraleChanges
  * @property {{cardId: string, type: 'play' | 'activate' | 'expire'} | null} lastCardAction
+ * @property {BaseState[]} bases
  */
 
 /**
@@ -58,6 +71,34 @@ import {
  * @typedef {keyof typeof unitConfig} UnitType
  * @typedef {keyof typeof initialUnits} FactionKey
  */
+
+/**
+ * @returns {BaseState[]}
+ */
+function createInitialBases() {
+  /** @type {BaseState[]} */
+  const bases = [];
+  for (let y = 0; y < boardConfig.height; y++) {
+    for (let x = 0; x < boardConfig.width; x++) {
+      const terrainType = /** @type {keyof typeof boardConfig.terrain} */ (boardConfig.layout[y][x]);
+      /** @type {any} */
+      const terrain = boardConfig.terrain[terrainType];
+      if (terrain && terrain.isBase && terrain.faction) {
+        bases.push({
+          faction: terrain.faction,
+          x,
+          y,
+          durability: terrain.maxDurability || 100,
+          maxDurability: terrain.maxDurability || 100,
+          captureProgress: 0,
+          capturingFaction: '',
+          repairPerTurn: terrain.repairPerTurn || 5
+        });
+      }
+    }
+  }
+  return bases;
+}
 
 /**
  * @returns {GameState}
@@ -103,6 +144,8 @@ function createInitialState() {
     blue: cardConfig.initialEnergy
   };
 
+  const bases = createInitialBases();
+
   return {
     units,
     currentFaction: 'red',
@@ -122,7 +165,8 @@ function createInitialState() {
     turnHistory: [],
     message: '游戏开始！红方先行动',
     lastMoraleChanges: [],
-    lastCardAction: null
+    lastCardAction: null,
+    bases
   };
 }
 
@@ -605,7 +649,69 @@ function createGameState() {
       });
       return { ...state, units, lastMoraleChanges: moraleChanges };
     }),
-    clearLastCardAction: () => update(state => ({ ...state, lastCardAction: null }))
+    clearLastCardAction: () => update(state => ({ ...state, lastCardAction: null })),
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {number} delta
+     */
+    damageBase: (x, y, delta) => update(state => {
+      const bases = state.bases.map(b => {
+        if (b.x === x && b.y === y) {
+          return { ...b, durability: Math.max(0, b.durability - delta) };
+        }
+        return b;
+      });
+      return { ...state, bases };
+    }),
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {number} delta
+     */
+    repairBase: (x, y, delta) => update(state => {
+      const bases = state.bases.map(b => {
+        if (b.x === x && b.y === y) {
+          return { ...b, durability: Math.min(b.maxDurability, b.durability + delta) };
+        }
+        return b;
+      });
+      return { ...state, bases };
+    }),
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {string} capturingFaction
+     * @param {number} progressDelta
+     */
+    updateBaseCapture: (x, y, capturingFaction, progressDelta) => update(state => {
+      const bases = state.bases.map(b => {
+        if (b.x === x && b.y === y) {
+          let newProgress = b.captureProgress;
+          let newCapturingFaction = b.capturingFaction;
+          
+          if (capturingFaction && capturingFaction !== b.faction) {
+            if (b.capturingFaction === capturingFaction) {
+              newProgress = b.captureProgress + progressDelta;
+            } else {
+              newProgress = progressDelta;
+              newCapturingFaction = capturingFaction;
+            }
+          } else {
+            newProgress = 0;
+            newCapturingFaction = '';
+          }
+          
+          return { ...b, captureProgress: newProgress, capturingFaction: newCapturingFaction };
+        }
+        return b;
+      });
+      return { ...state, bases };
+    }),
+    /**
+     * @param {BaseState[]} newBases
+     */
+    setBases: (newBases) => update(state => ({ ...state, bases: newBases }))
   };
 }
 
