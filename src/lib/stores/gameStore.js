@@ -67,6 +67,8 @@ import {
  * @property {{cardId: string, type: 'play' | 'activate' | 'expire'} | null} lastCardAction
  * @property {BaseState[]} bases
  * @property {string[]} lastStatusMessages
+ * @property {TurnLog[]} actionLogs
+ * @property {ActionLog | null} lastActionLog
  */
 
 /**
@@ -78,6 +80,28 @@ import {
  * @property {number} after
  * @property {number} delta
  * @property {string} reason
+ */
+
+/**
+ * @typedef {'move' | 'attack' | 'card' | 'damage' | 'heal' | 'status' | 'base' | 'turn' | 'summon' | 'terrain' | 'victory' | 'morale'} ActionLogType
+ */
+
+/**
+ * @typedef {object} ActionLog
+ * @property {string} id
+ * @property {number} turn
+ * @property {string} faction
+ * @property {ActionLogType} type
+ * @property {string} description
+ * @property {object} [details]
+ * @property {number} timestamp
+ */
+
+/**
+ * @typedef {object} TurnLog
+ * @property {number} turn
+ * @property {string} faction
+ * @property {ActionLog[]} actions
  */
 
 /**
@@ -181,18 +205,82 @@ function createInitialState() {
     lastMoraleChanges: [],
     lastCardAction: null,
     bases,
-    lastStatusMessages: []
+    lastStatusMessages: [],
+    actionLogs: [{
+      turn: 1,
+      faction: 'red',
+      actions: [{
+        id: `log_${Date.now()}_init`,
+        turn: 1,
+        faction: 'red',
+        type: 'turn',
+        description: '游戏开始！红方先行动',
+        details: {},
+        timestamp: Date.now()
+      }]
+    }],
+    lastActionLog: null
   };
 }
 
 function createGameState() {
   const { subscribe, set, update } = writable(createInitialState());
 
+  /**
+   * @param {{ type: ActionLogType; description: string; details?: object; factionOverride?: string; unitId?: string }} logData
+   */
+  const addActionLog = (logData) => update(state => {
+    const { type, description, details, factionOverride, unitId } = logData;
+
+    let faction = state.currentFaction;
+    if (factionOverride) {
+      faction = factionOverride;
+    } else if (unitId) {
+      const unit = state.units.find(u => u.id === unitId);
+      if (unit) faction = unit.faction;
+    }
+
+    /** @type {ActionLog} */
+    const newLog = {
+      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      turn: state.turn,
+      faction,
+      type,
+      description,
+      details: details || {},
+      timestamp: Date.now()
+    };
+
+    const currentTurnKey = `${state.turn}_${faction}`;
+    const lastTurnLog = state.actionLogs[state.actionLogs.length - 1];
+
+    let newActionLogs = [...state.actionLogs];
+    if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === faction) {
+      newActionLogs[newActionLogs.length - 1] = {
+        ...lastTurnLog,
+        actions: [...lastTurnLog.actions, newLog]
+      };
+    } else {
+      newActionLogs.push({
+        turn: state.turn,
+        faction,
+        actions: [newLog]
+      });
+    }
+
+    return {
+      ...state,
+      actionLogs: newActionLogs,
+      lastActionLog: newLog
+    };
+  });
+
   return {
     subscribe,
     set,
     update,
     reset: () => set(createInitialState()),
+    addActionLog,
     /**
      * @param {string | null} unitId
      */
@@ -220,6 +308,10 @@ function createGameState() {
       const unit = state.units.find(u => u.id === unitId);
       const pathLength = path ? path.length : Math.abs(x - (unit?.x || 0)) + Math.abs(y - (unit?.y || 0));
       const bleedDmg = unit ? calculateBleedDamage(unit, pathLength) : 0;
+      const fromX = unit?.x ?? 0;
+      const fromY = unit?.y ?? 0;
+      const unitName = unit ? unitConfig[/** @type {UnitType} */ (unit.type)].name : '';
+      const unitFaction = unit?.faction || state.currentFaction;
 
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
@@ -243,12 +335,52 @@ function createGameState() {
       const filteredUnits = units.filter(u => u.currentHp > 0);
       const died = units.length > filteredUnits.length;
 
+      const factionName = unitFaction === 'red' ? '红方' : '蓝方';
+      const moveDesc = `${factionName}${unitName} 从 (${fromX},${fromY}) 移动到 (${x},${y})` +
+        (bleedDmg > 0 ? `，流血损失 ${bleedDmg} 生命` : '');
+
+      const moveLog = {
+        id: `log_${Date.now()}_move_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: unitFaction,
+        type: /** @type {ActionLogType} */ ('move'),
+        description: moveDesc,
+        details: {
+          unitId,
+          unitName,
+          unitType: unit?.type,
+          from: { x: fromX, y: fromY },
+          to: { x, y },
+          path: path || [],
+          pathLength,
+          bleedDamage: bleedDmg
+        },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === unitFaction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, moveLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: unitFaction,
+          actions: [moveLog]
+        });
+      }
+
       return {
         ...state,
         units: filteredUnits,
         selectedUnitId: unitId,
         gamePhase: 'unitMoved',
-        lastStatusMessages: statusMsgs
+        lastStatusMessages: statusMsgs,
+        actionLogs: newActionLogs,
+        lastActionLog: moveLog
       };
     }),
     /**
@@ -262,6 +394,12 @@ function createGameState() {
       const hasDoubleAttack = attacker?.buffs?.some(
         /** @param {any} b */ b => b.type === 'doubleAttack'
       );
+      const attackerName = attacker ? unitConfig[/** @type {UnitType} */ (attacker.type)].name : '';
+      const defenderName = defender ? unitConfig[/** @type {UnitType} */ (defender.type)].name : '';
+      const attackerFaction = attacker?.faction || state.currentFaction;
+      const defenderFaction = defender?.faction || '';
+      const hasShield = defender?.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
+      const finalDamage = hasShield ? 0 : damage;
 
       /** @type {MoraleChange[]} */
       const moraleChanges = [];
@@ -285,10 +423,10 @@ function createGameState() {
           }
         }
         if (u.id === defenderId) {
-          const hasShield = u.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
-          const finalDamage = hasShield ? 0 : damage;
-          const newHp = Math.max(0, u.currentHp - finalDamage);
-          const newBuffs = hasShield
+          const hasShieldLocal = u.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
+          const finalDamageLocal = hasShieldLocal ? 0 : damage;
+          const newHp = Math.max(0, u.currentHp - finalDamageLocal);
+          const newBuffs = hasShieldLocal
             ? (u.buffs || []).filter(/** @param {any} b */ b => b.type !== 'shield')
             : u.buffs;
           return { ...u, currentHp: newHp, buffs: newBuffs };
@@ -298,10 +436,6 @@ function createGameState() {
 
       const updatedDefender = updatedUnits.find(/** @param {Unit} u */ u => u.id === defenderId);
       const defenderDead = updatedDefender && updatedDefender.currentHp <= 0;
-      const attackerFaction = attacker?.faction;
-      const defenderFaction = defender?.faction;
-      const attackerName = attacker ? unitConfig[/** @type {UnitType} */ (attacker.type)].name : '';
-      const defenderName = defender ? unitConfig[/** @type {UnitType} */ (defender.type)].name : '';
 
       if (defenderDead && attacker && defenderFaction) {
         updatedUnits = updatedUnits.map(/** @param {Unit} u */ u => {
@@ -354,18 +488,97 @@ function createGameState() {
 
       updatedUnits = updatedUnits.filter(/** @param {Unit} u */ u => u.currentHp > 0);
 
+      const atkFactionName = attackerFaction === 'red' ? '红方' : '蓝方';
+      const defFactionName = defenderFaction === 'red' ? '红方' : '蓝方';
+      const killTag = defenderDead ? '【击杀！】' : '';
+      const shieldTag = hasShield ? '（护盾抵消）' : '';
+      const attackDesc = `${atkFactionName}${attackerName} 攻击 ${defFactionName}${defenderName}，造成 ${finalDamage} 伤害${shieldTag}${killTag}`;
+
+      const attackLog = {
+        id: `log_${Date.now()}_atk_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: attackerFaction,
+        type: /** @type {ActionLogType} */ ('attack'),
+        description: attackDesc,
+        details: {
+          attackerId,
+          defenderId,
+          attackerName,
+          defenderName,
+          attackerType: attacker?.type,
+          defenderType: defender?.type,
+          rawDamage: damage,
+          finalDamage,
+          attackerPosition: attacker ? { x: attacker.x, y: attacker.y } : null,
+          defenderPosition: defender ? { x: defender.x, y: defender.y } : null,
+          shieldBlocked: hasShield,
+          defenderDead,
+          defenderRemainingHp: updatedDefender?.currentHp || 0
+        },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === attackerFaction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, attackLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: attackerFaction,
+          actions: [attackLog]
+        });
+      }
+
+      if (moraleChanges.length > 0) {
+        const moraleDesc = moraleChanges.map(m => {
+          const sign = m.delta > 0 ? '+' : '';
+          const fName = m.faction === 'red' ? '红方' : '蓝方';
+          return `${fName}${m.unitName}${sign}${m.delta}士气(${m.reason})`;
+        }).join('；');
+        const moraleLog = {
+          id: `log_${Date.now()}_morale_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: state.currentFaction,
+          type: /** @type {ActionLogType} */ ('morale'),
+          description: moraleDesc,
+          details: { moraleChanges },
+          timestamp: Date.now()
+        };
+        const lastLog = newActionLogs[newActionLogs.length - 1];
+        if (lastLog && lastLog.turn === state.turn && lastLog.faction === state.currentFaction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastLog,
+            actions: [...lastLog.actions, moraleLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: state.currentFaction,
+            actions: [moraleLog]
+          });
+        }
+      }
+
       return {
         ...state,
         units: updatedUnits,
         selectedUnitId: attackerId,
         gamePhase: 'idle',
-        lastMoraleChanges: moraleChanges
+        lastMoraleChanges: moraleChanges,
+        actionLogs: newActionLogs,
+        lastActionLog: attackLog
       };
     }),
     endTurn: () => update(state => {
       /** @type {'red' | 'blue'} */
       const nextFaction = state.currentFaction === 'red' ? 'blue' : 'red';
       const newTurn = nextFaction === 'red' ? state.turn + 1 : state.turn;
+      const currentFactionName = state.currentFaction === 'red' ? '红方' : '蓝方';
+      const nextFactionName = nextFaction === 'red' ? '红方' : '蓝方';
 
       /** @type {string[]} */
       const statusMessages = [];
@@ -469,6 +682,84 @@ function createGameState() {
         blue: nextFaction === 'blue' ? refillEnergy(state.energy.blue) : state.energy.blue
       };
 
+      const newActionLogs = [...state.actionLogs];
+
+      if (statusMessages.length > 0) {
+        const statusLog = {
+          id: `log_${Date.now()}_status_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: state.currentFaction,
+          type: /** @type {ActionLogType} */ ('status'),
+          description: statusMessages.join('；'),
+          details: { messages: statusMessages },
+          timestamp: Date.now()
+        };
+        const lastLog = newActionLogs[newActionLogs.length - 1];
+        if (lastLog && lastLog.turn === state.turn && lastLog.faction === state.currentFaction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastLog,
+            actions: [...lastLog.actions, statusLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: state.currentFaction,
+            actions: [statusLog]
+          });
+        }
+      }
+
+      if (dotKilled && moraleChanges.length > 0) {
+        const moraleDesc = moraleChanges.map(m => {
+          const sign = m.delta > 0 ? '+' : '';
+          const fName = m.faction === 'red' ? '红方' : '蓝方';
+          return `${fName}${m.unitName}${sign}${m.delta}士气(${m.reason})`;
+        }).join('；');
+        const moraleLog = {
+          id: `log_${Date.now()}_morale_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: state.currentFaction,
+          type: /** @type {ActionLogType} */ ('morale'),
+          description: moraleDesc,
+          details: { moraleChanges },
+          timestamp: Date.now()
+        };
+        const lastLog = newActionLogs[newActionLogs.length - 1];
+        if (lastLog && lastLog.turn === state.turn && lastLog.faction === state.currentFaction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastLog,
+            actions: [...lastLog.actions, moraleLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: state.currentFaction,
+            actions: [moraleLog]
+          });
+        }
+      }
+
+      const turnEndDesc = `${currentFactionName}结束回合，轮到${nextFactionName}行动（第 ${newTurn} 回合）`;
+      const turnEndLog = {
+        id: `log_${Date.now()}_turn_${Math.random().toString(36).slice(2, 6)}`,
+        turn: newTurn,
+        faction: nextFaction,
+        type: /** @type {ActionLogType} */ ('turn'),
+        description: turnEndDesc,
+        details: {
+          previousFaction: state.currentFaction,
+          nextFaction,
+          previousTurn: state.turn,
+          newTurn
+        },
+        timestamp: Date.now()
+      };
+      newActionLogs.push({
+        turn: newTurn,
+        faction: nextFaction,
+        actions: [turnEndLog]
+      });
+
       return {
         ...state,
         currentFaction: nextFaction,
@@ -483,20 +774,54 @@ function createGameState() {
         revealTurns: newRevealTurns,
         turnHistory: [...state.turnHistory, { turn: state.turn, faction: state.currentFaction }],
         lastStatusMessages: statusMessages,
-        lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges
+        lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges,
+        actionLogs: newActionLogs,
+        lastActionLog: turnEndLog
       };
     }),
     /**
      * @param {string} winner
      * @param {string} condition
      */
-    setVictory: (winner, condition) => update(state => ({
-      ...state,
-      gameOver: true,
-      winner,
-      victoryCondition: condition,
-      gamePhase: 'gameOver'
-    })),
+    setVictory: (winner, condition) => update(state => {
+      const winnerName = winner === 'red' ? '红方' : '蓝方';
+      const victoryDesc = `${winnerName}胜利！${condition}`;
+
+      const victoryLog = {
+        id: `log_${Date.now()}_victory_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: winner,
+        type: /** @type {ActionLogType} */ ('victory'),
+        description: victoryDesc,
+        details: { winner, condition },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === winner) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, victoryLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: winner,
+          actions: [victoryLog]
+        });
+      }
+
+      return {
+        ...state,
+        gameOver: true,
+        winner,
+        victoryCondition: condition,
+        gamePhase: 'gameOver',
+        actionLogs: newActionLogs,
+        lastActionLog: victoryLog
+      };
+    }),
     /**
      * @param {'red' | 'blue'} faction
      * @param {EventCard} card
@@ -590,6 +915,45 @@ function createGameState() {
       };
       newEnergy[faction] = Math.max(0, newEnergy[faction] - cost);
 
+      const factionName = faction === 'red' ? '红方' : '蓝方';
+      const actionType = isInstant ? '使用' : '激活';
+      const cardDesc = `${factionName}${actionType}卡牌【${usedCard.name}】（消耗 ${cost} 能量）`;
+
+      const cardLog = {
+        id: `log_${Date.now()}_card_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction,
+        type: /** @type {ActionLogType} */ ('card'),
+        description: cardDesc,
+        details: {
+          cardId: usedCard.id,
+          cardName: usedCard.name,
+          cardType: usedCard.type,
+          cardCategory: usedCard.category,
+          cost,
+          isInstant,
+          cooldown: usedCard.cooldown,
+          duration: usedCard.effect?.duration || 0,
+          effectType: usedCard.effect?.type || ''
+        },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, cardLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction,
+          actions: [cardLog]
+        });
+      }
+
       return {
         ...state,
         hands,
@@ -597,7 +961,9 @@ function createGameState() {
         energy: newEnergy,
         selectedCardId: null,
         gamePhase: 'idle',
-        lastCardAction: usedCard ? { cardId: usedCard.id, type: isInstant ? 'play' : 'activate' } : null
+        lastCardAction: usedCard ? { cardId: usedCard.id, type: isInstant ? 'play' : 'activate' } : null,
+        actionLogs: newActionLogs,
+        lastActionLog: cardLog
       };
     }),
     /**
@@ -607,6 +973,10 @@ function createGameState() {
     healUnit: (unitId, amount) => update(state => {
       /** @type {string[]} */
       const statusMsgs = [];
+      const target = state.units.find(u => u.id === unitId);
+      const unitName = target ? unitConfig[/** @type {UnitType} */ (target.type)].name : '';
+      const unitFaction = target?.faction || state.currentFaction;
+
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
           const flags = getStatusFlags(u);
@@ -620,6 +990,46 @@ function createGameState() {
         }
         return u;
       });
+
+      if (target) {
+        const factionName = unitFaction === 'red' ? '红方' : '蓝方';
+        const healDesc = statusMsgs.length > 0
+          ? `${factionName}${unitName} 治疗被禁疗抵消！`
+          : `${factionName}${unitName} 恢复 ${amount} 点生命`;
+
+        const healLog = {
+          id: `log_${Date.now()}_heal_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: unitFaction,
+          type: /** @type {ActionLogType} */ ('heal'),
+          description: healDesc,
+          details: {
+            unitId,
+            unitName,
+            amount,
+            healBlocked: statusMsgs.length > 0
+          },
+          timestamp: Date.now()
+        };
+
+        const newActionLogs = [...state.actionLogs];
+        const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+        if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === unitFaction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastTurnLog,
+            actions: [...lastTurnLog.actions, healLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: unitFaction,
+            actions: [healLog]
+          });
+        }
+
+        return { ...state, units, lastStatusMessages: statusMsgs, actionLogs: newActionLogs, lastActionLog: healLog };
+      }
+
       return { ...state, units, lastStatusMessages: statusMsgs };
     }),
     /**
@@ -690,6 +1100,81 @@ function createGameState() {
       }
 
       updatedUnits = updatedUnits.filter(/** @param {Unit} u */ u => u.currentHp > 0);
+
+      if (target) {
+        const factionName = targetFaction === 'red' ? '红方' : '蓝方';
+        const hasShieldLocal = target.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
+        const finalDamageLocal = hasShieldLocal ? 0 : damage;
+        const killTag = targetDead ? '【阵亡！】' : '';
+        const shieldTag = hasShieldLocal ? '（护盾抵消）' : '';
+        const damageDesc = `${factionName}${targetName} 受到 ${finalDamageLocal} 点伤害${shieldTag}${killTag}`;
+
+        const damageLog = {
+          id: `log_${Date.now()}_dmg_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: targetFaction || state.currentFaction,
+          type: /** @type {ActionLogType} */ ('damage'),
+          description: damageDesc,
+          details: {
+            unitId,
+            unitName: targetName,
+            rawDamage: damage,
+            finalDamage: finalDamageLocal,
+            shieldBlocked: hasShieldLocal,
+            targetDead,
+            targetPosition: target ? { x: target.x, y: target.y } : null
+          },
+          timestamp: Date.now()
+        };
+
+        const newActionLogs = [...state.actionLogs];
+        const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+        if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === (targetFaction || state.currentFaction)) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastTurnLog,
+            actions: [...lastTurnLog.actions, damageLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: targetFaction || state.currentFaction,
+            actions: [damageLog]
+          });
+        }
+
+        if (moraleChanges.length > 0) {
+          const moraleDesc = moraleChanges.map(m => {
+            const sign = m.delta > 0 ? '+' : '';
+            const fName = m.faction === 'red' ? '红方' : '蓝方';
+            return `${fName}${m.unitName}${sign}${m.delta}士气(${m.reason})`;
+          }).join('；');
+          const moraleLog = {
+            id: `log_${Date.now()}_morale_${Math.random().toString(36).slice(2, 6)}`,
+            turn: state.turn,
+            faction: targetFaction || state.currentFaction,
+            type: /** @type {ActionLogType} */ ('morale'),
+            description: moraleDesc,
+            details: { moraleChanges },
+            timestamp: Date.now()
+          };
+          const lastLog = newActionLogs[newActionLogs.length - 1];
+          if (lastLog && lastLog.turn === state.turn && lastLog.faction === (targetFaction || state.currentFaction)) {
+            newActionLogs[newActionLogs.length - 1] = {
+              ...lastLog,
+              actions: [...lastLog.actions, moraleLog]
+            };
+          } else {
+            newActionLogs.push({
+              turn: state.turn,
+              faction: targetFaction || state.currentFaction,
+              actions: [moraleLog]
+            });
+          }
+        }
+
+        return { ...state, units: updatedUnits, lastMoraleChanges: moraleChanges, actionLogs: newActionLogs, lastActionLog: damageLog };
+      }
+
       return { ...state, units: updatedUnits, lastMoraleChanges: moraleChanges };
     }),
     /**
@@ -754,7 +1239,43 @@ function createGameState() {
 
       statusMsgs.push(`${factionName}${unitName} 受到【${statusInfo.name}】效果，持续 ${result.duration} 回合`);
 
-      return { ...state, units, lastStatusMessages: statusMsgs };
+      const statusDesc = statusMsgs.join('；');
+      const statusLog = {
+        id: `log_${Date.now()}_status_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: target.faction,
+        type: /** @type {ActionLogType} */ ('status'),
+        description: statusDesc,
+        details: {
+          unitId,
+          unitName,
+          statusType: statusEffect.type,
+          statusName: statusInfo.name,
+          duration: result.duration,
+          value: statusEffect.value,
+          immune: result.immune,
+          resisted: result.resisted,
+          applied: !result.immune && !result.resisted
+        },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === target.faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, statusLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: target.faction,
+          actions: [statusLog]
+        });
+      }
+
+      return { ...state, units, lastStatusMessages: statusMsgs, actionLogs: newActionLogs, lastActionLog: statusLog };
     }),
     /**
      * @param {string} unitId
@@ -779,10 +1300,48 @@ function createGameState() {
     /**
      * @param {Unit} unit
      */
-    addUnit: (unit) => update(state => ({
-      ...state,
-      units: [...state.units, { ...unit, statusEffects: unit.statusEffects || [] }]
-    })),
+    addUnit: (unit) => update(state => {
+      const unitName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+      const factionName = unit.faction === 'red' ? '红方' : '蓝方';
+      const summonDesc = `${factionName}召唤单位【${unitName}】于 (${unit.x},${unit.y})`;
+
+      const summonLog = {
+        id: `log_${Date.now()}_summon_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: unit.faction,
+        type: /** @type {ActionLogType} */ ('summon'),
+        description: summonDesc,
+        details: {
+          unitId: unit.id,
+          unitName,
+          unitType: unit.type,
+          position: { x: unit.x, y: unit.y }
+        },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === unit.faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, summonLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: unit.faction,
+          actions: [summonLog]
+        });
+      }
+
+      return {
+        ...state,
+        units: [...state.units, { ...unit, statusEffects: unit.statusEffects || [] }],
+        actionLogs: newActionLogs,
+        lastActionLog: summonLog
+      };
+    }),
     /**
      * @param {number} x
      * @param {number} y
@@ -792,11 +1351,51 @@ function createGameState() {
       const newLayout = state.boardLayout
         ? state.boardLayout.map(/** @param {string[]} row */ row => [...row])
         : boardConfig.layout.map(/** @param {string[]} row */ row => [...row]);
+      const oldTerrain = newLayout[y][x];
       newLayout[y][x] = terrainType;
+
+      const terrainData = boardConfig.terrain[/** @type {keyof typeof boardConfig.terrain} */ (terrainType)];
+      const terrainName = terrainData?.name || terrainType;
+      const factionName = state.currentFaction === 'red' ? '红方' : '蓝方';
+      const terrainDesc = `${factionName}改变地形 (${x},${y}) 为【${terrainName}】`;
+
+      const terrainLog = {
+        id: `log_${Date.now()}_terrain_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: state.currentFaction,
+        type: /** @type {ActionLogType} */ ('terrain'),
+        description: terrainDesc,
+        details: {
+          x,
+          y,
+          oldTerrain,
+          newTerrain: terrainType,
+          newTerrainName: terrainName
+        },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === state.currentFaction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, terrainLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: state.currentFaction,
+          actions: [terrainLog]
+        });
+      }
+
       return {
         ...state,
         boardLayout: newLayout,
-        terrainChanged: { ...(state.terrainChanged || {}), [`${x},${y}`]: terrainType }
+        terrainChanged: { ...(state.terrainChanged || {}), [`${x},${y}`]: terrainType },
+        actionLogs: newActionLogs,
+        lastActionLog: terrainLog
       };
     }),
     /**
@@ -821,6 +1420,7 @@ function createGameState() {
         Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, v));
       /** @type {MoraleChange[]} */
       const moraleChanges = [];
+      const unit = state.units.find(u => u.id === unitId);
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
           const before = u.morale;
@@ -840,6 +1440,41 @@ function createGameState() {
         }
         return u;
       });
+
+      if (moraleChanges.length > 0 && unit) {
+        const moraleDesc = moraleChanges.map(m => {
+          const sign = m.delta > 0 ? '+' : '';
+          const fName = m.faction === 'red' ? '红方' : '蓝方';
+          return `${fName}${m.unitName}${sign}${m.delta}士气(${m.reason})`;
+        }).join('；');
+        const moraleLog = {
+          id: `log_${Date.now()}_morale_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: unit.faction,
+          type: /** @type {ActionLogType} */ ('morale'),
+          description: moraleDesc,
+          details: { moraleChanges },
+          timestamp: Date.now()
+        };
+
+        const newActionLogs = [...state.actionLogs];
+        const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+        if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === unit.faction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastTurnLog,
+            actions: [...lastTurnLog.actions, moraleLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: unit.faction,
+            actions: [moraleLog]
+          });
+        }
+
+        return { ...state, units, lastMoraleChanges: moraleChanges, actionLogs: newActionLogs, lastActionLog: moraleLog };
+      }
+
       return { ...state, units, lastMoraleChanges: moraleChanges };
     }),
     clearLastCardAction: () => update(state => ({ ...state, lastCardAction: null })),
@@ -855,6 +1490,45 @@ function createGameState() {
         }
         return b;
       });
+
+      const base = state.bases.find(b => b.x === x && b.y === y);
+      if (base) {
+        const baseFactionName = base.faction === 'red' ? '红方' : '蓝方';
+        const attackerFactionName = state.currentFaction === 'red' ? '红方' : '蓝方';
+        const baseDesc = `${attackerFactionName}攻击${baseFactionName}基地，造成 ${delta} 耐久损伤`;
+        const baseLog = {
+          id: `log_${Date.now()}_base_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: state.currentFaction,
+          type: /** @type {ActionLogType} */ ('base'),
+          description: baseDesc,
+          details: {
+            x,
+            y,
+            baseFaction: base.faction,
+            damage: delta,
+            durability: base.durability,
+            action: 'damage'
+          },
+          timestamp: Date.now()
+        };
+        const newActionLogs = [...state.actionLogs];
+        const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+        if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === state.currentFaction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastTurnLog,
+            actions: [...lastTurnLog.actions, baseLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: state.currentFaction,
+            actions: [baseLog]
+          });
+        }
+        return { ...state, bases, actionLogs: newActionLogs, lastActionLog: baseLog };
+      }
+
       return { ...state, bases };
     }),
     /**
@@ -869,6 +1543,44 @@ function createGameState() {
         }
         return b;
       });
+
+      const base = state.bases.find(b => b.x === x && b.y === y);
+      if (base) {
+        const factionName = base.faction === 'red' ? '红方' : '蓝方';
+        const baseDesc = `${factionName}基地修复 +${delta} 耐久`;
+        const baseLog = {
+          id: `log_${Date.now()}_base_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: base.faction,
+          type: /** @type {ActionLogType} */ ('base'),
+          description: baseDesc,
+          details: {
+            x,
+            y,
+            baseFaction: base.faction,
+            repair: delta,
+            durability: base.durability,
+            action: 'repair'
+          },
+          timestamp: Date.now()
+        };
+        const newActionLogs = [...state.actionLogs];
+        const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+        if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === base.faction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastTurnLog,
+            actions: [...lastTurnLog.actions, baseLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: base.faction,
+            actions: [baseLog]
+          });
+        }
+        return { ...state, bases, actionLogs: newActionLogs, lastActionLog: baseLog };
+      }
+
       return { ...state, bases };
     }),
     /**
@@ -899,6 +1611,46 @@ function createGameState() {
         }
         return b;
       });
+
+      const base = state.bases.find(b => b.x === x && b.y === y);
+      if (base && progressDelta > 0 && capturingFaction) {
+        const capFactionName = capturingFaction === 'red' ? '红方' : '蓝方';
+        const baseFactionName = base.faction === 'red' ? '红方' : '蓝方';
+        const baseDesc = `${capFactionName}占领${baseFactionName}基地，占领进度：${base.captureProgress + progressDelta || progressDelta}/${gameRules.victoryConditions.captureBase.captureTurnsRequired}`;
+        const baseLog = {
+          id: `log_${Date.now()}_base_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: capturingFaction,
+          type: /** @type {ActionLogType} */ ('base'),
+          description: baseDesc,
+          details: {
+            x,
+            y,
+            baseFaction: base.faction,
+            capturingFaction,
+            progressDelta,
+            newProgress: base.captureProgress + progressDelta || progressDelta,
+            action: 'capture'
+          },
+          timestamp: Date.now()
+        };
+        const newActionLogs = [...state.actionLogs];
+        const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+        if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === capturingFaction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastTurnLog,
+            actions: [...lastTurnLog.actions, baseLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: capturingFaction,
+            actions: [baseLog]
+          });
+        }
+        return { ...state, bases, actionLogs: newActionLogs, lastActionLog: baseLog };
+      }
+
       return { ...state, bases };
     }),
     /**

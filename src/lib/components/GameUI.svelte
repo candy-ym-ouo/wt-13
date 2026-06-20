@@ -38,6 +38,10 @@
   /** @type {CooldownEntry[]} */
   let cooldowns;
   let showRecords = false;
+  let showBattleLog = false;
+  let showReplay = false;
+  /** @type {GameRecord | null} */
+  let replayRecord = null;
   /** @type {GameRecord[]} */
   let records = [];
 
@@ -118,7 +122,8 @@
       turns: state.turn,
       totalUnits: state.units.length,
       avgMoraleWinner,
-      avgMoraleLoser
+      avgMoraleLoser,
+      actionLogs: state.actionLogs
     };
     saveGameRecord(record);
     records = /** @type {GameRecord[]} */ (getGameRecords());
@@ -224,6 +229,54 @@
     if (showRecords) {
       records = /** @type {GameRecord[]} */ (getGameRecords());
     }
+  }
+
+  function handleShowBattleLog() {
+    showBattleLog = !showBattleLog;
+  }
+
+  /**
+   * @param {GameRecord} record
+   */
+  function handleShowReplay(record) {
+    replayRecord = record;
+    showReplay = true;
+  }
+
+  function handleCloseReplay() {
+    showReplay = false;
+    replayRecord = null;
+  }
+
+  /**
+   * @param {string} type
+   * @returns {{icon: string, color: string, label: string}}
+   */
+  function getLogTypeInfo(type) {
+    /** @type {Record<string, {icon: string, color: string, label: string}>} */
+    const info = {
+      move: { icon: '🚶', color: '#3498db', label: '移动' },
+      attack: { icon: '⚔️', color: '#e74c3c', label: '攻击' },
+      card: { icon: '🃏', color: '#9b59b6', label: '卡牌' },
+      damage: { icon: '💥', color: '#c0392b', label: '伤害' },
+      heal: { icon: '💚', color: '#2ecc71', label: '治疗' },
+      status: { icon: '✨', color: '#8e44ad', label: '状态' },
+      base: { icon: '🏰', color: '#d4af37', label: '基地' },
+      turn: { icon: '🔄', color: '#f39c12', label: '回合' },
+      summon: { icon: '👤', color: '#1abc9c', label: '召唤' },
+      terrain: { icon: '🌍', color: '#27ae60', label: '地形' },
+      victory: { icon: '🏆', color: '#f1c40f', label: '胜利' },
+      morale: { icon: '😊', color: '#e67e22', label: '士气' }
+    };
+    return info[type] || { icon: '📝', color: '#999', label: type };
+  }
+
+  /**
+   * @param {string} faction
+   * @returns {string}
+   */
+  function getFactionBgColor(faction) {
+    return faction === 'red' ? 'rgba(231, 76, 60, 0.15)' : 'rgba(52, 152, 219, 0.15)';
   }
 
   function handleClearRecords() {
@@ -501,6 +554,9 @@
       </div>
     </div>
     <div class="top-actions">
+      <button class="btn btn-secondary" on:click={handleShowBattleLog}>
+        📜 战报
+      </button>
       <button class="btn btn-secondary" on:click={handleShowRecords}>
         📊 记录
       </button>
@@ -586,6 +642,73 @@
     </div>
   {/if}
 
+  {#if showBattleLog}
+    <div
+      class="records-overlay"
+      on:click|self={handleShowBattleLog}
+      role="dialog"
+      aria-label="战报日志"
+      tabindex="0"
+      on:keydown={(e) => e.key === 'Escape' && handleShowBattleLog()}
+    >
+      <div class="records-panel battle-log-panel">
+        <div class="records-header">
+          <h3>📜 战报日志</h3>
+          <button class="btn-close" on:click={handleShowBattleLog} aria-label="关闭">×</button>
+        </div>
+        <div class="battle-log-list">
+          {#if !state || !state.actionLogs || state.actionLogs.length === 0}
+            <p class="empty">暂无战报记录</p>
+          {:else}
+            {#each [...state.actionLogs].reverse() as turnLog}
+              <div class="battle-log-turn-group">
+                <div class="battle-log-turn-header" style="background: {getFactionBgColor(turnLog.faction)}">
+                  <span class="turn-badge">第 {turnLog.turn} 回合</span>
+                  <span class="faction-badge" style="color: {getFactionColor(turnLog.faction)}">
+                    {getFactionName(turnLog.faction)}
+                  </span>
+                </div>
+                <div class="battle-log-actions">
+                  {#each turnLog.actions as action (action.id)}
+                    <div class="battle-log-item" style="border-left-color: {getLogTypeInfo(action.type).color}">
+                      <span class="log-type-icon" style="background: {getLogTypeInfo(action.type).color}">
+                        {getLogTypeInfo(action.type).icon}
+                      </span>
+                      <div class="log-content">
+                        <div class="log-description">{action.description}</div>
+                        {#if action.details && Object.keys(action.details).length > 0}
+                          <div class="log-details">
+                            {#if action.type === 'move' && action.details.path && action.details.path.length > 0}
+                              <span class="log-detail-tag">
+                                路径: {action.details.from && `(${action.details.from.x},${action.details.from.y})`} → ({action.details.to?.x},{action.details.to?.y})
+                              </span>
+                            {/if}
+                            {#if action.type === 'attack' && action.details.finalDamage !== undefined}
+                              <span class="log-detail-tag">伤害: {action.details.finalDamage}</span>
+                              {#if action.details.defenderDead}
+                                <span class="log-detail-tag kill-tag">击杀</span>
+                              {/if}
+                              {#if action.details.shieldBlocked}
+                                <span class="log-detail-tag shield-tag">护盾抵消</span>
+                              {/if}
+                            {/if}
+                            {#if action.type === 'card'}
+                              <span class="log-detail-tag">消耗能量: {action.details.cost}</span>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
+
   {#if showRecords}
     <div
       class="records-overlay"
@@ -620,6 +743,11 @@
                   </div>
                 {/if}
                 <div class="record-date">{formatDate(record.date)}</div>
+                {#if record.actionLogs && record.actionLogs.length > 0}
+                  <button class="btn btn-secondary btn-small record-replay-btn" on:click={() => handleShowReplay(record)}>
+                    📽️ 查看复盘
+                  </button>
+                {/if}
               </div>
             {/each}
           {/if}
@@ -629,6 +757,120 @@
             清除记录
           </button>
         {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if showReplay && replayRecord}
+    <div
+      class="records-overlay"
+      on:click|self={handleCloseReplay}
+      role="dialog"
+      aria-label="局后复盘"
+      tabindex="0"
+      on:keydown={(e) => e.key === 'Escape' && handleCloseReplay()}
+    >
+      <div class="records-panel replay-panel">
+        <div class="records-header">
+          <h3>🎬 局后复盘</h3>
+          <div class="replay-summary">
+            <span style="color: {getFactionColor(replayRecord.winner)}; font-weight: bold;">
+              {getFactionName(replayRecord.winner)} 胜利
+            </span>
+            <span style="color: #888;">·</span>
+            <span>{replayRecord.victoryCondition}</span>
+            <span style="color: #888;">·</span>
+            <span>共 {replayRecord.turns} 回合</span>
+          </div>
+          <button class="btn-close" on:click={handleCloseReplay} aria-label="关闭">×</button>
+        </div>
+        <div class="battle-log-list">
+          {#if !replayRecord.actionLogs || replayRecord.actionLogs.length === 0}
+            <p class="empty">该记录没有详细战报</p>
+          {:else}
+            {#each replayRecord.actionLogs as turnLog}
+              <div class="battle-log-turn-group">
+                <div class="battle-log-turn-header" style="background: {getFactionBgColor(turnLog.faction)}">
+                  <span class="turn-badge">第 {turnLog.turn} 回合</span>
+                  <span class="faction-badge" style="color: {getFactionColor(turnLog.faction)}">
+                    {getFactionName(turnLog.faction)}
+                  </span>
+                </div>
+                <div class="battle-log-actions">
+                  {#each turnLog.actions as action (action.id)}
+                    <div class="battle-log-item" style="border-left-color: {getLogTypeInfo(action.type).color}">
+                      <span class="log-type-icon" style="background: {getLogTypeInfo(action.type).color}">
+                        {getLogTypeInfo(action.type).icon}
+                      </span>
+                      <div class="log-content">
+                        <div class="log-description">{action.description}</div>
+                        {#if action.details && Object.keys(action.details).length > 0}
+                          <div class="log-details">
+                            {#if action.type === 'move' && action.details.from}
+                              <span class="log-detail-tag">
+                                ({action.details.from.x},{action.details.from.y}) → ({action.details.to?.x},{action.details.to?.y})
+                              </span>
+                              {#if action.details.bleedDamage > 0}
+                                <span class="log-detail-tag bleed-tag">流血 -{action.details.bleedDamage}HP</span>
+                              {/if}
+                            {/if}
+                            {#if action.type === 'attack'}
+                              <span class="log-detail-tag">伤害 {action.details.finalDamage}</span>
+                              {#if action.details.defenderDead}
+                                <span class="log-detail-tag kill-tag">击杀</span>
+                              {/if}
+                              {#if action.details.shieldBlocked}
+                                <span class="log-detail-tag shield-tag">护盾</span>
+                              {/if}
+                            {/if}
+                            {#if action.type === 'card'}
+                              <span class="log-detail-tag">⚡{action.details.cost}</span>
+                              {#if action.details.cooldown > 0}
+                                <span class="log-detail-tag">CD {action.details.cooldown}</span>
+                              {/if}
+                            {/if}
+                            {#if action.type === 'damage'}
+                              <span class="log-detail-tag">-{action.details.finalDamage}HP</span>
+                            {/if}
+                            {#if action.type === 'heal'}
+                              <span class="log-detail-tag heal-tag">+{action.details.amount}HP</span>
+                            {/if}
+                            {#if action.type === 'status' && action.details.statusName}
+                              <span class="log-detail-tag status-tag">
+                                {action.details.statusName} ({action.details.duration}回合)
+                              </span>
+                            {/if}
+                            {#if action.type === 'base' && action.details.action === 'damage'}
+                              <span class="log-detail-tag">-{action.details.damage}耐久</span>
+                            {/if}
+                            {#if action.type === 'base' && action.details.action === 'repair'}
+                              <span class="log-detail-tag heal-tag">+{action.details.repair}耐久</span>
+                            {/if}
+                            {#if action.type === 'base' && action.details.action === 'capture'}
+                              <span class="log-detail-tag">
+                                占领进度 {action.details.newProgress}/{gameRules.victoryConditions.captureBase.captureTurnsRequired}
+                              </span>
+                            {/if}
+                            {#if action.type === 'summon'}
+                              <span class="log-detail-tag">
+                                ({action.details.position?.x},{action.details.position?.y})
+                              </span>
+                            {/if}
+                            {#if action.type === 'terrain'}
+                              <span class="log-detail-tag">
+                                ({action.details.x},{action.details.y}) → {action.details.newTerrainName}
+                              </span>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </div>
       </div>
     </div>
   {/if}
@@ -1388,6 +1630,140 @@
     font-size: 11px;
     margin-top: 4px;
     font-weight: bold;
+  }
+
+  .record-replay-btn {
+    margin-top: 8px;
+    width: 100%;
+  }
+
+  .battle-log-panel,
+  .replay-panel {
+    width: 520px;
+    max-width: 90vw;
+  }
+
+  .replay-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #ccc;
+    margin-left: 12px;
+    flex: 1;
+  }
+
+  .battle-log-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+  }
+
+  .battle-log-turn-group {
+    margin-bottom: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .battle-log-turn-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-bottom: 1px solid #333;
+  }
+
+  .turn-badge {
+    font-size: 13px;
+    font-weight: bold;
+    color: #f1c40f;
+  }
+
+  .faction-badge {
+    font-size: 12px;
+    font-weight: bold;
+  }
+
+  .battle-log-actions {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .battle-log-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+    border-left: 3px solid #999;
+  }
+
+  .log-type-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  .log-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .log-description {
+    font-size: 12px;
+    color: #ddd;
+    line-height: 1.4;
+    word-break: break-all;
+  }
+
+  .log-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+  }
+
+  .log-detail-tag {
+    font-size: 10px;
+    padding: 1px 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: #aaa;
+  }
+
+  .log-detail-tag.kill-tag {
+    background: rgba(231, 76, 60, 0.3);
+    color: #e74c3c;
+    font-weight: bold;
+  }
+
+  .log-detail-tag.shield-tag {
+    background: rgba(52, 152, 219, 0.3);
+    color: #3498db;
+  }
+
+  .log-detail-tag.heal-tag {
+    background: rgba(46, 204, 113, 0.3);
+    color: #2ecc71;
+  }
+
+  .log-detail-tag.bleed-tag {
+    background: rgba(192, 57, 43, 0.3);
+    color: #c0392b;
+  }
+
+  .log-detail-tag.status-tag {
+    background: rgba(142, 68, 173, 0.3);
+    color: #9b59b6;
   }
 
   .stat-value {

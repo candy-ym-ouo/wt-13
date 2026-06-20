@@ -1,6 +1,28 @@
 const STORAGE_KEY = 'tactical_board_game_records';
 
 /**
+ * @typedef {'move' | 'attack' | 'card' | 'damage' | 'heal' | 'status' | 'base' | 'turn' | 'summon' | 'terrain' | 'victory' | 'morale'} ActionLogType
+ */
+
+/**
+ * @typedef {object} ActionLog
+ * @property {string} id
+ * @property {number} turn
+ * @property {string} faction
+ * @property {ActionLogType} type
+ * @property {string} description
+ * @property {object} [details]
+ * @property {number} timestamp
+ */
+
+/**
+ * @typedef {object} TurnLog
+ * @property {number} turn
+ * @property {string} faction
+ * @property {ActionLog[]} actions
+ */
+
+/**
  * @typedef {object} GameRecordInput
  * @property {string} winner
  * @property {string} victoryCondition
@@ -8,6 +30,7 @@ const STORAGE_KEY = 'tactical_board_game_records';
  * @property {number} totalUnits
  * @property {number} [avgMoraleWinner]
  * @property {number} [avgMoraleLoser]
+ * @property {TurnLog[]} [actionLogs]
  */
 
 /**
@@ -20,6 +43,7 @@ const STORAGE_KEY = 'tactical_board_game_records';
  * @property {number} [avgMoraleWinner]
  * @property {number} [avgMoraleLoser]
  * @property {string} date
+ * @property {TurnLog[]} [actionLogs]
  */
 
 /**
