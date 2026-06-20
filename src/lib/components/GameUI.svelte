@@ -1,10 +1,10 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns } from '$lib/stores/gameStore';
+  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId } from '$lib/stores/gameStore';
   import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, eventCards } from '$lib/config/eventCardConfig';
-  import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC } from '$lib/utils/gameLogic';
+  import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview } from '$lib/utils/gameLogic';
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
 
@@ -59,6 +59,14 @@
   /** @type {(() => void) | undefined} */
   let unsubscribeCooldowns;
 
+  /** @type {Unit | null} */
+  let previewTargetData;
+
+  /** @type {(() => void) | undefined} */
+  let unsubscribePreview;
+
+  $: combatPreview = getCombatPreview();
+
   let recordSaved = false;
 
   onMount(() => {
@@ -81,6 +89,9 @@
     unsubscribeCooldowns = currentCooldowns.subscribe(/** @type {CooldownEntry[]} c */ c => {
       cooldowns = c;
     });
+    unsubscribePreview = previewTarget.subscribe(/** @param {Unit | null} u */ u => {
+      previewTargetData = u;
+    });
     records = /** @type {GameRecord[]} */ (getGameRecords());
 
     if (!state || !state.hands || state.hands.red.length === 0) {
@@ -94,6 +105,7 @@
     if (unsubscribeHand) unsubscribeHand();
     if (unsubscribeEnergy) unsubscribeEnergy();
     if (unsubscribeCooldowns) unsubscribeCooldowns();
+    if (unsubscribePreview) unsubscribePreview();
   });
 
   function initHands() {
@@ -134,6 +146,7 @@
 
   function handleEndTurn() {
     if (!state || state.gameOver) return;
+    previewTargetId.set(null);
     /** @type {'red' | 'blue'} */
     const nextFaction = state.currentFaction === 'red' ? 'blue' : 'red';
     const layout = state.boardLayout || null;
@@ -583,6 +596,27 @@
       }
     }
     return result;
+  }
+
+  /**
+   * @returns {import('$lib/utils/gameLogic').CombatPreview & { targetType: string; targetCurrentHp: number; targetMaxHp: number; targetX: number; targetY: number } | null}
+   */
+  function getCombatPreview() {
+    if (!selectedUnitData || !previewTargetData || !state) return null;
+    if (selectedUnitData.faction === previewTargetData.faction) return null;
+    if (selectedUnitData.hasAttacked || isHardCC(selectedUnitData)) return null;
+    const layout = state.boardLayout || null;
+    const defTerrain = getTerrain(previewTargetData.x, previewTargetData.y, layout);
+    const atkTerrain = getTerrain(selectedUnitData.x, selectedUnitData.y, layout);
+    const preview = calculateCombatPreview(selectedUnitData, previewTargetData, defTerrain || undefined, atkTerrain || undefined);
+    return {
+      ...preview,
+      targetType: previewTargetData.type,
+      targetCurrentHp: previewTargetData.currentHp,
+      targetMaxHp: previewTargetData.maxHp,
+      targetX: previewTargetData.x,
+      targetY: previewTargetData.y
+    };
   }
 </script>
 
@@ -1115,6 +1149,70 @@
           {/each}
         </div>
       {/if}
+      {#if combatPreview}
+        <div class="combat-preview">
+          <div class="combat-preview-title">⚔️ 战斗预演</div>
+          <div class="combat-preview-target">
+            <span class="preview-target-icon">{getUnitIcon(combatPreview.targetType)}</span>
+            <span class="preview-target-name">{getUnitName(combatPreview.targetType)}</span>
+            <span class="preview-target-hp">HP {combatPreview.targetCurrentHp}/{combatPreview.targetMaxHp}</span>
+          </div>
+          <div class="combat-preview-damage">
+            <span class="preview-damage-label">预估伤害</span>
+            <span class="preview-damage-value" style="color: {combatPreview.willKill ? '#e74c3c' : combatPreview.shieldBlocked ? '#3498db' : '#f39c12'}">
+              {combatPreview.shieldBlocked ? '🛡️ 0' : combatPreview.estimatedDamage}
+            </span>
+            {#if !combatPreview.shieldBlocked}
+              <span class="preview-hp-after" style="color: {combatPreview.willKill ? '#e74c3c' : '#aaa'}">
+                → {combatPreview.willKill ? '击杀！' : `${combatPreview.defenderRemainingHp}HP`}
+              </span>
+            {:else}
+              <span class="preview-hp-after" style="color: #3498db">护盾抵消</span>
+            {/if}
+          </div>
+          {#if combatPreview.canCounter}
+            <div class="combat-preview-counter">
+              <span class="preview-counter-label">⚡ 反击</span>
+              <span class="preview-counter-value" style="color: {combatPreview.counterWillKill ? '#e74c3c' : '#ff9800'}">
+                {combatPreview.counterDamage}
+              </span>
+              <span class="preview-counter-after" style="color: {combatPreview.counterWillKill ? '#e74c3c' : '#aaa'}">
+                → {combatPreview.counterWillKill ? '被击杀！' : `己方${combatPreview.attackerRemainingHp}HP`}
+              </span>
+            </div>
+          {:else}
+            <div class="combat-preview-counter combat-preview-no-counter">
+              <span class="preview-counter-label">⚡ 反击</span>
+              <span class="preview-counter-value" style="color: #666">
+                无法反击
+              </span>
+              <span class="preview-counter-after" style="color: #555">
+                {Math.abs(selectedUnitData.x - combatPreview.targetX) + Math.abs(selectedUnitData.y - combatPreview.targetY) > getUnitAttackRange(combatPreview.targetType) ? '（超出射程）' : '（被控制）'}
+              </span>
+            </div>
+          {/if}
+          {#if combatPreview.attackModifiers.length > 0}
+            <div class="combat-preview-modifiers">
+              <div class="preview-modifiers-label">伤害修正</div>
+              {#each combatPreview.attackModifiers as mod}
+                <span class="preview-mod-tag" style="border-color: {mod.color}; color: {mod.color}">
+                  {mod.label} {mod.value}
+                </span>
+              {/each}
+            </div>
+          {/if}
+          {#if combatPreview.terrainModifiers.length > 0}
+            <div class="combat-preview-modifiers">
+              <div class="preview-modifiers-label">地形与反击</div>
+              {#each combatPreview.terrainModifiers as mod}
+                <span class="preview-mod-tag" style="border-color: {mod.color}; color: {mod.color}">
+                  {mod.label} {mod.value}
+                </span>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
       <div class="unit-status">
         {#if selectedUnitData.hasMoved}
           <span class="status-tag moved">已移动</span>
@@ -1617,13 +1715,15 @@
     position: absolute;
     left: 20px;
     top: 110px;
-    width: 200px;
+    width: 220px;
     background: rgba(26, 26, 46, 0.95);
     border: 2px solid #3498db;
     border-radius: 8px;
     padding: 15px;
     color: white;
     z-index: 50;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
   }
 
   .unit-header {
@@ -2021,6 +2121,127 @@
     font-weight: bold;
     cursor: help;
     border: 1px solid #42a5f5;
+  }
+
+  .combat-preview {
+    margin-top: 10px;
+    padding: 8px;
+    border: 1px solid #e74c3c;
+    border-radius: 6px;
+    background: rgba(231, 76, 60, 0.08);
+  }
+
+  .combat-preview-title {
+    font-size: 12px;
+    font-weight: bold;
+    color: #e74c3c;
+    margin-bottom: 6px;
+    text-align: center;
+    border-bottom: 1px dashed rgba(231, 76, 60, 0.3);
+    padding-bottom: 4px;
+  }
+
+  .combat-preview-target {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    padding: 3px 6px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+  }
+
+  .preview-target-icon {
+    font-size: 14px;
+  }
+
+  .preview-target-name {
+    font-size: 12px;
+    font-weight: bold;
+    color: #ddd;
+  }
+
+  .preview-target-hp {
+    margin-left: auto;
+    font-size: 10px;
+    color: #aaa;
+  }
+
+  .combat-preview-damage {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+  }
+
+  .preview-damage-label {
+    font-size: 10px;
+    color: #888;
+    min-width: 50px;
+  }
+
+  .preview-damage-value {
+    font-size: 16px;
+    font-weight: bold;
+  }
+
+  .preview-hp-after {
+    font-size: 11px;
+    font-weight: bold;
+  }
+
+  .combat-preview-counter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  }
+
+  .combat-preview-no-counter {
+    opacity: 0.6;
+  }
+
+  .preview-counter-label {
+    font-size: 10px;
+    color: #888;
+    min-width: 50px;
+  }
+
+  .preview-counter-value {
+    font-size: 14px;
+    font-weight: bold;
+  }
+
+  .preview-counter-after {
+    font-size: 11px;
+    font-weight: bold;
+  }
+
+  .combat-preview-modifiers {
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .preview-modifiers-label {
+    font-size: 9px;
+    color: #666;
+    width: 100%;
+    margin-bottom: 2px;
+    border-bottom: 1px dotted #333;
+    padding-bottom: 1px;
+  }
+
+  .preview-mod-tag {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid;
+    font-weight: bold;
+    white-space: nowrap;
   }
 
   .unit-status {

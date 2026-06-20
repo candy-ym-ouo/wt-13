@@ -1843,6 +1843,13 @@ function createGameState() {
 
 export const gameState = createGameState();
 
+/** @type {import('svelte/store').Writable<string | null>} */
+export const previewTargetId = writable(null);
+
+export const previewTarget = derived([gameState, previewTargetId], ([$state, $id]) =>
+  $id ? $state.units.find(u => u.id === $id) || null : null
+);
+
 export const currentFactionUnits = derived(gameState, /** @param {GameState} $state */ $state =>
   $state.units.filter(/** @param {Unit} u */ u => u.faction === $state.currentFaction)
 );

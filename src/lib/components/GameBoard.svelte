@@ -4,7 +4,7 @@
   import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
   import { unitConfig } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
-  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns } from '$lib/stores/gameStore';
+  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTargetId } from '$lib/stores/gameStore';
   import {
     getTerrain,
     getMoveRange,
@@ -668,6 +668,29 @@
         }
       }
     }
+
+    if (selectedUnitData && !selectedUnitData.hasAttacked && state && !state.gameOver) {
+      const ccLocked = isHardCC(selectedUnitData);
+      const hasDoubleAttack = selectedUnitData.buffs?.some(
+        /** @param {any} b */
+        b => b.type === 'doubleAttack'
+      );
+      const hasAttackedTwice = !!hasDoubleAttack && (selectedUnitData.attackCount || 0) >= 2;
+
+      if (!ccLocked && !hasAttackedTwice) {
+        const attackRange = getAttackRange(selectedUnitData, state.units);
+        const targetTile = attackRange.find(
+          /** @param {any} t */
+          t => t.x === tx && t.y === ty
+        );
+        if (targetTile) {
+          previewTargetId.set(targetTile.target.id);
+          return;
+        }
+      }
+    }
+
+    previewTargetId.set(null);
   }
 
   /**
@@ -705,6 +728,7 @@
             t => t.x === tx && t.y === ty
           );
           if (canAttack) {
+            previewTargetId.set(null);
             doAttack(selectedUnitData, clickedUnit);
             return;
           }
@@ -727,8 +751,10 @@
 
     if (clickedUnit) {
       gameState.selectUnit(clickedUnit.id);
+      previewTargetId.set(null);
     } else {
       gameState.selectUnit(null);
+      previewTargetId.set(null);
     }
   }
 

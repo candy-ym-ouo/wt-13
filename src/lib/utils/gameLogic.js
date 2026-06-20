@@ -698,6 +698,197 @@ function heuristic(a, b) {
 }
 
 /**
+ * @typedef {object} CombatPreviewModifier
+ * @property {string} label
+ * @property {string} value
+ * @property {string} [color]
+ */
+
+/**
+ * @typedef {object} CombatPreview
+ * @property {number} estimatedDamage
+ * @property {boolean} willKill
+ * @property {number} defenderRemainingHp
+ * @property {boolean} shieldBlocked
+ * @property {boolean} canCounter
+ * @property {number} counterDamage
+ * @property {boolean} counterWillKill
+ * @property {number} attackerRemainingHp
+ * @property {CombatPreviewModifier[]} attackModifiers
+ * @property {CombatPreviewModifier[]} terrainModifiers
+ */
+
+/**
+ * @param {Unit} attacker
+ * @param {Unit} defender
+ * @param {TerrainInfo | null} [defenderTerrain]
+ * @param {TerrainInfo | null} [attackerTerrain]
+ * @returns {CombatPreview}
+ */
+export function calculateCombatPreview(attacker, defender, defenderTerrain, attackerTerrain) {
+  const rawDamage = calculateDamage(attacker, defender, defenderTerrain);
+  const hasShield = defender.buffs?.some(b => b.type === 'shield');
+  const shieldBlocked = !!hasShield;
+  const estimatedDamage = shieldBlocked ? 0 : rawDamage;
+  const willKill = !shieldBlocked && defender.currentHp - estimatedDamage <= 0;
+  const defenderRemainingHp = shieldBlocked ? defender.currentHp : Math.max(0, defender.currentHp - estimatedDamage);
+
+  const defenderConfig = unitConfig[/** @type {UnitType} */ (defender.type)];
+  const distance = Math.abs(attacker.x - defender.x) + Math.abs(attacker.y - defender.y);
+  const canCounter = gameRules.combat.counterAttack
+    && distance <= defenderConfig.attackRange
+    && !isHardCC(defender);
+
+  let counterDamage = 0;
+  let counterWillKill = false;
+  let attackerRemainingHp = attacker.currentHp;
+
+  if (canCounter) {
+    const fullCounterDamage = calculateDamage(defender, attacker, attackerTerrain);
+    counterDamage = Math.max(1, Math.floor(fullCounterDamage * gameRules.combat.counterAttackDamageRatio));
+    const attackerHasShield = attacker.buffs?.some(b => b.type === 'shield');
+    if (attackerHasShield) {
+      counterDamage = 0;
+    }
+    counterWillKill = counterDamage > 0 && attacker.currentHp - counterDamage <= 0;
+    attackerRemainingHp = counterDamage > 0 ? Math.max(0, attacker.currentHp - counterDamage) : attacker.currentHp;
+  }
+
+  /** @type {CombatPreviewModifier[]} */
+  const attackModifiers = [];
+
+  const counterInfo = getCounterInfo(attacker.type, defender.type);
+  if (counterInfo.isAdvantage && counterInfo.label) {
+    attackModifiers.push({
+      label: `克制·${counterInfo.label}`,
+      value: `×${getCounterMultiplier(attacker.type, defender.type)}`,
+      color: '#4caf50'
+    });
+  } else if (counterInfo.label) {
+    const reverseInfo = getCounterInfo(defender.type, attacker.type);
+    if (reverseInfo.isAdvantage) {
+      attackModifiers.push({
+        label: `被克·${counterInfo.label}`,
+        value: `×${getCounterMultiplier(defender.type, attacker.type)}`,
+        color: '#ef5350'
+      });
+    }
+  }
+
+  const attackerMorale = getMoraleTier(attacker.morale ?? 80);
+  if (attackerMorale.damageMultiplier !== 1.0) {
+    const isBoost = attackerMorale.damageMultiplier > 1.0;
+    attackModifiers.push({
+      label: `士气${attackerMorale.label}`,
+      value: `×${attackerMorale.damageMultiplier}`,
+      color: isBoost ? '#4caf50' : '#ef5350'
+    });
+  }
+
+  const hpRatio = attacker.currentHp / attacker.maxHp;
+  if (hpRatio < 1.0) {
+    attackModifiers.push({
+      label: '伤损比例',
+      value: `×${hpRatio.toFixed(2)}`,
+      color: '#f39c12'
+    });
+  }
+
+  const atkBoost = attacker.buffs?.find(b => b.type === 'attackBoost');
+  if (atkBoost) {
+    attackModifiers.push({
+      label: '攻击强化',
+      value: `+${Math.round((atkBoost.value || 0) * 100)}%`,
+      color: '#4caf50'
+    });
+  }
+
+  const defBoost = defender.buffs?.find(b => b.type === 'defenseBoost');
+  if (defBoost) {
+    attackModifiers.push({
+      label: '目标防御强化',
+      value: `+${Math.round((defBoost.value || 0) * 100)}%`,
+      color: '#ef5350'
+    });
+  }
+
+  if (hasStatusEffect(defender, STATUS_EFFECT_TYPES.FREEZE)) {
+    attackModifiers.push({
+      label: '冰冻额外伤害',
+      value: `×${gameRules.statusEffects.freeze.extraDamageMultiplier}`,
+      color: '#00bcd4'
+    });
+  }
+
+  if (shieldBlocked) {
+    attackModifiers.push({
+      label: '护盾抵消',
+      value: '伤害归零',
+      color: '#3498db'
+    });
+  }
+
+  /** @type {CombatPreviewModifier[]} */
+  const terrainModifiers = [];
+
+  if (defenderTerrain && defenderTerrain.defenseBonus > 0) {
+    terrainModifiers.push({
+      label: `${defenderTerrain.name}防御加成`,
+      value: `+${defenderTerrain.defenseBonus}`,
+      color: '#8d6e63'
+    });
+  }
+
+  if (defenderTerrain && defenderTerrain.moraleBonus > 0) {
+    const isOwnBase = defenderTerrain.isBase && defenderTerrain.faction === defender.faction;
+    const applies = isOwnBase || !defenderTerrain.isBase;
+    if (applies) {
+      terrainModifiers.push({
+        label: `${defenderTerrain.name}士气加成`,
+        value: `+${defenderTerrain.moraleBonus}`,
+        color: '#66bb6a'
+      });
+    }
+  }
+
+  if (canCounter) {
+    const defMorale = getMoraleTier(defender.morale ?? 80);
+    terrainModifiers.push({
+      label: `反击（×${gameRules.combat.counterAttackDamageRatio}）`,
+      value: `${counterDamage} 伤害`,
+      color: '#ff9800'
+    });
+    if (defMorale.damageMultiplier !== 1.0) {
+      const isBoost = defMorale.damageMultiplier > 1.0;
+      terrainModifiers.push({
+        label: `反击方士气${defMorale.label}`,
+        value: `×${defMorale.damageMultiplier}`,
+        color: isBoost ? '#4caf50' : '#ef5350'
+      });
+    }
+  } else if (gameRules.combat.counterAttack) {
+    terrainModifiers.push({
+      label: '无法反击',
+      value: distance > defenderConfig.attackRange ? '超出射程' : '被控制',
+      color: '#9e9e9e'
+    });
+  }
+
+  return {
+    estimatedDamage,
+    willKill,
+    defenderRemainingHp,
+    shieldBlocked,
+    canCounter,
+    counterDamage,
+    counterWillKill,
+    attackerRemainingHp,
+    attackModifiers,
+    terrainModifiers
+  };
+}
+
+/**
  * @param {Unit[]} units
  * @param {string} currentFaction
  * @param {string[][] | null} [boardLayout]
