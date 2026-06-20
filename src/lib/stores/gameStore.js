@@ -87,13 +87,17 @@ import {
  */
 
 /**
+ * @typedef {Record<string, any>} ActionLogDetails
+ */
+
+/**
  * @typedef {object} ActionLog
  * @property {string} id
  * @property {number} turn
  * @property {string} faction
  * @property {ActionLogType} type
  * @property {string} description
- * @property {object} [details]
+ * @property {ActionLogDetails} [details]
  * @property {number} timestamp
  */
 
@@ -302,11 +306,11 @@ function createGameState() {
      * @param {string} unitId
      * @param {number} x
      * @param {number} y
-     * @param {number[]} path
+     * @param {{x: number, y: number, cost: number}[]} path
      */
     moveUnit: (unitId, x, y, path) => update(state => {
       const unit = state.units.find(u => u.id === unitId);
-      const pathLength = path ? path.length : Math.abs(x - (unit?.x || 0)) + Math.abs(y - (unit?.y || 0));
+      const pathLength = path && path.length > 0 ? path.length : Math.abs(x - (unit?.x || 0)) + Math.abs(y - (unit?.y || 0));
       const bleedDmg = unit ? calculateBleedDamage(unit, pathLength) : 0;
       const fromX = unit?.x ?? 0;
       const fromY = unit?.y ?? 0;

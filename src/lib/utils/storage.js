@@ -5,13 +5,17 @@ const STORAGE_KEY = 'tactical_board_game_records';
  */
 
 /**
+ * @typedef {Record<string, any>} ActionLogDetails
+ */
+
+/**
  * @typedef {object} ActionLog
  * @property {string} id
  * @property {number} turn
  * @property {string} faction
  * @property {ActionLogType} type
  * @property {string} description
- * @property {object} [details]
+ * @property {ActionLogDetails} [details]
  * @property {number} timestamp
  */
 

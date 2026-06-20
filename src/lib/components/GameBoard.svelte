@@ -817,7 +817,16 @@
     const layout = state.boardLayout || boardConfig.layout;
     const terrain = getTerrain(tx, ty, layout);
     const unitName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
-    gameState.moveUnit(unit.id, tx, ty, []);
+
+    const pathResult = findPath(
+      { x: unit.x, y: unit.y },
+      { x: tx, y: ty },
+      state.units,
+      unit,
+      layout
+    );
+    const pathTiles = pathResult ? pathResult.path : [];
+    gameState.moveUnit(unit.id, tx, ty, pathTiles);
 
     let terrainBonusMsg = '';
     if (terrain) {

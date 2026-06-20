@@ -13,6 +13,8 @@
    * @typedef {import('../utils/cardSystem').EventCard} EventCard
    * @typedef {import('../utils/cardSystem').CooldownEntry} CooldownEntry
    * @typedef {import('../stores/gameStore').GameState} GameState
+   * @typedef {import('../stores/gameStore').ActionLog} ActionLog
+   * @typedef {import('../stores/gameStore').TurnLog} TurnLog
    * @typedef {keyof typeof unitConfig} UnitType
    */
 
@@ -26,6 +28,7 @@
    * @property {number} [avgMoraleWinner]
    * @property {number} [avgMoraleLoser]
    * @property {string} date
+   * @property {TurnLog[]} [actionLogs]
    */
 
   /** @type {GameState | null} */
