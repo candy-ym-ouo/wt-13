@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns } from '$lib/stores/gameStore';
-  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
+  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, eventCards } from '$lib/config/eventCardConfig';
   import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC } from '$lib/utils/gameLogic';
@@ -527,6 +527,60 @@
     const cfg = unitConfig[/** @type {UnitType} */ (unit.type)];
     return cfg.statusImmunities || [];
   }
+
+  /**
+   * @param {string} unitType
+   * @returns {{ target: string; label: string }[]}
+   */
+  function getCounterAdvantages(unitType) {
+    const counters = COUNTER_RELATIONSHIPS[unitType];
+    const labels = COUNTER_LABELS[unitType];
+    if (!counters) return [];
+    return Object.keys(counters).map(target => ({
+      target,
+      label: labels?.[target] || `${unitConfig[/** @type {UnitType} */ (unitType)].name}克制${unitConfig[/** @type {UnitType} */ (target)].name}`
+    }));
+  }
+
+  /**
+   * @param {string} unitType
+   * @returns {{ attacker: string; label: string }[]}
+   */
+  function getCounterWeaknesses(unitType) {
+    /** @type {{ attacker: string; label: string }[]} */
+    const weaknesses = [];
+    for (const [attackerType, targets] of Object.entries(COUNTER_RELATIONSHIPS)) {
+      if (targets[unitType]) {
+        const labels = COUNTER_LABELS[attackerType];
+        weaknesses.push({
+          attacker: attackerType,
+          label: labels?.[unitType] || `${unitConfig[/** @type {UnitType} */ (attackerType)].name}克制${unitConfig[/** @type {UnitType} */ (unitType)].name}`
+        });
+      }
+    }
+    return weaknesses;
+  }
+
+  /**
+   * @param {string} unitType
+   * @returns {{ key: string; name: string; description: string; partnerType: string }[]}
+   */
+  function getSynergiesForUnit(unitType) {
+    /** @type {{ key: string; name: string; description: string; partnerType: string }[]} */
+    const result = [];
+    for (const [key, config] of Object.entries(SYNERGY_CONFIG)) {
+      if (config.requiredTypes.includes(unitType)) {
+        const partnerType = config.requiredTypes.find(t => t !== unitType) || config.requiredTypes[0];
+        result.push({
+          key,
+          name: config.name,
+          description: config.description,
+          partnerType
+        });
+      }
+    }
+    return result;
+  }
 </script>
 
 <div class="game-ui">
@@ -1024,6 +1078,36 @@
               title="完全免疫【{getStatusTypeLabel(type)}】"
             >
               🛡️ {getStatusInfo(type).icon} {getStatusTypeLabel(type)}
+            </span>
+          {/each}
+        </div>
+      {/if}
+      {#if getCounterAdvantages(selectedUnitData.type).length > 0}
+        <div class="counter-info">
+          <div class="info-label">⚔️ 克制</div>
+          {#each getCounterAdvantages(selectedUnitData.type) as advantage (advantage.target)}
+            <span class="counter-advantage-tag" title="对{unitConfig[advantage.target].name}造成30%额外伤害">
+              ▶ {unitConfig[advantage.target].name}（{advantage.label}）
+            </span>
+          {/each}
+        </div>
+      {/if}
+      {#if getCounterWeaknesses(selectedUnitData.type).length > 0}
+        <div class="counter-info">
+          <div class="info-label">⚠️ 被克制</div>
+          {#each getCounterWeaknesses(selectedUnitData.type) as weakness (weakness.attacker)}
+            <span class="counter-weakness-tag" title="{unitConfig[weakness.attacker].name}对你造成30%额外伤害">
+              ◀ {unitConfig[weakness.attacker].name}（{weakness.label}）
+            </span>
+          {/each}
+        </div>
+      {/if}
+      {#if getSynergiesForUnit(selectedUnitData.type).length > 0}
+        <div class="synergy-info">
+          <div class="info-label">🤝 协同</div>
+          {#each getSynergiesForUnit(selectedUnitData.type) as synergy (synergy.key)}
+            <span class="synergy-tag" title="{synergy.description}">
+              {synergy.name}（+{unitConfig[synergy.partnerType].name}）
             </span>
           {/each}
         </div>
@@ -1885,6 +1969,55 @@
     font-weight: bold;
     cursor: help;
     border: 1px solid #d4af37;
+  }
+
+  .counter-info {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .counter-advantage-tag {
+    background: linear-gradient(135deg, #1b5e20, #2e7d32);
+    color: #a5d6a7;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: help;
+    border: 1px solid #4caf50;
+  }
+
+  .counter-weakness-tag {
+    background: linear-gradient(135deg, #b71c1c, #c62828);
+    color: #ef9a9a;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: help;
+    border: 1px solid #ef5350;
+  }
+
+  .synergy-info {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .synergy-tag {
+    background: linear-gradient(135deg, #0d47a1, #1565c0);
+    color: #90caf9;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: help;
+    border: 1px solid #42a5f5;
   }
 
   .unit-status {

@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { boardConfig } from '$lib/config/boardConfig';
-import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
+import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
 import {
@@ -18,7 +18,8 @@ import {
   calculateBleedDamage,
   isHardCC,
   getStatusResistance,
-  isImmuneToStatus
+  isImmuneToStatus,
+  calculateAllSynergies
 } from '$lib/utils/gameLogic';
 
 /**
@@ -662,6 +663,20 @@ function createGameState() {
         }
         return u;
       });
+
+      const synergyResult = calculateAllSynergies(units, nextFaction);
+      if (synergyResult.allBuffs.length > 0) {
+        units = units.map(u => {
+          const synergyBuff = synergyResult.allBuffs.find(b => b.unitId === u.id);
+          if (synergyBuff) {
+            const existingBuffs = u.buffs || [];
+            const filteredBuffs = existingBuffs.filter(b => b.type !== synergyBuff.buff.type);
+            return { ...u, buffs: [...filteredBuffs, synergyBuff.buff] };
+          }
+          return u;
+        });
+        statusMessages.push(...synergyResult.messages);
+      }
 
       let newRevealTurns = state.revealTurns ? state.revealTurns - 1 : 0;
       if (nextFaction === state.currentFaction) {

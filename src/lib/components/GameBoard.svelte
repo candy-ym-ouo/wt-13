@@ -18,7 +18,8 @@
     isHardCC,
     hasStatusEffect,
     getStatusEffect,
-    getEffectiveMoveRange
+    getEffectiveMoveRange,
+    getCounterInfo
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
@@ -483,8 +484,26 @@
     if (!selectedUnitData.hasAttacked && !ccLocked && !hasAttackedTwice) {
       const attackRange = getAttackRange(selectedUnitData, state.units);
       for (const tile of attackRange) {
+        const counterInfo = getCounterInfo(selectedUnitData.type, tile.target.type);
+        let fillColor = 0xff0000;
+        let fillAlpha = 0.4;
+        let borderStyle = null;
+
+        if (counterInfo.isAdvantage) {
+          fillColor = 0x00ff00;
+          fillAlpha = 0.35;
+          borderStyle = { color: 0x00ff00, width: 3, alpha: 0.9 };
+        } else if (counterInfo.label && !counterInfo.isAdvantage) {
+          fillColor = 0xff4444;
+          fillAlpha = 0.3;
+          borderStyle = { color: 0xff6600, width: 2, alpha: 0.7 };
+        }
+
         const h = new PIXI.Graphics();
-        h.beginFill(0xff0000, 0.4);
+        if (borderStyle) {
+          h.lineStyle(borderStyle.width, borderStyle.color, borderStyle.alpha);
+        }
+        h.beginFill(fillColor, fillAlpha);
         h.drawRect(
           tile.x * boardConfig.tileSize,
           tile.y * boardConfig.tileSize,
@@ -494,6 +513,34 @@
         h.endFill();
         attackHighlights.push(h);
         overlayLayer.addChild(h);
+
+        if (counterInfo.isAdvantage && counterInfo.label) {
+          const label = new PIXI.Text(counterInfo.label, {
+            fontSize: 10,
+            fill: 0x00ff00,
+            stroke: 0x000000,
+            strokeThickness: 2,
+            fontWeight: 'bold'
+          });
+          label.anchor.set(0.5);
+          label.x = tile.x * boardConfig.tileSize + boardConfig.tileSize / 2;
+          label.y = tile.y * boardConfig.tileSize + 6;
+          attackHighlights.push(label);
+          overlayLayer.addChild(label);
+        } else if (counterInfo.label && !counterInfo.isAdvantage) {
+          const warnText = new PIXI.Text('⚠被克', {
+            fontSize: 9,
+            fill: 0xff6600,
+            stroke: 0x000000,
+            strokeThickness: 2,
+            fontWeight: 'bold'
+          });
+          warnText.anchor.set(0.5);
+          warnText.x = tile.x * boardConfig.tileSize + boardConfig.tileSize / 2;
+          warnText.y = tile.y * boardConfig.tileSize + 6;
+          attackHighlights.push(warnText);
+          overlayLayer.addChild(warnText);
+        }
       }
     }
   }
@@ -861,6 +908,11 @@
       ? `[士气${attackerTier.label}×${attackerTier.damageMultiplier}]`
       : '';
 
+    const counterInfo = getCounterInfo(attacker.type, defender.type);
+    const counterTag = counterInfo.isAdvantage
+      ? `【克制·${counterInfo.label}】`
+      : (counterInfo.label ? `[被克制·${counterInfo.label}]` : '');
+
     const killOccurred = defender.currentHp - damage <= 0;
     const newStreak = killOccurred ? (attacker.winStreak || 0) + 1 : 0;
 
@@ -905,11 +957,11 @@
     
     if (willAttackAgain) {
       gameState.setMessage(
-        `${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！（连续攻击可再攻击一次）${moraleMsg}`
+        `${counterTag}${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！（连续攻击可再攻击一次）${moraleMsg}`
       );
     } else {
       gameState.setMessage(
-        `${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！${moraleMsg}`
+        `${counterTag}${moraleTag}${attackerName} 对 ${defenderName} 造成 ${damage} 伤害${killMsg}${streakMsg}！${moraleMsg}`
       );
     }
 

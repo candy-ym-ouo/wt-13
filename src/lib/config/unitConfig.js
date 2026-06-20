@@ -105,6 +105,55 @@ export const STATUS_EFFECT_INFO = {
   }
 };
 
+export const COUNTER_RELATIONSHIPS = {
+  infantry: { cavalry: 1.3 },
+  cavalry: { archer: 1.3 },
+  archer: { mage: 1.3 },
+  mage: { infantry: 1.3 }
+};
+
+export const COUNTER_LABELS = {
+  infantry: { cavalry: '枪阵破骑' },
+  cavalry: { archer: '骑突克射' },
+  archer: { mage: '先射断法' },
+  mage: { infantry: '法破重甲' }
+};
+
+export const SYNERGY_CONFIG = {
+  infantry_archer: {
+    name: '步弓阵',
+    description: '步兵护卫弓兵，弓兵获得防御加成',
+    requiredTypes: ['infantry', 'archer'],
+    range: 2,
+    effect: { type: 'defenseBoost', value: 0.15, duration: 1 },
+    beneficiaryType: 'archer'
+  },
+  cavalry_infantry: {
+    name: '骑步协同',
+    description: '步兵牵制敌阵，骑兵获得攻击加成',
+    requiredTypes: ['cavalry', 'infantry'],
+    range: 2,
+    effect: { type: 'attackBoost', value: 0.15, duration: 1 },
+    beneficiaryType: 'cavalry'
+  },
+  mage_archer: {
+    name: '法弓齐射',
+    description: '法师与弓兵远程配合，双方获得射程加成',
+    requiredTypes: ['mage', 'archer'],
+    range: 3,
+    effect: { type: 'attackBoost', value: 0.12, duration: 1 },
+    beneficiaryType: 'both'
+  },
+  cavalry_mage: {
+    name: '骑法突击',
+    description: '法师为骑兵加持魔力，骑兵获得移动力加成',
+    requiredTypes: ['cavalry', 'mage'],
+    range: 2,
+    effect: { type: 'moveBoost', value: 1, duration: 1 },
+    beneficiaryType: 'cavalry'
+  }
+};
+
 export const unitConfig = {
   infantry: {
     name: '步兵',
@@ -115,7 +164,7 @@ export const unitConfig = {
     attackRange: 1,
     cost: 100,
     color: 0xe74c3c,
-    description: '基础单位，攻守平衡',
+    description: '攻守平衡，克制骑兵',
     statusResistance: {
       [STATUS_EFFECT_TYPES.STUN]: 0.1,
       [STATUS_EFFECT_TYPES.SLOW]: 0.2,
@@ -133,7 +182,7 @@ export const unitConfig = {
     attackRange: 1,
     cost: 150,
     color: 0xf39c12,
-    description: '高机动高攻击，防御较弱',
+    description: '高机动高攻击，克制弓兵',
     statusResistance: {
       [STATUS_EFFECT_TYPES.SLOW]: 0.3,
       [STATUS_EFFECT_TYPES.STUN]: 0.15
@@ -149,7 +198,7 @@ export const unitConfig = {
     attackRange: 3,
     cost: 120,
     color: 0x9b59b6,
-    description: '远程攻击，近战脆弱',
+    description: '远程攻击，克制法师',
     statusResistance: {
       [STATUS_EFFECT_TYPES.BURN]: 0.1,
       [STATUS_EFFECT_TYPES.POISON]: 0.1
@@ -165,7 +214,7 @@ export const unitConfig = {
     attackRange: 2,
     cost: 200,
     color: 0x1abc9c,
-    description: '高伤害法术单位，非常脆弱',
+    description: '高伤害法术，克制步兵',
     statusResistance: {
       [STATUS_EFFECT_TYPES.SILENCE]: 0.25,
       [STATUS_EFFECT_TYPES.FREEZE]: 0.2,

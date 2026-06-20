@@ -1,5 +1,5 @@
 import { boardConfig } from '$lib/config/boardConfig';
-import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
+import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 
 /**
@@ -332,6 +332,106 @@ export function getAttackRange(unit, units) {
 }
 
 /**
+ * @param {string} attackerType
+ * @param {string} defenderType
+ * @returns {number}
+ */
+export function getCounterMultiplier(attackerType, defenderType) {
+  const counters = COUNTER_RELATIONSHIPS[attackerType];
+  if (counters && counters[defenderType]) {
+    return counters[defenderType];
+  }
+  return 1.0;
+}
+
+/**
+ * @param {string} attackerType
+ * @param {string} defenderType
+ * @returns {{ label: string | null; isAdvantage: boolean }}
+ */
+export function getCounterInfo(attackerType, defenderType) {
+  const counters = COUNTER_RELATIONSHIPS[attackerType];
+  if (counters && counters[defenderType]) {
+    const labels = COUNTER_LABELS[attackerType];
+    return { label: labels?.[defenderType] || null, isAdvantage: true };
+  }
+  const reverseCounters = COUNTER_RELATIONSHIPS[defenderType];
+  if (reverseCounters && reverseCounters[attackerType]) {
+    const labels = COUNTER_LABELS[defenderType];
+    return { label: labels?.[attackerType] || null, isAdvantage: false };
+  }
+  return { label: null, isAdvantage: false };
+}
+
+/**
+ * @param {Unit} unit
+ * @param {Unit[]} allUnits
+ * @returns {{ buffs: { unitId: string; buff: { type: string; duration: number; value: number } }[]; messages: string[] }}
+ */
+export function calculateSynergyBonuses(unit, allUnits) {
+  /** @type {{ unitId: string; buff: { type: string; duration: number; value: number } }[]} */
+  const buffs = [];
+  /** @type {string[]} */
+  const messages = [];
+  const unitType = /** @type {UnitType} */ (unit.type);
+
+  for (const [, config] of Object.entries(SYNERGY_CONFIG)) {
+    if (!config.requiredTypes.includes(unitType)) continue;
+
+    const otherType = config.requiredTypes.find(t => t !== unitType) || config.requiredTypes[0];
+    const nearbyAllies = allUnits.filter(u =>
+      u.faction === unit.faction &&
+      u.id !== unit.id &&
+      u.type === otherType &&
+      Math.abs(u.x - unit.x) + Math.abs(u.y - unit.y) <= config.range
+    );
+
+    if (nearbyAllies.length === 0) continue;
+
+    const shouldApply =
+      config.beneficiaryType === 'both' ||
+      config.beneficiaryType === unitType;
+
+    if (!shouldApply) continue;
+
+    buffs.push({
+      unitId: unit.id,
+      buff: {
+        type: config.effect.type,
+        duration: config.effect.duration,
+        value: config.effect.value
+      }
+    });
+
+    const unitName = unitConfig[unitType].name;
+    messages.push(`${unitName}触发【${config.name}】：${config.description}`);
+  }
+
+  return { buffs, messages };
+}
+
+/**
+ * @param {Unit[]} units
+ * @param {string} faction
+ * @returns {{ allBuffs: { unitId: string; buff: { type: string; duration: number; value: number } }[]; messages: string[] }}
+ */
+export function calculateAllSynergies(units, faction) {
+  /** @type {{ unitId: string; buff: { type: string; duration: number; value: number } }[]} */
+  const allBuffs = [];
+  /** @type {string[]} */
+  const messages = [];
+  const factionUnits = units.filter(u => u.faction === faction);
+
+  for (const unit of factionUnits) {
+    const result = calculateSynergyBonuses(unit, units);
+    allBuffs.push(...result.buffs);
+    messages.push(...result.messages);
+  }
+
+  return { allBuffs, messages };
+}
+
+/**
  * @param {Unit} attacker
  * @param {Unit} defender
  * @param {TerrainInfo | null} [terrain]
@@ -369,6 +469,9 @@ export function calculateDamage(attacker, defender, terrain) {
 
   const moraleMul = getMoraleDamageMultiplier(attacker.morale ?? gameRules.morale.initial);
   attack *= moraleMul;
+
+  const counterMul = getCounterMultiplier(attacker.type, defender.type);
+  attack *= counterMul;
 
   let damage = Math.floor(attack * (100 / (100 + defense)));
 
