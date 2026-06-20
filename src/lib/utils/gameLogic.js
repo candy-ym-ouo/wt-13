@@ -1,9 +1,10 @@
 import { boardConfig } from '$lib/config/boardConfig';
-import { unitConfig } from '$lib/config/unitConfig';
+import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 
 /**
  * @typedef {import('./cardSystem').Unit} Unit
+ * @typedef {import('./cardSystem').StatusEffect} StatusEffect
  */
 
 /**
@@ -78,6 +79,118 @@ import { gameRules } from '$lib/config/gameRules';
  */
 
 /**
+ * @param {Unit} unit
+ * @param {string} statusType
+ * @returns {StatusEffect | null}
+ */
+export function getStatusEffect(unit, statusType) {
+  if (!unit.statusEffects || unit.statusEffects.length === 0) return null;
+  return unit.statusEffects.find(s => s.type === statusType) || null;
+}
+
+/**
+ * @param {Unit} unit
+ * @param {string} statusType
+ * @returns {boolean}
+ */
+export function hasStatusEffect(unit, statusType) {
+  return getStatusEffect(unit, statusType) !== null;
+}
+
+/**
+ * @param {Unit} unit
+ * @returns {boolean}
+ */
+export function isHardCC(unit) {
+  const hardTypes = [STATUS_EFFECT_TYPES.STUN, STATUS_EFFECT_TYPES.FREEZE];
+  return hardTypes.some(t => hasStatusEffect(unit, t)) || (unit.stunned && unit.stunned > 0);
+}
+
+/**
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @returns {number}
+ */
+export function getEffectiveMoveRange(unit, unitType) {
+  const config = unitConfig[unitType];
+  let moveRange = config.moveRange;
+
+  if (unit.buffs) {
+    for (const buff of unit.buffs) {
+      if (buff.type === 'moveBoost') {
+        moveRange += /** @type {number} */ (buff.value);
+      }
+    }
+  }
+
+  const slowEffect = getStatusEffect(unit, STATUS_EFFECT_TYPES.SLOW);
+  if (slowEffect) {
+    const reduction = slowEffect.value ?? gameRules.statusEffects.slow.defaultMoveReduction;
+    moveRange = Math.max(gameRules.statusEffects.slow.minMoveRange, moveRange - reduction);
+  }
+
+  return moveRange;
+}
+
+/**
+ * @param {Unit} unit
+ * @param {string} statusType
+ * @param {UnitType} unitType
+ * @returns {number}
+ */
+export function getStatusResistance(unit, statusType, unitType) {
+  const config = unitConfig[unitType];
+  let resistance = (config.statusResistance && config.statusResistance[statusType]) || 0;
+
+  if (unit.buffs) {
+    for (const buff of unit.buffs) {
+      if (buff.type === 'statusResistBoost') {
+        resistance = Math.min(0.95, resistance + (buff.value || 0));
+      }
+    }
+  }
+
+  return resistance;
+}
+
+/**
+ * @param {Unit} unit
+ * @param {string} statusType
+ * @param {UnitType} unitType
+ * @returns {boolean}
+ */
+export function isImmuneToStatus(unit, statusType, unitType) {
+  const config = unitConfig[unitType];
+  const immunities = config.statusImmunities || [];
+  return immunities.includes(statusType);
+}
+
+/**
+ * @param {Unit} unit
+ * @param {string} statusType
+ * @param {number} duration
+ * @param {UnitType} unitType
+ * @returns {{ applied: boolean; duration: number; resisted: boolean; immune: boolean }}
+ */
+export function checkStatusApplication(unit, statusType, duration, unitType) {
+  if (isImmuneToStatus(unit, statusType, unitType)) {
+    return { applied: false, duration: 0, resisted: false, immune: true };
+  }
+
+  const resistance = getStatusResistance(unit, statusType, unitType);
+  if (resistance > 0) {
+    const roll = Math.random();
+    if (roll < resistance) {
+      const minDur = gameRules.statusEffects.resistanceCheck.minDurationOnResist;
+      const resistedDuration = Math.max(minDur, Math.ceil(duration * (1 - resistance)));
+      return { applied: true, duration: resistedDuration, resisted: true, immune: false };
+    }
+  }
+
+  return { applied: true, duration, resisted: false, immune: false };
+}
+
+/**
  * @param {number} x
  * @param {number} y
  * @param {string[][] | null} [boardLayout]
@@ -131,16 +244,7 @@ export function isPassable(x, y, boardLayout) {
  * @returns {MoveTile[]}
  */
 export function getMoveRange(unit, units, boardLayout) {
-  const config = unitConfig[/** @type {UnitType} */ (unit.type)];
-  let moveRange = config.moveRange;
-  
-  if (unit.buffs) {
-    for (const buff of unit.buffs) {
-      if (buff.type === 'moveBoost') {
-        moveRange += /** @type {number} */ (buff.value);
-      }
-    }
-  }
+  const moveRange = getEffectiveMoveRange(unit, /** @type {UnitType} */ (unit.type));
 
   /** @type {Map<string, number>} */
   const visited = new Map();
@@ -268,7 +372,13 @@ export function calculateDamage(attacker, defender, terrain) {
   const moraleMul = getMoraleDamageMultiplier(attacker.morale ?? gameRules.morale.initial);
   attack *= moraleMul;
 
-  const damage = Math.floor(attack * (100 / (100 + defense)));
+  let damage = Math.floor(attack * (100 / (100 + defense)));
+
+  const frozen = hasStatusEffect(defender, STATUS_EFFECT_TYPES.FREEZE);
+  if (frozen) {
+    damage = Math.floor(damage * gameRules.statusEffects.freeze.extraDamageMultiplier);
+  }
+
   return Math.max(1, damage);
 }
 
@@ -281,16 +391,7 @@ export function calculateDamage(attacker, defender, terrain) {
  * @returns {PathResult | null}
  */
 export function findPath(start, end, units, unit, boardLayout) {
-  const config = unitConfig[/** @type {UnitType} */ (unit.type)];
-  let moveRange = config.moveRange;
-  
-  if (unit.buffs) {
-    for (const buff of unit.buffs) {
-      if (buff.type === 'moveBoost') {
-        moveRange += /** @type {number} */ (buff.value);
-      }
-    }
-  }
+  const moveRange = getEffectiveMoveRange(unit, /** @type {UnitType} */ (unit.type));
 
   /** @type {Map<string, {x: number, y: number}>} */
   const openSet = new Map();
@@ -527,4 +628,70 @@ export function getBaseByFaction(bases, faction) {
  */
 export function getBaseAt(bases, x, y) {
   return bases.find(b => b.x === x && b.y === y) || null;
+}
+
+/**
+ * @param {Unit} unit
+ * @param {string} factionName
+ * @param {UnitType} unitType
+ * @returns {{ damage: number; messages: string[] }}
+ */
+export function processTickStatusEffects(unit, factionName, unitType) {
+  let totalDamage = 0;
+  /** @type {string[]} */
+  const messages = [];
+  const unitName = unitConfig[unitType].name;
+
+  const poison = getStatusEffect(unit, STATUS_EFFECT_TYPES.POISON);
+  if (poison) {
+    const dmg = poison.value ?? gameRules.statusEffects.poison.damagePerTurn;
+    totalDamage += dmg;
+    messages.push(`${factionName}${unitName} 中毒受到 ${dmg} 点伤害`);
+  }
+
+  const burn = getStatusEffect(unit, STATUS_EFFECT_TYPES.BURN);
+  if (burn) {
+    const dmg = burn.value ?? gameRules.statusEffects.burn.damagePerTurn;
+    totalDamage += dmg;
+    messages.push(`${factionName}${unitName} 燃烧受到 ${dmg} 点伤害`);
+  }
+
+  return { damage: totalDamage, messages };
+}
+
+/**
+ * @param {Unit} unit
+ * @param {number} pathLength
+ * @returns {number}
+ */
+export function calculateBleedDamage(unit, pathLength) {
+  if (pathLength <= 0) return 0;
+  const bleed = getStatusEffect(unit, STATUS_EFFECT_TYPES.BLEED);
+  if (!bleed) return 0;
+  const perMove = bleed.value ?? gameRules.statusEffects.bleed.damagePerMove;
+  return perMove * pathLength;
+}
+
+/**
+ * @param {Unit} unit
+ * @returns {StatusEffect[]}
+ */
+export function tickStatusEffects(unit) {
+  if (!unit.statusEffects || unit.statusEffects.length === 0) return [];
+  return unit.statusEffects
+    .map(s => ({ ...s, duration: s.duration - 1 }))
+    .filter(s => s.duration > 0);
+}
+
+/**
+ * @param {Unit} unit
+ * @returns {{ stunned: number; frozen: boolean; silenced: boolean; healBlocked: boolean }}
+ */
+export function getStatusFlags(unit) {
+  return {
+    stunned: unit.stunned && unit.stunned > 0 ? unit.stunned : (hasStatusEffect(unit, STATUS_EFFECT_TYPES.STUN) ? 999 : 0),
+    frozen: hasStatusEffect(unit, STATUS_EFFECT_TYPES.FREEZE),
+    silenced: hasStatusEffect(unit, STATUS_EFFECT_TYPES.SILENCE),
+    healBlocked: hasStatusEffect(unit, STATUS_EFFECT_TYPES.HEAL_BLOCK)
+  };
 }

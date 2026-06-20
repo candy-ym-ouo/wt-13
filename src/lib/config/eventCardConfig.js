@@ -1,3 +1,5 @@
+import { STATUS_EFFECT_TYPES } from '$lib/config/unitConfig';
+
 export const CARD_CATEGORY = {
   INSTANT: 'instant',
   SUSTAIN: 'sustain',
@@ -77,11 +79,77 @@ export const eventCards = [
     name: '眩晕术',
     category: CARD_CATEGORY.INSTANT,
     type: 'debuff',
-    description: '使敌方单位 1 回合无法行动',
-    effect: { type: 'stun', duration: 1 },
+    description: '使敌方单位 2 回合无法行动',
+    effect: { type: STATUS_EFFECT_TYPES.STUN, duration: 2 },
     icon: '💫',
     cost: 4,
     cooldown: 3
+  },
+  {
+    id: 'slow',
+    name: '重力场',
+    category: CARD_CATEGORY.SUSTAIN,
+    type: 'debuff',
+    description: '敌方单位移动力降低 2，持续 3 回合',
+    effect: { type: STATUS_EFFECT_TYPES.SLOW, duration: 3, value: 2 },
+    icon: '🐢',
+    cost: 3,
+    cooldown: 2
+  },
+  {
+    id: 'heal_block',
+    name: '诅咒封印',
+    category: CARD_CATEGORY.SUSTAIN,
+    type: 'debuff',
+    description: '敌方单位无法接受治疗，持续 3 回合',
+    effect: { type: STATUS_EFFECT_TYPES.HEAL_BLOCK, duration: 3 },
+    icon: '🚫',
+    cost: 3,
+    cooldown: 3
+  },
+  {
+    id: 'poison',
+    name: '剧毒术',
+    category: CARD_CATEGORY.SUSTAIN,
+    type: 'debuff',
+    description: '敌方单位中毒，每回合损失 8 点生命，持续 4 回合',
+    effect: { type: STATUS_EFFECT_TYPES.POISON, duration: 4, value: 8 },
+    icon: '☠️',
+    cost: 3,
+    cooldown: 2
+  },
+  {
+    id: 'burn',
+    name: '烈焰风暴',
+    category: CARD_CATEGORY.SUSTAIN,
+    type: 'debuff',
+    description: '敌方单位燃烧，每回合损失 10 点生命，持续 3 回合',
+    effect: { type: STATUS_EFFECT_TYPES.BURN, duration: 3, value: 10 },
+    icon: '🔥',
+    cost: 4,
+    cooldown: 3
+  },
+  {
+    id: 'freeze',
+    name: '寒冰禁锢',
+    category: CARD_CATEGORY.INSTANT,
+    type: 'debuff',
+    description: '冰冻敌方单位 1 回合无法行动，期间受伤害增加 25%',
+    effect: { type: STATUS_EFFECT_TYPES.FREEZE, duration: 1 },
+    icon: '❄️',
+    cost: 4,
+    cooldown: 3
+  },
+  {
+    id: 'bleed',
+    name: '撕裂伤口',
+    category: CARD_CATEGORY.SUSTAIN,
+    type: 'debuff',
+    description: '敌方单位流血，每移动 1 格损失 5 点生命，持续 3 回合',
+    effect: { type: STATUS_EFFECT_TYPES.BLEED, duration: 3, value: 5 },
+    icon: '🩸',
+    cost: 3,
+    cooldown: 2
   },
   {
     id: 'summon',
@@ -150,12 +218,34 @@ export const eventCards = [
     cost: 4,
     cooldown: 3,
     trigger: 'onAttacked'
+  },
+  {
+    id: 'cleanse',
+    name: '净化术',
+    category: CARD_CATEGORY.INSTANT,
+    type: 'buff',
+    description: '清除己方单位所有负面状态效果',
+    effect: { type: 'cleanse' },
+    icon: '✨',
+    cost: 2,
+    cooldown: 2
+  },
+  {
+    id: 'status_resist',
+    name: '钢铁意志',
+    category: CARD_CATEGORY.SUSTAIN,
+    type: 'buff',
+    description: '己方单位所有状态抗性 +50%，持续 3 回合',
+    effect: { type: 'statusResistBoost', value: 0.5, duration: 3 },
+    icon: '💪',
+    cost: 3,
+    cooldown: 3
   }
 ];
 
 export const cardConfig = {
   cardsPerTurn: 1,
-  maxHandSize: 6,
+  maxHandSize: 7,
   initialHandSize: 4,
   initialEnergy: 5,
   energyPerTurn: 3,

@@ -1,4 +1,5 @@
 import { eventCards, cardConfig, CARD_CATEGORY } from '$lib/config/eventCardConfig';
+import { STATUS_EFFECT_TYPES } from '$lib/config/unitConfig';
 
 /**
  * @typedef {'instant' | 'sustain' | 'counter'} CardCategory
@@ -33,6 +34,15 @@ import { eventCards, cardConfig, CARD_CATEGORY } from '$lib/config/eventCardConf
  */
 
 /**
+ * @typedef {object} StatusEffect
+ * @property {string} [id]
+ * @property {string} type
+ * @property {number} duration
+ * @property {number} [value]
+ * @property {string} [source]
+ */
+
+/**
  * @typedef {object} Unit
  * @property {string} id
  * @property {string} type
@@ -48,6 +58,8 @@ import { eventCards, cardConfig, CARD_CATEGORY } from '$lib/config/eventCardConf
  * @property {number} stunned
  * @property {number} morale
  * @property {number} winStreak
+ * @property {StatusEffect[]} statusEffects
+ * @property {Record<string, number>} [tempResistBoost]
  */
 
 /**
@@ -62,6 +74,8 @@ import { eventCards, cardConfig, CARD_CATEGORY } from '$lib/config/eventCardConf
  * @property {number} [x]
  * @property {number} [y]
  * @property {string} [terrain]
+ * @property {StatusEffect} [statusEffect]
+ * @property {boolean} [resisted]
  */
 
 /**
@@ -119,6 +133,19 @@ export function canAffordCard(card, currentEnergy, cooldowns) {
   return { canUse: true };
 }
 
+const DEBUFF_EFFECT_TYPES = new Set([
+  STATUS_EFFECT_TYPES.STUN,
+  STATUS_EFFECT_TYPES.SLOW,
+  STATUS_EFFECT_TYPES.HEAL_BLOCK,
+  STATUS_EFFECT_TYPES.SILENCE,
+  STATUS_EFFECT_TYPES.POISON,
+  STATUS_EFFECT_TYPES.BURN,
+  STATUS_EFFECT_TYPES.FREEZE,
+  STATUS_EFFECT_TYPES.BLEED,
+  'damage',
+  'stun'
+]);
+
 /**
  * @param {EventCard | null | undefined} card
  * @param {Unit | null | undefined} selectedUnit
@@ -129,6 +156,12 @@ export function canAffordCard(card, currentEnergy, cooldowns) {
 export function canUseCard(card, selectedUnit, targetUnit, currentFaction) {
   if (!card) return false;
 
+  const isDebuff = DEBUFF_EFFECT_TYPES.has(card.effect.type);
+
+  if (isDebuff) {
+    return !!(targetUnit && targetUnit.faction !== currentFaction);
+  }
+
   switch (card.effect.type) {
     case 'heal':
     case 'attackBoost':
@@ -136,15 +169,14 @@ export function canUseCard(card, selectedUnit, targetUnit, currentFaction) {
     case 'moveBoost':
     case 'doubleAttack':
     case 'counterAttack':
-    case 'shield': {
+    case 'shield':
+    case 'cleanse':
+    case 'statusResistBoost': {
       const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)
         ? selectedUnit
         : (targetUnit && targetUnit.faction === currentFaction ? targetUnit : null);
       return !!friendlyUnit;
     }
-    case 'damage':
-    case 'stun':
-      return !!(targetUnit && targetUnit.faction !== currentFaction);
     case 'summon':
       return true;
     case 'terrainChange':
@@ -168,8 +200,27 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
   /** @type {AppliedEffect[]} */
   const effects = [];
   const currentFaction = /** @type {string} */ (gameState.currentFaction);
+  const effectType = card.effect.type;
 
-  switch (card.effect.type) {
+  const isStatusDebuff = Object.values(STATUS_EFFECT_TYPES).includes(effectType);
+
+  if (isStatusDebuff) {
+    if (targetUnit && targetUnit.faction !== currentFaction) {
+      effects.push({
+        type: 'applyStatus',
+        unitId: targetUnit.id,
+        statusEffect: {
+          type: effectType,
+          duration: card.effect.duration,
+          value: card.effect.value,
+          source: card.id
+        }
+      });
+    }
+    return effects;
+  }
+
+  switch (effectType) {
     case 'heal': {
       const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)
         ? selectedUnit
@@ -225,7 +276,15 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
       break;
     case 'stun':
       if (targetUnit && targetUnit.faction !== currentFaction) {
-        effects.push({ type: 'stun', unitId: targetUnit.id, duration: card.effect.duration });
+        effects.push({
+          type: 'applyStatus',
+          unitId: targetUnit.id,
+          statusEffect: {
+            type: STATUS_EFFECT_TYPES.STUN,
+            duration: card.effect.duration,
+            source: card.id
+          }
+        });
       }
       break;
     case 'summon':
@@ -274,6 +333,28 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
           type: 'addBuff',
           unitId: friendlyUnit.id,
           buff: { type: 'shield', duration: card.effect.duration }
+        });
+      }
+      break;
+    }
+    case 'cleanse': {
+      const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)
+        ? selectedUnit
+        : (targetUnit && targetUnit.faction === currentFaction ? targetUnit : null);
+      if (friendlyUnit) {
+        effects.push({ type: 'cleanse', unitId: friendlyUnit.id });
+      }
+      break;
+    }
+    case 'statusResistBoost': {
+      const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)
+        ? selectedUnit
+        : (targetUnit && targetUnit.faction === currentFaction ? targetUnit : null);
+      if (friendlyUnit) {
+        effects.push({
+          type: 'addBuff',
+          unitId: friendlyUnit.id,
+          buff: { type: 'statusResistBoost', value: card.effect.value, duration: card.effect.duration }
         });
       }
       break;

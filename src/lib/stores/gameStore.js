@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { boardConfig } from '$lib/config/boardConfig';
-import { unitConfig, initialUnits } from '$lib/config/unitConfig';
+import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
 import {
@@ -9,11 +9,23 @@ import {
   refillEnergy,
   createCooldownEntry
 } from '$lib/utils/cardSystem';
+import {
+  checkStatusApplication,
+  processTickStatusEffects,
+  tickStatusEffects,
+  hasStatusEffect,
+  getStatusFlags,
+  calculateBleedDamage,
+  isHardCC,
+  getStatusResistance,
+  isImmuneToStatus
+} from '$lib/utils/gameLogic';
 
 /**
  * @typedef {import('../utils/cardSystem').Unit} Unit
  * @typedef {import('../utils/cardSystem').EventCard} EventCard
  * @typedef {import('../utils/cardSystem').CooldownEntry} CooldownEntry
+ * @typedef {import('../utils/cardSystem').StatusEffect} StatusEffect
  */
 
 /**
@@ -54,6 +66,7 @@ import {
  * @property {MoraleChange[]} lastMoraleChanges
  * @property {{cardId: string, type: 'play' | 'activate' | 'expire'} | null} lastCardAction
  * @property {BaseState[]} bases
+ * @property {string[]} lastStatusMessages
  */
 
 /**
@@ -127,7 +140,8 @@ function createInitialState() {
         buffs: [],
         stunned: 0,
         morale: gameRules.morale.initial,
-        winStreak: 0
+        winStreak: 0,
+        statusEffects: []
       });
     }
   }
@@ -166,7 +180,8 @@ function createInitialState() {
     message: '游戏开始！红方先行动',
     lastMoraleChanges: [],
     lastCardAction: null,
-    bases
+    bases,
+    lastStatusMessages: []
   };
 }
 
@@ -178,44 +193,52 @@ function createGameState() {
     set,
     update,
     reset: () => set(createInitialState()),
-    /** @param {string | null} unitId */
     selectUnit: (unitId) => update(state => ({
       ...state,
       selectedUnitId: unitId,
       selectedCardId: null,
       gamePhase: unitId ? 'unitSelected' : 'idle'
     })),
-    /** @param {string | null} cardId */
     selectCard: (cardId) => update(state => ({
       ...state,
       selectedCardId: cardId,
       gamePhase: cardId ? 'cardSelected' : 'idle'
     })),
-    /**
-     * @param {string} unitId
-     * @param {number} x
-     * @param {number} y
-     * @param {any[]} path
-     */
     moveUnit: (unitId, x, y, path) => update(state => {
+      const unit = state.units.find(u => u.id === unitId);
+      const pathLength = path ? path.length : Math.abs(x - (unit?.x || 0)) + Math.abs(y - (unit?.y || 0));
+      const bleedDmg = unit ? calculateBleedDamage(unit, pathLength) : 0;
+
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
-          return { ...u, x, y, hasMoved: true, path };
+          let newHp = u.currentHp;
+          if (bleedDmg > 0) {
+            newHp = Math.max(0, u.currentHp - bleedDmg);
+          }
+          return { ...u, x, y, hasMoved: true, path, currentHp: newHp };
         }
         return u;
       });
+
+      /** @type {string[]} */
+      const statusMsgs = [];
+      if (bleedDmg > 0 && unit) {
+        const uName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+        const fName = unit.faction === 'red' ? '红方' : '蓝方';
+        statusMsgs.push(`${fName}${uName} 移动流血损失 ${bleedDmg} 生命`);
+      }
+
+      const filteredUnits = units.filter(u => u.currentHp > 0);
+      const died = units.length > filteredUnits.length;
+
       return {
         ...state,
-        units,
+        units: filteredUnits,
         selectedUnitId: unitId,
-        gamePhase: 'unitMoved'
+        gamePhase: 'unitMoved',
+        lastStatusMessages: statusMsgs
       };
     }),
-    /**
-     * @param {string} attackerId
-     * @param {string} defenderId
-     * @param {number} damage
-     */
     attack: (attackerId, defenderId, damage) => update(state => {
       const attacker = state.units.find(/** @param {Unit} u */ u => u.id === attackerId);
       const defender = state.units.find(/** @param {Unit} u */ u => u.id === defenderId);
@@ -326,20 +349,86 @@ function createGameState() {
       /** @type {'red' | 'blue'} */
       const nextFaction = state.currentFaction === 'red' ? 'blue' : 'red';
       const newTurn = nextFaction === 'red' ? state.turn + 1 : state.turn;
-      const units = state.units.map(/** @param {Unit} u */ u => {
+
+      /** @type {string[]} */
+      const statusMessages = [];
+      /** @type {MoraleChange[]} */
+      const moraleChanges = [];
+      const clampMorale = (/** @type {number} */ v) =>
+        Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, v));
+
+      let dotKilled = false;
+
+      let units = state.units.map(/** @param {Unit} u */ u => {
+        const unitType = /** @type {UnitType} */ (u.type);
+        const factionName = u.faction === 'red' ? '红方' : '蓝方';
+
+        const dotResult = processTickStatusEffects(u, factionName, unitType);
+        if (dotResult.damage > 0) {
+          statusMessages.push(...dotResult.messages);
+        }
+
         const newBuffs = (u.buffs || [])
           .filter(/** @param {any} b */ b => b.duration > 1)
           .map(/** @param {any} b */ b => ({ ...b, duration: b.duration - 1 }));
-        const newStunned = u.stunned && u.stunned > 0 ? u.stunned - 1 : 0;
+
+        const newStatusEffects = tickStatusEffects(u);
+
+        const flags = getStatusFlags({ ...u, statusEffects: newStatusEffects });
+        const isCC = flags.stunned > 0 || flags.frozen;
+
+        const newHp = Math.max(0, u.currentHp - dotResult.damage);
+
         return {
           ...u,
-          hasMoved: false,
-          hasAttacked: false,
+          hasMoved: isCC ? true : false,
+          hasAttacked: isCC ? true : false,
           attackCount: 0,
           buffs: newBuffs,
-          stunned: newStunned
+          stunned: flags.stunned > 0 && flags.stunned < 900 ? flags.stunned - 1 : 0,
+          statusEffects: newStatusEffects,
+          currentHp: newHp
         };
       });
+
+      units = units.filter(u => {
+        if (u.currentHp <= 0) {
+          const unitName = unitConfig[/** @type {UnitType} */ (u.type)].name;
+          const factionName = u.faction === 'red' ? '红方' : '蓝方';
+          statusMessages.push(`${factionName}${unitName} 因持续伤害阵亡`);
+          dotKilled = true;
+
+          const allyFaction = u.faction;
+          moraleChanges.push(...units
+            .filter(x => x.faction === allyFaction && x.id !== u.id && x.currentHp > 0)
+            .map(x => {
+              const before = x.morale;
+              const delta = -gameRules.morale.onAllyDeath;
+              const after = clampMorale(before + delta);
+              return {
+                unitId: x.id,
+                unitName: unitConfig[/** @type {UnitType} */ (x.type)].name,
+                faction: x.faction,
+                before,
+                after,
+                delta: after - before,
+                reason: `友军${unitName}因持续伤害阵亡`
+              };
+            })
+          );
+          return false;
+        }
+        return true;
+      });
+
+      units = units.map(u => {
+        const mc = moraleChanges.find(m => m.unitId === u.id);
+        if (mc) {
+          return { ...u, morale: mc.after, winStreak: 0 };
+        }
+        return u;
+      });
+
       let newRevealTurns = state.revealTurns ? state.revealTurns - 1 : 0;
       if (nextFaction === state.currentFaction) {
         newRevealTurns = state.revealTurns ? state.revealTurns : 0;
@@ -375,13 +464,11 @@ function createGameState() {
         cooldowns: nextCooldowns,
         energy: nextEnergy,
         revealTurns: newRevealTurns,
-        turnHistory: [...state.turnHistory, { turn: state.turn, faction: state.currentFaction }]
+        turnHistory: [...state.turnHistory, { turn: state.turn, faction: state.currentFaction }],
+        lastStatusMessages: statusMessages,
+        lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges
       };
     }),
-    /**
-     * @param {string} winner
-     * @param {string} condition
-     */
     setVictory: (winner, condition) => update(state => ({
       ...state,
       gameOver: true,
@@ -389,10 +476,6 @@ function createGameState() {
       victoryCondition: condition,
       gamePhase: 'gameOver'
     })),
-    /**
-     * @param {'red' | 'blue'} faction
-     * @param {EventCard} card
-     */
     addCard: (faction, card) => update(state => {
       const hands = {
         red: [...state.hands.red],
@@ -409,12 +492,6 @@ function createGameState() {
       }
       return { ...state, hands };
     }),
-    /**
-     * @param {'red' | 'blue'} faction
-     * @param {string} cardInstanceId
-     * @param {number} cost
-     * @param {string} cardId
-     */
     useCard: (faction, cardInstanceId, cost, cardId) => update(state => {
       const hands = {
         red: [...state.hands.red],
@@ -492,24 +569,24 @@ function createGameState() {
         lastCardAction: usedCard ? { cardId: usedCard.id, type: isInstant ? 'play' : 'activate' } : null
       };
     }),
-    /**
-     * @param {string} unitId
-     * @param {number} amount
-     */
     healUnit: (unitId, amount) => update(state => {
+      /** @type {string[]} */
+      const statusMsgs = [];
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
+          const flags = getStatusFlags(u);
+          if (flags.healBlocked) {
+            const uName = unitConfig[/** @type {UnitType} */ (u.type)].name;
+            statusMsgs.push(`${uName} 被禁疗，治疗无效！`);
+            return u;
+          }
           const maxHp = unitConfig[/** @type {UnitType} */ (u.type)].hp;
           return { ...u, currentHp: Math.min(maxHp, u.currentHp + amount) };
         }
         return u;
       });
-      return { ...state, units };
+      return { ...state, units, lastStatusMessages: statusMsgs };
     }),
-    /**
-     * @param {string} unitId
-     * @param {any} buff
-     */
     addBuff: (unitId, buff) => update(state => {
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
@@ -523,10 +600,6 @@ function createGameState() {
       });
       return { ...state, units };
     }),
-    /**
-     * @param {string} unitId
-     * @param {number} damage
-     */
     damageUnit: (unitId, damage) => update(state => {
       /** @type {MoraleChange[]} */
       const moraleChanges = [];
@@ -576,10 +649,6 @@ function createGameState() {
       updatedUnits = updatedUnits.filter(/** @param {Unit} u */ u => u.currentHp > 0);
       return { ...state, units: updatedUnits, lastMoraleChanges: moraleChanges };
     }),
-    /**
-     * @param {string} unitId
-     * @param {number} duration
-     */
     stunUnit: (unitId, duration) => update(state => {
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
@@ -589,16 +658,79 @@ function createGameState() {
       });
       return { ...state, units };
     }),
-    /** @param {Unit} unit */
+    applyStatusEffect: (unitId, statusEffect) => update(state => {
+      /** @type {string[]} */
+      const statusMsgs = [];
+      const target = state.units.find(u => u.id === unitId);
+      if (!target) return state;
+
+      const unitType = /** @type {UnitType} */ (target.type);
+      const unitName = unitConfig[unitType].name;
+      const factionName = target.faction === 'red' ? '红方' : '蓝方';
+      const statusInfo = getStatusInfo(statusEffect.type);
+
+      const result = checkStatusApplication(target, statusEffect.type, statusEffect.duration, unitType);
+
+      if (result.immune) {
+        statusMsgs.push(`${factionName}${unitName} 对【${statusInfo.name}】免疫，效果被抵消！`);
+        return { ...state, lastStatusMessages: statusMsgs };
+      }
+
+      const units = state.units.map(/** @param {Unit} u */ u => {
+        if (u.id === unitId) {
+          if (!result.applied) return u;
+
+          const effectiveEffect = { ...statusEffect, duration: result.duration, id: `se_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` };
+          let newEffects = (u.statusEffects || []).filter(s => s.type !== statusEffect.type);
+          newEffects.push(effectiveEffect);
+
+          const info = getStatusInfo(statusEffect.type);
+          let hasMoved = u.hasMoved;
+          let hasAttacked = u.hasAttacked;
+
+          if (info.isHardCC) {
+            hasMoved = true;
+            hasAttacked = true;
+          }
+
+          return { ...u, statusEffects: newEffects, hasMoved, hasAttacked };
+        }
+        return u;
+      });
+
+      if (result.applied) {
+        if (result.resisted) {
+          statusMsgs.push(`${factionName}${unitName} 部分抵抗【${statusInfo.name}】，持续时间缩短至 ${result.duration} 回合`);
+        } else {
+          statusMsgs.push(`${factionName}${unitName} 受到【${statusInfo.name}】效果，持续 ${result.duration} 回合`);
+        }
+      } else {
+        statusMsgs.push(`${factionName}${unitName} 完全抵抗了【${statusInfo.name}】效果！`);
+      }
+
+      return { ...state, units, lastStatusMessages: statusMsgs };
+    }),
+    cleanseUnit: (unitId) => update(state => {
+      /** @type {string[]} */
+      const statusMsgs = [];
+      const units = state.units.map(/** @param {Unit} u */ u => {
+        if (u.id === unitId) {
+          const oldEffects = u.statusEffects || [];
+          if (oldEffects.length > 0) {
+            const uName = unitConfig[/** @type {UnitType} */ (u.type)].name;
+            const removedNames = oldEffects.map(s => getStatusInfo(s.type).name).join('、');
+            statusMsgs.push(`${uName} 清除了所有负面状态：${removedNames}`);
+          }
+          return { ...u, statusEffects: [], stunned: 0 };
+        }
+        return u;
+      });
+      return { ...state, units, lastStatusMessages: statusMsgs };
+    }),
     addUnit: (unit) => update(state => ({
       ...state,
-      units: [...state.units, unit]
+      units: [...state.units, { ...unit, statusEffects: unit.statusEffects || [] }]
     })),
-    /**
-     * @param {number} x
-     * @param {number} y
-     * @param {string} terrainType
-     */
     changeTerrain: (x, y, terrainType) => update(state => {
       const newLayout = state.boardLayout
         ? state.boardLayout.map(/** @param {string[]} row */ row => [...row])
@@ -610,18 +742,11 @@ function createGameState() {
         terrainChanged: { ...(state.terrainChanged || {}), [`${x},${y}`]: terrainType }
       };
     }),
-    /** @param {number} duration */
     setReveal: (duration) => update(/** @param {GameState} state */ state => ({
       ...state,
       revealTurns: duration
     })),
-    /** @param {string} message */
     setMessage: (message) => update(/** @param {GameState} state */ state => ({ ...state, message })),
-    /**
-     * @param {string} unitId
-     * @param {number} terrainMoraleBonus
-     * @param {string} terrainName
-     */
     applyTerrainMorale: (unitId, terrainMoraleBonus, terrainName) => update(state => {
       if (!terrainMoraleBonus) return { ...state, lastMoraleChanges: [] };
       const clampMorale = (/** @type {number} */ v) =>
@@ -650,11 +775,6 @@ function createGameState() {
       return { ...state, units, lastMoraleChanges: moraleChanges };
     }),
     clearLastCardAction: () => update(state => ({ ...state, lastCardAction: null })),
-    /**
-     * @param {number} x
-     * @param {number} y
-     * @param {number} delta
-     */
     damageBase: (x, y, delta) => update(state => {
       const bases = state.bases.map(b => {
         if (b.x === x && b.y === y) {
@@ -664,11 +784,6 @@ function createGameState() {
       });
       return { ...state, bases };
     }),
-    /**
-     * @param {number} x
-     * @param {number} y
-     * @param {number} delta
-     */
     repairBase: (x, y, delta) => update(state => {
       const bases = state.bases.map(b => {
         if (b.x === x && b.y === y) {
@@ -678,12 +793,6 @@ function createGameState() {
       });
       return { ...state, bases };
     }),
-    /**
-     * @param {number} x
-     * @param {number} y
-     * @param {string} capturingFaction
-     * @param {number} progressDelta
-     */
     updateBaseCapture: (x, y, capturingFaction, progressDelta) => update(state => {
       const bases = state.bases.map(b => {
         if (b.x === x && b.y === y) {
@@ -708,9 +817,6 @@ function createGameState() {
       });
       return { ...state, bases };
     }),
-    /**
-     * @param {BaseState[]} newBases
-     */
     setBases: (newBases) => update(state => ({ ...state, bases: newBases }))
   };
 }

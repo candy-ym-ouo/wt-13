@@ -56,5 +56,26 @@ export const gameRules = {
       { min: 30, max: 49, damageMultiplier: 0.85, label: '低落' },
       { min: 0, max: 29, damageMultiplier: 0.7, label: '崩溃' }
     ]
+  },
+  statusEffects: {
+    slow: {
+      defaultMoveReduction: 2,
+      minMoveRange: 1
+    },
+    poison: {
+      damagePerTurn: 8
+    },
+    burn: {
+      damagePerTurn: 10
+    },
+    bleed: {
+      damagePerMove: 5
+    },
+    freeze: {
+      extraDamageMultiplier: 1.25
+    },
+    resistanceCheck: {
+      minDurationOnResist: 1
+    }
   }
 };

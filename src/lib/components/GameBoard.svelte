@@ -14,9 +14,14 @@
     getUnitAt,
     checkVictory,
     getMoraleTier,
-    getBaseAt
+    getBaseAt,
+    isHardCC,
+    hasStatusEffect,
+    getStatusEffect,
+    getEffectiveMoveRange
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard } from '$lib/utils/cardSystem';
+  import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -341,7 +346,8 @@
     container.addChild(moraleText);
 
     const exhausted = unit.hasMoved && unit.hasAttacked;
-    if (exhausted || (unit.stunned && unit.stunned > 0)) {
+    const hardCC = isHardCC(unit);
+    if (exhausted || hardCC) {
       const shade = new PIXI.Graphics();
       shade.beginFill(0x000000, 0.5);
       shade.drawCircle(0, 0, boardConfig.tileSize * 0.35);
@@ -361,7 +367,29 @@
       }
     }
 
-    if (unit.stunned && unit.stunned > 0) {
+    if (unit.statusEffects && unit.statusEffects.length > 0) {
+      let statusX = 12;
+      let statusY = -12;
+      let count = 0;
+      for (const status of unit.statusEffects) {
+        const info = getStatusInfo(status.type);
+        const statusIcon = new PIXI.Text(info.icon, { fontSize: 12 });
+        statusIcon.anchor.set(0.5);
+        statusIcon.x = statusX;
+        statusIcon.y = statusY;
+        container.addChild(statusIcon);
+        count++;
+        if (count % 2 === 0) {
+          statusX = 12;
+          statusY += 10;
+        } else {
+          statusX = -12;
+        }
+        if (count >= 6) break;
+      }
+    }
+
+    if (unit.stunned && unit.stunned > 0 && !hasStatusEffect(unit, STATUS_EFFECT_TYPES.STUN)) {
       const stunIcon = new PIXI.Text('💫', { fontSize: 14 });
       stunIcon.anchor.set(0.5);
       stunIcon.x = 12;
@@ -433,9 +461,9 @@
       /** @param {any} b */ b => b.type === 'doubleAttack'
     );
     const hasAttackedTwice = !!hasDoubleAttack && (selectedUnitData.attackCount || 0) >= 2;
-    const stunned = !!(selectedUnitData.stunned && selectedUnitData.stunned > 0);
+    const ccLocked = isHardCC(selectedUnitData);
 
-    if (!selectedUnitData.hasMoved && !stunned) {
+    if (!selectedUnitData.hasMoved && !ccLocked) {
       const moveRange = getMoveRange(selectedUnitData, state.units, layout);
       for (const tile of moveRange) {
         const h = new PIXI.Graphics();
@@ -452,7 +480,7 @@
       }
     }
 
-    if (!selectedUnitData.hasAttacked && !stunned && !hasAttackedTwice) {
+    if (!selectedUnitData.hasAttacked && !ccLocked && !hasAttackedTwice) {
       const attackRange = getAttackRange(selectedUnitData, state.units);
       for (const tile of attackRange) {
         const h = new PIXI.Graphics();
@@ -522,8 +550,8 @@
 
     if (selectedUnitData && !selectedUnitData.hasMoved && state && !state.gameOver) {
       const layout = state.boardLayout || boardConfig.layout;
-      const stunned = !!(selectedUnitData.stunned && selectedUnitData.stunned > 0);
-      if (!stunned) {
+      const ccLocked = isHardCC(selectedUnitData);
+      if (!ccLocked) {
         const moveRange = getMoveRange(selectedUnitData, state.units, layout);
         const inRange = moveRange.some(
           /** @param {any} t */
@@ -561,10 +589,10 @@
         b => b.type === 'doubleAttack'
       );
       const hasAttackedTwice = !!hasDoubleAttack && (selectedUnitData.attackCount || 0) >= 2;
-      const stunned = !!(selectedUnitData.stunned && selectedUnitData.stunned > 0);
+      const ccLocked = isHardCC(selectedUnitData);
 
       if (clickedUnit && clickedUnit.faction !== state.currentFaction) {
-        if (!selectedUnitData.hasAttacked && !stunned && !hasAttackedTwice) {
+        if (!selectedUnitData.hasAttacked && !ccLocked && !hasAttackedTwice) {
           const attackRange = getAttackRange(selectedUnitData, state.units);
           const canAttack = attackRange.some(
             /** @param {any} t */
@@ -577,7 +605,7 @@
         }
       }
 
-      if (!clickedUnit && !selectedUnitData.hasMoved && !stunned) {
+      if (!clickedUnit && !selectedUnitData.hasMoved && !ccLocked) {
         const layout = state.boardLayout || boardConfig.layout;
         const moveRange = getMoveRange(selectedUnitData, state.units, layout);
         const canMove = moveRange.some(
@@ -662,6 +690,16 @@
             gameState.stunUnit(effect.unitId, effect.duration);
           }
           break;
+        case 'applyStatus':
+          if (effect.unitId && effect.statusEffect !== undefined) {
+            gameState.applyStatusEffect(effect.unitId, effect.statusEffect);
+          }
+          break;
+        case 'cleanse':
+          if (effect.unitId) {
+            gameState.cleanseUnit(effect.unitId);
+          }
+          break;
         case 'summon':
           if (effect.unitType && effect.faction) {
             doSummon(effect.unitType, effect.faction);
@@ -695,12 +733,20 @@
    * @returns {string}
    */
   function getCardUsageHint(card) {
+    const isStatusDebuff = Object.values(STATUS_EFFECT_TYPES).includes(card.effect.type);
+    if (isStatusDebuff) {
+      return '请点击敌方单位使用';
+    }
     switch (card.effect.type) {
       case 'heal':
       case 'attackBoost':
       case 'defenseBoost':
       case 'moveBoost':
       case 'doubleAttack':
+      case 'counterAttack':
+      case 'shield':
+      case 'cleanse':
+      case 'statusResistBoost':
         return '请先选中己方单位，或直接点击己方单位使用';
       case 'damage':
       case 'stun':
@@ -755,7 +801,8 @@
       buffs: [],
       stunned: 0,
       morale: gameRules.morale.initial,
-      winStreak: 0
+      winStreak: 0,
+      statusEffects: []
     };
     gameState.addUnit(newUnit);
   }

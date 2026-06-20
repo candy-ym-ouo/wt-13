@@ -1,10 +1,10 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns } from '$lib/stores/gameStore';
-  import { unitConfig } from '$lib/config/unitConfig';
+  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, eventCards } from '$lib/config/eventCardConfig';
-  import { getTerrain, getMoraleTier, settleBases, checkVictory } from '$lib/utils/gameLogic';
+  import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC } from '$lib/utils/gameLogic';
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
 
@@ -189,6 +189,10 @@
    * @returns {string}
    */
   function getCardHint(card) {
+    const isStatusDebuff = Object.values(STATUS_EFFECT_TYPES).includes(card.effect.type);
+    if (isStatusDebuff) {
+      return `已选中 ${card.name}，请点击敌方单位使用`;
+    }
     switch (card.effect.type) {
       case 'heal':
       case 'attackBoost':
@@ -197,9 +201,12 @@
       case 'doubleAttack':
       case 'counterAttack':
       case 'shield':
+      case 'cleanse':
+      case 'statusResistBoost':
         return `已选中 ${card.name}，请点击己方单位使用（也可先选中单位再选卡）`;
       case 'damage':
       case 'stun':
+      case 'applyStatus':
         return `已选中 ${card.name}，请点击敌方单位使用`;
       case 'terrainChange':
         return `已选中 ${card.name}，请点击任意非基地格子改变地形`;
@@ -428,6 +435,42 @@
     const card = eventCards.find(c => c.id === cardId);
     return card ? card.name : cardId;
   }
+
+  /**
+   * @param {string} type
+   * @returns {string}
+   */
+  function getResistanceLabel(type) {
+    const info = getStatusInfo(type);
+    return info.name;
+  }
+
+  /**
+   * @param {string} type
+   * @returns {string}
+   */
+  function getStatusTypeLabel(type) {
+    const info = getStatusInfo(type);
+    return info.name;
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {Record<string, number>}
+   */
+  function getUnitResistances(unit) {
+    const cfg = unitConfig[/** @type {UnitType} */ (unit.type)];
+    return cfg.statusResistance || {};
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {string[]}
+   */
+  function getUnitImmunities(unit) {
+    const cfg = unitConfig[/** @type {UnitType} */ (unit.type)];
+    return cfg.statusImmunities || [];
+  }
 </script>
 
 <div class="game-ui">
@@ -482,6 +525,14 @@
     <div class="message-bar">
       {#each state.message.split('\n') as line}
         <div>{line}</div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if state?.lastStatusMessages && state.lastStatusMessages.length > 0}
+    <div class="status-message-bar">
+      {#each state.lastStatusMessages as msg (msg)}
+        <div>{msg}</div>
       {/each}
     </div>
   {/if}
@@ -682,8 +733,53 @@
       {/if}
       {#if selectedUnitData.buffs && selectedUnitData.buffs.length > 0}
         <div class="buffs-info">
+          <div class="info-label">增益效果</div>
           {#each selectedUnitData.buffs as buff (buff.type)}
             <span class="buff-tag">{getBuffName(String(buff.type))}({buff.duration}回合)</span>
+          {/each}
+        </div>
+      {/if}
+      {#if selectedUnitData.statusEffects && selectedUnitData.statusEffects.length > 0}
+        <div class="status-effects-info">
+          <div class="info-label">状态效果</div>
+          {#each selectedUnitData.statusEffects as status, i (status.id || `${status.type}_${i}`)}
+            {@const info = getStatusInfo(status.type)}
+            <span
+              class="status-effect-tag"
+              style="background: {info.category === 'hardCC' ? '#e74c3c' : info.category === 'softCC' ? '#f39c12' : info.category === 'DoT' ? '#c0392b' : info.category === 'debuff' ? '#e67e22' : '#9b59b6'}"
+              title="{info.name}：{info.description}
+持续：{status.duration}回合
+{status.value !== undefined ? `数值：${info.valueLabel || '效果值'} ${status.value}` : ''}
+来源：{status.source || '未知'}"
+            >
+              {info.icon} {info.name}({status.duration})
+            </span>
+          {/each}
+        </div>
+      {/if}
+      {#if Object.keys(getUnitResistances(selectedUnitData)).length > 0}
+        <div class="resistances-info">
+          <div class="info-label">状态抗性</div>
+          {#each Object.entries(getUnitResistances(selectedUnitData)) as [type, value] (type)}
+            <span
+              class="resistance-tag"
+              title="{getStatusTypeLabel(type)}：免疫概率 {Math.round(value * 100)}%"
+            >
+              {getStatusInfo(type).icon} {Math.round(value * 100)}%
+            </span>
+          {/each}
+        </div>
+      {/if}
+      {#if getUnitImmunities(selectedUnitData).length > 0}
+        <div class="immunities-info">
+          <div class="info-label">异常免疫</div>
+          {#each getUnitImmunities(selectedUnitData) as type (type)}
+            <span
+              class="immunity-tag"
+              title="完全免疫【{getStatusTypeLabel(type)}】"
+            >
+              🛡️ {getStatusInfo(type).icon} {getStatusTypeLabel(type)}
+            </span>
           {/each}
         </div>
       {/if}
@@ -694,8 +790,8 @@
         {#if selectedUnitData.hasAttacked}
           <span class="status-tag attacked">已攻击</span>
         {/if}
-        {#if selectedUnitData.stunned > 0}
-          <span class="status-tag stunned">眩晕({selectedUnitData.stunned})</span>
+        {#if isHardCC(selectedUnitData)}
+          <span class="status-tag hard-cc">硬控中</span>
         {/if}
       </div>
     </div>
@@ -971,6 +1067,28 @@
     max-width: 80%;
     text-align: center;
     line-height: 1.5;
+  }
+
+  .status-message-bar {
+    position: absolute;
+    top: 140px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 16px;
+    background: rgba(155, 89, 182, 0.9);
+    color: white;
+    border-radius: 16px;
+    font-size: 11px;
+    z-index: 99;
+    max-width: 70%;
+    text-align: center;
+    line-height: 1.6;
+    animation: statusMsgFade 4s ease-out forwards;
+  }
+
+  @keyframes statusMsgFade {
+    0%, 70% { opacity: 1; }
+    100% { opacity: 0.6; }
   }
 
   .base-status-panel {
@@ -1313,6 +1431,16 @@
     color: #666;
   }
 
+  .info-label {
+    font-size: 10px;
+    color: #888;
+    width: 100%;
+    margin-bottom: 4px;
+    font-weight: bold;
+    border-bottom: 1px dashed #333;
+    padding-bottom: 2px;
+  }
+
   .buffs-info {
     margin-top: 8px;
     display: flex;
@@ -1327,6 +1455,57 @@
     border-radius: 8px;
     font-size: 10px;
     font-weight: bold;
+  }
+
+  .status-effects-info {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .status-effect-tag {
+    color: white;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: help;
+  }
+
+  .resistances-info {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .resistance-tag {
+    background: linear-gradient(135deg, #27ae60, #2ecc71);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: help;
+  }
+
+  .immunities-info {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .immunity-tag {
+    background: linear-gradient(135deg, #8e44ad, #9b59b6);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: help;
+    border: 1px solid #d4af37;
   }
 
   .unit-status {
@@ -1353,9 +1532,15 @@
     color: white;
   }
 
-  .status-tag.stunned {
-    background: #9b59b6;
+  .status-tag.hard-cc {
+    background: #c0392b;
     color: white;
+    animation: hardCCPulse 1s ease-in-out infinite;
+  }
+
+  @keyframes hardCCPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
   }
 
   .bottom-panel {
