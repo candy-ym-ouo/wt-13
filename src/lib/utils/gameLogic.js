@@ -492,6 +492,174 @@ export function getAttackRangeTiles(unit) {
 }
 
 /**
+ * @typedef {object} ThreatTileData
+ * @property {number} threatCount
+ * @property {number} counterCount
+ * @property {number} estimatedDamage
+ * @property {string[]} threatTypes
+ * @property {number} counterDamage
+ */
+
+/**
+ * @param {Unit} enemy
+ * @param {Unit[]} allUnits
+ * @param {string[][] | null} [boardLayout]
+ * @param {Record<string, TileEffect> | null} [tileEffects]
+ * @returns {{x: number, y: number}[]}
+ */
+export function getEnemyMoveAttackCoverage(enemy, allUnits, boardLayout, tileEffects) {
+  const enemyType = /** @type {UnitType} */ (enemy.type);
+  const attackRange = getEffectiveAttackRange(enemy, enemyType);
+  const moveRange = getEffectiveMoveRange(enemy, enemyType);
+
+  /** @type {Set<string>} */
+  const covered = new Set();
+
+  if (enemy.hasMoved || isHardCC(enemy)) {
+    for (let dy = -attackRange; dy <= attackRange; dy++) {
+      for (let dx = -attackRange; dx <= attackRange; dx++) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist === 0 || dist > attackRange) continue;
+        const x = enemy.x + dx;
+        const y = enemy.y + dy;
+        if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) continue;
+        covered.add(`${x},${y}`);
+      }
+    }
+    return Array.from(covered).map(k => {
+      const [x, y] = k.split(',').map(Number);
+      return { x, y };
+    });
+  }
+
+  /** @type {Map<string, number>} */
+  const visited = new Map();
+  const queue = [{ x: enemy.x, y: enemy.y, cost: 0 }];
+  visited.set(`${enemy.x},${enemy.y}`, 0);
+
+  while (queue.length > 0) {
+    queue.sort((a, b) => a.cost - b.cost);
+    const current = queue.shift();
+    if (!current) continue;
+    if (current.cost > moveRange) continue;
+
+    for (let dy = -attackRange; dy <= attackRange; dy++) {
+      for (let dx = -attackRange; dx <= attackRange; dx++) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist === 0 || dist > attackRange) continue;
+        const tx = current.x + dx;
+        const ty = current.y + dy;
+        if (tx < 0 || tx >= boardConfig.width || ty < 0 || ty >= boardConfig.height) continue;
+        covered.add(`${tx},${ty}`);
+      }
+    }
+
+    const neighbors = [
+      { x: current.x - 1, y: current.y },
+      { x: current.x + 1, y: current.y },
+      { x: current.x, y: current.y - 1 },
+      { x: current.x, y: current.y + 1 }
+    ];
+
+    for (const neighbor of neighbors) {
+      if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
+      const newCost = current.cost + getEffectiveMoveCost(neighbor.x, neighbor.y, tileEffects || null, boardLayout);
+      if (newCost > moveRange) continue;
+      const key = `${neighbor.x},${neighbor.y}`;
+      if (visited.has(key) && /** @type {number} */ (visited.get(key)) <= newCost) continue;
+      const unitAtPos = allUnits.find(u => u.x === neighbor.x && u.y === neighbor.y);
+      if (unitAtPos && unitAtPos.faction !== enemy.faction) continue;
+      visited.set(key, newCost);
+      queue.push({ x: neighbor.x, y: neighbor.y, cost: newCost });
+    }
+  }
+
+  return Array.from(covered).map(k => {
+    const [x, y] = k.split(',').map(Number);
+    return { x, y };
+  });
+}
+
+/**
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @returns {number}
+ */
+function getEffectiveAttackRange(unit, unitType) {
+  const config = unitConfig[unitType];
+  let attackRange = config.attackRange;
+  if (unit.specialization) {
+    const spec = SPECIALIZATION_CONFIG[unitType]?.find(s => s.id === unit.specialization);
+    if (spec?.bonuses?.attackRange) attackRange += spec.bonuses.attackRange;
+  }
+  return attackRange;
+}
+
+/**
+ * @param {Unit} friendlyUnit
+ * @param {{x: number, y: number}} position
+ * @param {Unit[]} enemyUnits
+ * @param {TerrainInfo | null} positionTerrain
+ * @returns {{ counterCount: number, counterDamage: number, counterSources: { unitId: string, damage: number }[] }}
+ */
+export function getCounterThreatAtPosition(friendlyUnit, position, enemyUnits, positionTerrain) {
+  const friendlyAtPos = { ...friendlyUnit, x: position.x, y: position.y };
+  const counterDamageRatio = gameRules.combat.counterAttackDamageRatio;
+  let counterCount = 0;
+  let totalCounterDamage = 0;
+  /** @type {{ unitId: string, damage: number }[]} */
+  const counterSources = [];
+
+  for (const enemy of enemyUnits) {
+    if (isHardCC(enemy)) continue;
+    const enemyType = /** @type {UnitType} */ (enemy.type);
+    const enemyAtkRange = getEffectiveAttackRange(enemy, enemyType);
+    const distance = Math.abs(enemy.x - position.x) + Math.abs(enemy.y - position.y);
+    if (distance === 0 || distance > enemyAtkRange) continue;
+
+    const rawCounter = calculateDamage(enemy, friendlyAtPos, positionTerrain);
+    const counterDmg = Math.max(1, Math.floor(rawCounter * counterDamageRatio));
+    const hasShield = friendlyAtPos.buffs?.some(b => b.type === 'shield');
+    const actualDmg = hasShield ? 0 : counterDmg;
+
+    counterCount++;
+    totalCounterDamage += actualDmg;
+    counterSources.push({ unitId: enemy.id, damage: actualDmg });
+  }
+
+  return { counterCount, counterDamage: totalCounterDamage, counterSources };
+}
+
+/**
+ * @param {Unit[]} enemyUnits
+ * @param {Unit} friendlyUnit
+ * @param {Unit[]} allUnits
+ * @param {string[][] | null} [boardLayout]
+ * @param {Record<string, TileEffect> | null} [tileEffects]
+ * @returns {Map<string, ThreatTileData>}
+ */
+export function buildFullThreatMap(enemyUnits, friendlyUnit, allUnits, boardLayout, tileEffects) {
+  /** @type {Map<string, ThreatTileData>} */
+  const map = new Map();
+
+  for (const enemy of enemyUnits) {
+    if (isHardCC(enemy)) continue;
+    const coverage = getEnemyMoveAttackCoverage(enemy, allUnits, boardLayout, tileEffects);
+    for (const tile of coverage) {
+      const key = `${tile.x},${tile.y}`;
+      const existing = map.get(key) || { threatCount: 0, counterCount: 0, estimatedDamage: 0, threatTypes: [], counterDamage: 0 };
+      existing.threatCount += 1;
+      if (!existing.threatTypes.includes(enemy.type)) {
+        existing.threatTypes.push(enemy.type);
+      }
+      map.set(key, existing);
+    }
+  }
+
+  return map;
+}
+
+/**
  * @param {UnitType} attackerType
  * @param {UnitType} defenderType
  * @returns {number}

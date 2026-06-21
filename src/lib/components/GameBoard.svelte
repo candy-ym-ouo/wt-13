@@ -10,6 +10,9 @@
     getMoveRange,
     getAttackRange,
     getAttackRangeTiles,
+    getEnemyMoveAttackCoverage,
+    getCounterThreatAtPosition,
+    buildFullThreatMap,
     findPath,
     calculateDamage,
     getUnitAt,
@@ -94,7 +97,7 @@
   let pathDots = [];
   /** @type {any[]} */
   let dangerHighlights = [];
-  /** @type {Map<string, number>} */
+  /** @type {Map<string, {threatCount: number, counterCount: number, estimatedDamage: number, threatTypes: string[], counterDamage: number}>} */
   let threatMap = new Map();
 
   /** @type {(() => void) | undefined} */
@@ -656,23 +659,21 @@
     if (!selectedUnitData || selectedUnitData.faction !== state.currentFaction) return;
 
     const currentFaction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    const layout = state.boardLayout || boardConfig.layout;
     const enemyUnits = state.units.filter(
       /** @param {import('../utils/cardSystem').Unit} u */
       u => u.faction !== currentFaction
     );
 
-    for (const enemy of enemyUnits) {
-      if (isHardCC(enemy)) continue;
-      const tiles = getAttackRangeTiles(enemy);
-      for (const tile of tiles) {
-        const key = `${tile.x},${tile.y}`;
-        threatMap.set(key, (threatMap.get(key) || 0) + 1);
-      }
-    }
+    threatMap = buildFullThreatMap(enemyUnits, selectedUnitData, state.units, layout, state.tileEffects);
 
-    for (const [key, count] of threatMap.entries()) {
+    for (const [key, data] of threatMap.entries()) {
       const [x, y] = key.split(',').map(Number);
-      const alpha = Math.min(0.25, 0.08 + count * 0.05);
+      const terrain = getTerrain(x, y, layout);
+      const defBonus = terrain ? terrain.defenseBonus : 0;
+      const effectiveThreat = Math.max(0, data.threatCount - (defBonus >= 3 ? 1 : defBonus >= 2 ? 0.5 : 0));
+      const alpha = Math.min(0.28, 0.06 + effectiveThreat * 0.05);
+
       const overlay = new PIXI.Graphics();
       overlay.beginFill(0xff0000, alpha);
       overlay.drawRect(
@@ -682,7 +683,7 @@
         boardConfig.tileSize
       );
       overlay.endFill();
-      overlay.lineStyle(1, 0xff0000, 0.2);
+      overlay.lineStyle(1, 0xff0000, 0.15 + effectiveThreat * 0.05);
       overlay.drawRect(
         x * boardConfig.tileSize + 1,
         y * boardConfig.tileSize + 1,
@@ -692,7 +693,7 @@
       dangerZoneLayer.addChild(overlay);
       dangerHighlights.push(overlay);
 
-      if (count >= 3) {
+      if (effectiveThreat >= 3) {
         const warnIcon = new PIXI.Text('⚠', {
           fontSize: 10,
           fill: 0xff4444,
@@ -705,9 +706,22 @@
         dangerZoneLayer.addChild(warnIcon);
         dangerHighlights.push(warnIcon);
       }
+
+      if (defBonus >= 2 && data.threatCount > 0) {
+        const shieldReduce = new PIXI.Text(`🛡-${defBonus}`, {
+          fontSize: 7,
+          fill: 0xf1c40f,
+          stroke: 0x000000,
+          strokeThickness: 1
+        });
+        shieldReduce.anchor.set(0.5);
+        shieldReduce.x = x * boardConfig.tileSize + boardConfig.tileSize / 2;
+        shieldReduce.y = y * boardConfig.tileSize + boardConfig.tileSize - 7;
+        dangerZoneLayer.addChild(shieldReduce);
+        dangerHighlights.push(shieldReduce);
+      }
     }
 
-    const layout = state.boardLayout || boardConfig.layout;
     for (let by = 0; by < boardConfig.height; by++) {
       for (let bx = 0; bx < boardConfig.width; bx++) {
         const terrain = getTerrain(bx, by, layout);
@@ -1033,6 +1047,11 @@
     }
 
     const layout = state.boardLayout || boardConfig.layout;
+    const currentFaction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    const enemyUnits = state.units.filter(
+      /** @param {import('../utils/cardSystem').Unit} u */
+      u => u.faction !== currentFaction
+    );
     const hasDoubleAttack = selectedUnitData.buffs?.some(
       /** @param {any} b */ b => b.type === 'doubleAttack'
     );
@@ -1043,11 +1062,24 @@
       const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
       for (const tile of moveRange) {
         const threatKey = `${tile.x},${tile.y}`;
-        const threatLevel = threatMap.get(threatKey) || 0;
+        const threatData = threatMap.get(threatKey);
+        const threatLevel = threatData ? threatData.threatCount : 0;
+        const terrain = getTerrain(tile.x, tile.y, layout);
+        const defBonus = terrain ? terrain.defenseBonus : 0;
+        const moraleBonus = terrain ? terrain.moraleBonus : 0;
+        const effectiveThreat = Math.max(0, threatLevel - (defBonus >= 3 ? 1 : defBonus >= 2 ? 0.5 : 0));
+
+        const counterInfo = getCounterThreatAtPosition(
+          selectedUnitData,
+          { x: tile.x, y: tile.y },
+          enemyUnits,
+          terrain
+        );
+        const hasCounter = counterInfo.counterCount > 0;
 
         const h = new PIXI.Graphics();
-        if (threatLevel > 0) {
-          h.beginFill(0x00ff00, 0.2);
+        if (effectiveThreat > 0 || hasCounter) {
+          h.beginFill(0x00ff00, 0.18);
           h.drawRect(
             tile.x * boardConfig.tileSize,
             tile.y * boardConfig.tileSize,
@@ -1055,7 +1087,7 @@
             boardConfig.tileSize
           );
           h.endFill();
-          h.lineStyle(1.5, 0xff4444, 0.7);
+          h.lineStyle(1.5, 0xff4444, 0.6);
           h.drawRect(
             tile.x * boardConfig.tileSize + 1,
             tile.y * boardConfig.tileSize + 1,
@@ -1075,10 +1107,11 @@
         moveHighlights.push(h);
         overlayLayer.addChild(h);
 
-        if (threatLevel > 0) {
+        const tx = tile.x * boardConfig.tileSize;
+        const ty = tile.y * boardConfig.tileSize;
+
+        if (effectiveThreat > 0) {
           const cornerSize = 12;
-          const tx = tile.x * boardConfig.tileSize;
-          const ty = tile.y * boardConfig.tileSize;
           const dangerCorner = new PIXI.Graphics();
           dangerCorner.beginFill(0xff4444, 0.7);
           dangerCorner.moveTo(tx + boardConfig.tileSize - cornerSize, ty);
@@ -1103,6 +1136,62 @@
             moveHighlights.push(dangerText);
             overlayLayer.addChild(dangerText);
           }
+        }
+
+        if (hasCounter) {
+          const counterBadge = new PIXI.Text('↩', {
+            fontSize: 10,
+            fill: 0xff9800,
+            stroke: 0x000000,
+            strokeThickness: 1
+          });
+          counterBadge.anchor.set(0.5);
+          counterBadge.x = tx + 9;
+          counterBadge.y = ty + 9;
+          moveHighlights.push(counterBadge);
+          overlayLayer.addChild(counterBadge);
+
+          if (counterInfo.counterDamage > 0) {
+            const counterDmg = new PIXI.Text(`-${counterInfo.counterDamage}`, {
+              fontSize: 7,
+              fill: 0xff9800,
+              stroke: 0x000000,
+              strokeThickness: 1
+            });
+            counterDmg.anchor.set(0.5);
+            counterDmg.x = tx + 9;
+            counterDmg.y = ty + 19;
+            moveHighlights.push(counterDmg);
+            overlayLayer.addChild(counterDmg);
+          }
+        }
+
+        if (defBonus >= 2) {
+          const defTag = new PIXI.Text(`🛡+${defBonus}`, {
+            fontSize: 7,
+            fill: 0xf1c40f,
+            stroke: 0x000000,
+            strokeThickness: 1
+          });
+          defTag.anchor.set(0.5);
+          defTag.x = tx + boardConfig.tileSize - 12;
+          defTag.y = ty + boardConfig.tileSize - 7;
+          moveHighlights.push(defTag);
+          overlayLayer.addChild(defTag);
+        }
+
+        if (moraleBonus > 0) {
+          const moraleTag = new PIXI.Text(`↑+${moraleBonus}`, {
+            fontSize: 7,
+            fill: 0x2ecc71,
+            stroke: 0x000000,
+            strokeThickness: 1
+          });
+          moraleTag.anchor.set(0.5);
+          moraleTag.x = tx + 12;
+          moraleTag.y = ty + boardConfig.tileSize - 7;
+          moveHighlights.push(moraleTag);
+          overlayLayer.addChild(moraleTag);
         }
       }
     }
