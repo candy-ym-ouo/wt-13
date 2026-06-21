@@ -9,6 +9,7 @@
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
   import { saveRosterFromGame, getFactionRoster, clearRoster, loadRoster } from '$lib/utils/storageRoster';
   import { saveToSlot, loadFromSlot, deleteSlot, getAllSlotMetas, hasAutoSave, loadAutoSave, clearAutoSave, getManualSlots, getAutoSlot, autoSave } from '$lib/utils/storageSave';
+  import TacticalHintPanel from './TacticalHintPanel.svelte';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -1137,6 +1138,8 @@
       {/each}
     </div>
   {/if}
+
+  <TacticalHintPanel />
 
   {#if state?.bases && state.bases.length > 0 && !state.gameOver}
     <div class="base-status-panel">
