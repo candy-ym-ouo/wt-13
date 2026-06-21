@@ -419,6 +419,39 @@ function createRoomStore() {
           faction: i === 0 ? (rng ? 'red' : 'blue') : (rng ? 'blue' : 'red')
         }))
       };
+    }),
+
+    loadRoomState: (/** @type {any} */ remoteState, /** @type {string} */ localPlayerId) => update(state => {
+      const players = remoteState.players.map(/** @param {any} p */ (p) => ({
+        ...p,
+        isLocal: p.id === localPlayerId
+      }));
+
+      return {
+        ...state,
+        roomId: remoteState.roomId,
+        roomCode: remoteState.roomCode,
+        hostId: remoteState.hostId,
+        phase: remoteState.phase || 'lobby',
+        players,
+        settings: { ...state.settings, ...remoteState.settings },
+        turnLock: remoteState.turnLock || null,
+        lastSyncTurn: remoteState.lastSyncTurn || 0,
+        disconnectInfo: remoteState.disconnectInfo || null,
+        localPlayerId,
+        chatLog: [...state.chatLog, { text: '已同步房间状态', timestamp: Date.now() }]
+      };
+    }),
+
+    promoteToHost: (/** @type {string} */ playerId) => update(state => {
+      return {
+        ...state,
+        hostId: playerId,
+        players: state.players.map(p => ({
+          ...p,
+          isHost: p.id === playerId
+        }))
+      };
     })
   };
 }
@@ -449,7 +482,7 @@ export const isInRoom = derived(roomStore, ($state) => {
 });
 
 export const isPlaying = derived(roomStore, ($state) => {
-  return $state.phase === 'playing' || $state.phase === 'paused';
+  return $state.phase === 'deploying' || $state.phase === 'playing' || $state.phase === 'paused';
 });
 
 export const reconnectProgress = derived(roomStore, ($state) => {

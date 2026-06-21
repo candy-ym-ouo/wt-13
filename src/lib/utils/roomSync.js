@@ -1,48 +1,19 @@
 import { roomStore } from '$lib/stores/roomStore';
 import { gameState } from '$lib/stores/gameStore';
 import { get } from 'svelte/store';
+import {
+  createBroadcastTransport,
+  createMessage,
+  MSG,
+  isLocalPlayer,
+  getCurrentPlayerId
+} from '$lib/utils/roomTransport';
 
-/**
- * @typedef {object} RoomMessage
- * @property {string} type
- * @property {string} roomId
- * @property {string} senderId
- * @property {number} timestamp
- * @property {number} seq
- * @property {Record<string, any>} payload
- */
-
-/** @type {{ send: (msg: RoomMessage) => void, onMessage: (handler: (msg: RoomMessage) => void) => void, connect: (roomId: string, playerId: string) => Promise<void>, disconnect: () => void } | null} */
+/** @type {import('$lib/utils/roomTransport').BroadcastTransport | null} */
 let transport = null;
 
 /** @type {ReturnType<typeof setInterval> | null} */
-let heartbeatInterval = null;
-
-/** @type {ReturnType<typeof setInterval> | null} */
 let reconnectInterval = null;
-
-let pendingAcks = new Map();
-
-let messageSeq = 0;
-
-export const ROOM_EVENTS = {
-  ROOM_CREATED: 'room:created',
-  ROOM_JOINED: 'room:joined',
-  ROOM_LEFT: 'room:left',
-  ROOM_DISBANDED: 'room:disbanded',
-  FACTION_SELECTED: 'room:faction_selected',
-  READY_CHANGED: 'room:ready_changed',
-  SETTINGS_UPDATED: 'room:settings_updated',
-  GAME_START: 'game:start',
-  TURN_ACTION: 'game:turn_action',
-  TURN_END: 'game:turn_end',
-  STATE_SYNC: 'game:state_sync',
-  HEARTBEAT: 'system:heartbeat',
-  DISCONNECT: 'system:disconnect',
-  RECONNECT_REQUEST: 'system:reconnect_request',
-  RECONNECT_ACCEPT: 'system:reconnect_accept',
-  CHAT_MESSAGE: 'chat:message'
-};
 
 export const SYNC_MODES = {
   LOCKSTEP: 'lockstep',
@@ -50,113 +21,221 @@ export const SYNC_MODES = {
   HYBRID: 'hybrid'
 };
 
-/**
- * @typedef {object} ActionCheckpoint
- * @property {number} turn
- * @property {'red' | 'blue'} faction
- * @property {number} seq
- * @property {number} timestamp
- * @property {any} stateHash
- */
+let isHost = false;
 
-/**
- * @param {{ send: (msg: RoomMessage) => void, onMessage: (handler: (msg: RoomMessage) => void) => void, connect: (roomId: string, playerId: string) => Promise<void>, disconnect: () => void }} transportImpl
- */
-export function setTransport(transportImpl) {
-  transport = transportImpl;
-  transport.onMessage(handleIncomingMessage);
+export function isRoomHost() {
+  return isHost;
 }
 
 /**
- * @param {string} type
- * @param {Record<string, any>} payload
- * @returns {RoomMessage}
+ * @param {string} hostName
+ * @param {Record<string, any>} [settingsOverride]
  */
-function createMessage(type, payload) {
+export function createRoom(hostName, settingsOverride) {
+  if (transport) {
+    transport.disconnect();
+  }
+
+  const result = roomStore.createRoom(hostName, settingsOverride || {});
   const state = get(roomStore);
-  return {
-    type,
-    roomId: state.roomId || '',
-    senderId: state.localPlayerId || '',
-    timestamp: Date.now(),
-    seq: ++messageSeq,
-    payload
-  };
+
+  transport = createBroadcastTransport(state.roomCode || '', state.localPlayerId || '');
+  transport.onMessage(handleIncomingMessage);
+
+  isHost = true;
+
+  return state;
 }
 
 /**
- * @param {RoomMessage} msg
+ * @param {string} roomCode
+ * @param {string} playerName
+ * @returns {Promise<boolean>}
  */
-function sendMessage(msg) {
-  if (!transport) return;
-  transport.send(msg);
+export function joinRoom(roomCode, playerName) {
+  return new Promise((resolve, reject) => {
+    if (transport) {
+      transport.disconnect();
+    }
+
+    const tempPlayerId = `player_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    transport = createBroadcastTransport(roomCode, tempPlayerId);
+
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        if (transport) transport.disconnect();
+        transport = null;
+        reject(new Error('加入房间超时，请检查房间号是否正确'));
+      }
+    }, 5000);
+
+    transport.onMessage((msg) => {
+      if (resolved) return;
+
+      if (msg.type === MSG.JOIN_ACCEPT && msg.targetId === tempPlayerId) {
+        resolved = true;
+        clearTimeout(timeout);
+        isHost = false;
+
+        const { roomState, gameState: gameStateData } = msg.payload;
+        roomStore.loadRoomState(roomState, tempPlayerId);
+
+        if (gameStateData) {
+          gameState.loadFromSave(gameStateData);
+        }
+
+        resolve(true);
+      }
+
+      if (msg.type === MSG.JOIN_REJECT && msg.targetId === tempPlayerId) {
+        resolved = true;
+        clearTimeout(timeout);
+        if (transport) transport.disconnect();
+        transport = null;
+        reject(new Error(msg.payload.reason || '加入房间被拒绝'));
+      }
+    });
+
+    const joinMsg = createMessage(MSG.JOIN_REQUEST, {
+      playerId: tempPlayerId,
+      playerName: playerName || '挑战者'
+    });
+    if (transport) {
+      transport.send(joinMsg);
+    }
+  });
+}
+
+export function leaveRoom() {
+  if (transport) {
+    const state = get(roomStore);
+    if (state.roomId && state.localPlayerId) {
+      const leaveMsg = createMessage(MSG.PLAYER_LEFT, {
+        playerId: state.localPlayerId
+      });
+      transport.send(leaveMsg);
+    }
+    transport.disconnect();
+    transport = null;
+  }
+  stopReconnectTimer();
+  roomStore.reset();
+  isHost = false;
 }
 
 /**
- * @param {RoomMessage} msg
+ * @param {import('$lib/utils/roomTransport').RoomMessage} msg
  */
 function handleIncomingMessage(msg) {
   const state = get(roomStore);
-  if (msg.roomId !== state.roomId) return;
 
   switch (msg.type) {
-    case ROOM_EVENTS.ROOM_JOINED:
-      handleRemoteJoin(msg);
-      break;
-    case ROOM_EVENTS.ROOM_LEFT:
-      handleRemoteLeave(msg);
-      break;
-    case ROOM_EVENTS.FACTION_SELECTED:
-      roomStore.selectFaction(msg.senderId, msg.payload.faction);
-      break;
-    case ROOM_EVENTS.READY_CHANGED:
-      roomStore.setReady(msg.senderId, msg.payload.ready);
-      break;
-    case ROOM_EVENTS.SETTINGS_UPDATED:
-      if (state.phase === 'lobby') {
-        roomStore.updateSettings(msg.payload.settings);
+    case MSG.JOIN_REQUEST:
+      if (isHost) {
+        handleJoinRequest(msg);
       }
       break;
-    case ROOM_EVENTS.GAME_START:
-      roomStore.startDeployment();
+
+    case MSG.PLAYER_LEFT:
+      handlePlayerLeft(msg);
       break;
-    case ROOM_EVENTS.TURN_ACTION:
+
+    case MSG.ROOM_STATE:
+      if (!isHost) {
+        roomStore.loadRoomState(msg.payload.roomState, getCurrentPlayerId() || '');
+      }
+      break;
+
+    case MSG.FACTION_SELECT:
+      roomStore.selectFaction(msg.senderId, msg.payload.faction);
+      if (isHost) {
+        broadcastRoomState();
+      }
+      break;
+
+    case MSG.READY_TOGGLE:
+      roomStore.setReady(msg.senderId, msg.payload.ready);
+      if (isHost) {
+        broadcastRoomState();
+      }
+      break;
+
+    case MSG.GAME_START:
+      if (!isHost) {
+        roomStore.startDeployment();
+      }
+      break;
+
+    case MSG.GAME_PLAYING:
+      if (!isHost) {
+        if (msg.payload.gameState) {
+          gameState.loadFromSave(msg.payload.gameState);
+        }
+        roomStore.startGame();
+      }
+      break;
+
+    case MSG.TURN_ACTION:
       handleRemoteAction(msg);
       break;
-    case ROOM_EVENTS.TURN_END:
+
+    case MSG.TURN_END:
       handleRemoteTurnEnd(msg);
       break;
-    case ROOM_EVENTS.STATE_SYNC:
-      handleStateSync(msg);
-      break;
-    case ROOM_EVENTS.HEARTBEAT:
+
+    case MSG.HEARTBEAT:
       roomStore.heartbeat(msg.senderId);
       break;
-    case ROOM_EVENTS.DISCONNECT:
+
+    case MSG.DISCONNECT:
       handleRemoteDisconnect(msg);
       break;
-    case ROOM_EVENTS.RECONNECT_REQUEST:
-      handleReconnectRequest(msg);
+
+    case MSG.RECONNECT_REQUEST:
+      if (isHost) {
+        handleReconnectRequest(msg);
+      }
       break;
-    case ROOM_EVENTS.RECONNECT_ACCEPT:
-      handleReconnectAccept(msg);
+
+    case MSG.RECONNECT_STATE:
+      if (!isHost || msg.targetId === getCurrentPlayerId()) {
+        handleReconnectState(msg);
+      }
       break;
-    case ROOM_EVENTS.CHAT_MESSAGE:
+
+    case MSG.CHAT_MESSAGE:
       roomStore.addChatMessage(msg.payload.text);
       break;
   }
 }
 
 /**
- * @param {RoomMessage} msg
+ * @param {import('$lib/utils/roomTransport').RoomMessage} msg
  */
-function handleRemoteJoin(msg) {
+function handleJoinRequest(msg) {
   const state = get(roomStore);
-  if (state.players.length >= 2) return;
+
+  if (state.players.length >= 2) {
+    const rejectMsg = createMessage(MSG.JOIN_REJECT, {
+      reason: '房间已满'
+    }, msg.senderId);
+    if (transport) transport.send(rejectMsg);
+    return;
+  }
+
+  if (state.players.some(p => p.id === msg.payload.playerId)) {
+    const rejectMsg = createMessage(MSG.JOIN_REJECT, {
+      reason: '玩家已在房间中'
+    }, msg.senderId);
+    if (transport) transport.send(rejectMsg);
+    return;
+  }
 
   roomStore.addRemotePlayer({
-    id: msg.senderId,
-    name: msg.payload.name,
+    id: msg.payload.playerId,
+    name: msg.payload.playerName,
     faction: 'none',
     ready: false,
     connected: true,
@@ -165,17 +244,76 @@ function handleRemoteJoin(msg) {
     isHost: false,
     isLocal: false
   });
+
+  const newState = get(roomStore);
+
+  const acceptMsg = createMessage(MSG.JOIN_ACCEPT, {
+    roomState: serializeRoomState(newState),
+    gameState: null
+  }, msg.senderId);
+  if (transport) transport.send(acceptMsg);
+
+  broadcastRoomState();
 }
 
 /**
- * @param {RoomMessage} msg
+ * @param {import('$lib/utils/roomTransport').RoomMessage} msg
  */
-function handleRemoteLeave(msg) {
-  roomStore.removePlayer(msg.senderId);
+function handlePlayerLeft(msg) {
+  roomStore.removePlayer(msg.payload.playerId);
+
+  const state = get(roomStore);
+  const localPlayer = state.players.find(p => p.isLocal);
+
+  if (isHost) {
+    broadcastRoomState();
+  }
+
+  if (localPlayer?.isHost === false && state.players.length === 1 && state.players[0].isLocal) {
+    isHost = true;
+    roomStore.promoteToHost(state.localPlayerId || '');
+  }
 }
 
 /**
- * @param {RoomMessage} msg
+ * @param {import('$lib/stores/roomStore').RoomState} state
+ */
+function serializeRoomState(state) {
+  return {
+    roomId: state.roomId,
+    roomCode: state.roomCode,
+    hostId: state.hostId,
+    phase: state.phase,
+    players: state.players.map(p => ({
+      id: p.id,
+      name: p.name,
+      faction: p.faction,
+      ready: p.ready,
+      connected: p.connected,
+      joinedAt: p.joinedAt,
+      lastHeartbeat: p.lastHeartbeat,
+      isHost: p.isHost,
+      isLocal: false
+    })),
+    settings: { ...state.settings },
+    turnLock: state.turnLock,
+    lastSyncTurn: state.lastSyncTurn,
+    disconnectInfo: state.disconnectInfo
+  };
+}
+
+function broadcastRoomState() {
+  if (!transport || !isHost) return;
+
+  const state = get(roomStore);
+  const msg = createMessage(MSG.ROOM_STATE, {
+    roomState: serializeRoomState(state)
+  });
+  transport.send(msg);
+}
+
+/**
+ * @param {import('$lib/utils/roomTransport').RoomMessage} msg
  */
 function handleRemoteAction(msg) {
   const { action } = msg.payload;
@@ -184,54 +322,54 @@ function handleRemoteAction(msg) {
 }
 
 /**
- * @param {RoomMessage} msg
+ * @param {import('$lib/utils/roomTransport').RoomMessage} msg
  */
 function handleRemoteTurnEnd(msg) {
   const { turn, faction } = msg.payload;
   roomStore.clearPendingActions(turn);
+  roomStore.lockTurn(turn + 1, faction === 'red' ? 'blue' : 'red');
 }
 
 /**
- * @param {RoomMessage} msg
- */
-function handleStateSync(msg) {
-  const { fullState } = msg.payload;
-  if (fullState) {
-    gameState.loadFromSave(fullState);
-  }
-}
-
-/**
- * @param {RoomMessage} msg
+ * @param {import('$lib/utils/roomTransport').RoomMessage} msg
  */
 function handleRemoteDisconnect(msg) {
-  const state = get(roomStore);
   const currentState = get(gameState);
-  roomStore.playerDisconnected(msg.senderId, currentState);
+  roomStore.playerDisconnected(msg.payload.playerId, currentState);
 }
 
 /**
- * @param {RoomMessage} msg
+ * @param {import('$lib/utils/roomTransport').RoomMessage} msg
  */
 function handleReconnectRequest(msg) {
   const state = get(roomStore);
   const currentGameState = get(gameState);
-  const reconnectMsg = createMessage(ROOM_EVENTS.RECONNECT_ACCEPT, {
+
+  const reconnectMsg = createMessage(MSG.RECONNECT_STATE, {
     gameState: currentGameState,
+    roomState: serializeRoomState(state),
     turn: state.turnLock?.turn || 0,
-    faction: state.turnLock?.faction || 'red',
-    players: state.players
-  });
-  sendMessage(reconnectMsg);
+    faction: state.turnLock?.faction || 'red'
+  }, msg.senderId);
+
+  if (transport) transport.send(reconnectMsg);
 }
 
 /**
- * @param {RoomMessage} msg
+ * @param {import('$lib/utils/roomTransport').RoomMessage} msg
  */
-function handleReconnectAccept(msg) {
-  const { gameState: remoteState, turn, faction } = msg.payload;
-  gameState.loadFromSave(remoteState);
-  roomStore.playerReconnected(get(roomStore).localPlayerId || '');
+function handleReconnectState(msg) {
+  const { gameState: remoteState, roomState, turn, faction } = msg.payload;
+
+  if (roomState) {
+    roomStore.loadRoomState(roomState, getCurrentPlayerId() || '');
+  }
+
+  if (remoteState) {
+    gameState.loadFromSave(remoteState);
+  }
+
+  roomStore.playerReconnected(getCurrentPlayerId() || '');
   roomStore.lockTurn(turn, /** @type {'red' | 'blue'} */ (faction));
 }
 
@@ -271,30 +409,67 @@ function applyActionToGameState(action) {
 export function broadcastFactionSelection(/** @type {'red' | 'blue' | 'none'} */ faction) {
   const state = get(roomStore);
   roomStore.selectFaction(state.localPlayerId || '', faction);
-  sendMessage(createMessage(ROOM_EVENTS.FACTION_SELECTED, { faction }));
+
+  if (transport) {
+    const msg = createMessage(MSG.FACTION_SELECT, { faction });
+    transport.send(msg);
+  }
+
+  if (isHost) {
+    broadcastRoomState();
+  }
 }
 
 export function broadcastReady(/** @type {boolean} */ ready) {
   const state = get(roomStore);
   roomStore.setReady(state.localPlayerId || '', ready);
-  sendMessage(createMessage(ROOM_EVENTS.READY_CHANGED, { ready }));
+
+  if (transport) {
+    const msg = createMessage(MSG.READY_TOGGLE, { ready });
+    transport.send(msg);
+  }
+
+  if (isHost) {
+    broadcastRoomState();
+  }
 }
 
 export function broadcastSettings(/** @type {Record<string, any>} */ settings) {
   roomStore.updateSettings(settings);
-  sendMessage(createMessage(ROOM_EVENTS.SETTINGS_UPDATED, { settings }));
+  if (isHost) {
+    broadcastRoomState();
+  }
 }
 
 export function broadcastGameStart() {
-  roomStore.startDeployment();
-  sendMessage(createMessage(ROOM_EVENTS.GAME_START, {}));
+  if (isHost) {
+    gameState.reset();
+    roomStore.startDeployment();
+
+    if (transport) {
+      const msg = createMessage(MSG.GAME_START, {});
+      transport.send(msg);
+    }
+
+    setTimeout(() => {
+      const initialState = get(gameState);
+      roomStore.startGame();
+      roomStore.lockTurn(1, 'red');
+
+      if (transport) {
+        const msg = createMessage(MSG.GAME_PLAYING, {
+          gameState: initialState
+        });
+        transport.send(msg);
+      }
+    }, 300);
+  }
 }
 
 export function broadcastAction(/** @type {string} */ actionType, /** @type {Record<string, any>} */ payload) {
   const state = get(roomStore);
   const gameCurrentState = get(gameState);
 
-  /** @type {import('$lib/stores/roomStore').TurnAction} */
   const action = {
     type: actionType,
     playerId: state.localPlayerId || '',
@@ -306,49 +481,57 @@ export function broadcastAction(/** @type {string} */ actionType, /** @type {Rec
 
   roomStore.pushAction(action);
   applyActionToGameState(action);
-  sendMessage(createMessage(ROOM_EVENTS.TURN_ACTION, { action }));
+
+  if (transport) {
+    const msg = createMessage(MSG.TURN_ACTION, { action });
+    transport.send(msg);
+  }
 }
 
 export function broadcastTurnEnd(/** @type {number} */ turn, /** @type {'red' | 'blue'} */ faction) {
   roomStore.clearPendingActions(turn);
-  sendMessage(createMessage(ROOM_EVENTS.TURN_END, { turn, faction }));
+
+  if (transport) {
+    const msg = createMessage(MSG.TURN_END, { turn, faction });
+    transport.send(msg);
+  }
 }
 
 export function broadcastDisconnect() {
   const state = get(roomStore);
-  sendMessage(createMessage(ROOM_EVENTS.DISCONNECT, { playerId: state.localPlayerId }));
+  if (transport) {
+    const msg = createMessage(MSG.DISCONNECT, {
+      playerId: state.localPlayerId
+    });
+    transport.send(msg);
+  }
 }
 
 export function requestReconnect() {
   const state = get(roomStore);
   roomStore.startReconnectCountdown(30);
-  sendMessage(createMessage(ROOM_EVENTS.RECONNECT_REQUEST, {
-    playerId: state.localPlayerId,
-    roomId: state.roomId
-  }));
+
+  if (transport) {
+    const msg = createMessage(MSG.RECONNECT_REQUEST, {
+      playerId: state.localPlayerId,
+      roomCode: state.roomCode
+    });
+    transport.send(msg);
+  }
 }
 
 export function broadcastChatMessage(/** @type {string} */ text) {
   roomStore.addChatMessage(text);
-  sendMessage(createMessage(ROOM_EVENTS.CHAT_MESSAGE, { text }));
+  if (transport) {
+    const msg = createMessage(MSG.CHAT_MESSAGE, { text });
+    transport.send(msg);
+  }
 }
 
-export function startHeartbeat(/** @type {number} */ intervalMs = 5000) {
-  stopHeartbeat();
-  heartbeatInterval = setInterval(() => {
-    const state = get(roomStore);
-    if (state.localPlayerId) {
-      roomStore.heartbeat(state.localPlayerId);
-      sendMessage(createMessage(ROOM_EVENTS.HEARTBEAT, {}));
-    }
-  }, intervalMs);
+export function startHeartbeat() {
 }
 
 export function stopHeartbeat() {
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
-  }
 }
 
 export function startReconnectTimer() {
@@ -369,9 +552,6 @@ export function stopReconnectTimer() {
   }
 }
 
-/**
- * @returns {{ actions: any[], hash: string }}
- */
 export function createSyncCheckpoint() {
   const state = get(roomStore);
   const actions = [...state.pendingActions];
@@ -379,9 +559,6 @@ export function createSyncCheckpoint() {
   return { actions, hash };
 }
 
-/**
- * @returns {string}
- */
 function computeStateHash() {
   const state = get(gameState);
   const relevant = {
@@ -408,23 +585,4 @@ export function restoreFromSnapshot(gameStateSnapshot) {
 }
 
 export function initLocalSimTransport() {
-  /** @type {((msg: RoomMessage) => void) | null} */
-  let messageHandler = null;
-
-  const localSim = {
-    send: (/** @type {RoomMessage} */ msg) => {
-      if (messageHandler) {
-        const handler = messageHandler;
-        setTimeout(() => handler(msg), 0);
-      }
-    },
-    onMessage: (/** @type {(msg: RoomMessage) => void} */ handler) => {
-      messageHandler = handler;
-    },
-    connect: async (/** @type {string} */ _roomId, /** @type {string} */ _playerId) => {},
-    disconnect: () => {}
-  };
-
-  setTransport(localSim);
-  return localSim;
 }

@@ -1,7 +1,15 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { roomStore, localPlayer, opponentPlayer, reconnectProgress } from '$lib/stores/roomStore';
-  import { broadcastReady, broadcastFactionSelection, requestReconnect, startReconnectTimer, stopReconnectTimer, startHeartbeat, stopHeartbeat } from '$lib/utils/roomSync';
+  import {
+    broadcastReady,
+    broadcastFactionSelection,
+    requestReconnect,
+    startReconnectTimer,
+    stopReconnectTimer,
+    broadcastChatMessage,
+    leaveRoom
+  } from '$lib/utils/roomSync';
 
   let showDetails = true;
   let showChat = false;
@@ -52,8 +60,14 @@
 
   function handleChatSend() {
     if (!chatInput.trim()) return;
-    roomStore.addChatMessage(`${$localPlayer?.name || '???'}: ${chatInput.trim()}`);
+    broadcastChatMessage(`${$localPlayer?.name || '???'}: ${chatInput.trim()}`);
     chatInput = '';
+  }
+
+  function handleExitRoom() {
+    if (confirm('确定要退出房间吗？')) {
+      leaveRoom();
+    }
   }
 
   /** @param {'red' | 'blue' | 'none'} faction */

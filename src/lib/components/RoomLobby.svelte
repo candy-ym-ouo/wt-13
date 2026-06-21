@@ -1,26 +1,44 @@
 <script>
   import { roomStore, localPlayer, allReady, canStartGame } from '$lib/stores/roomStore';
-  import { broadcastFactionSelection, broadcastReady, broadcastGameStart, startHeartbeat, stopHeartbeat, initLocalSimTransport } from '$lib/utils/roomSync';
+  import {
+    broadcastFactionSelection,
+    broadcastReady,
+    broadcastGameStart,
+    createRoom,
+    joinRoom,
+    leaveRoom
+  } from '$lib/utils/roomSync';
 
   let playerName = '';
   let roomCodeInput = '';
   let showJoinForm = false;
   let showCreateForm = true;
+  let isJoining = false;
+  let joinError = '';
 
-  function handleCreateRoom() {
+  async function handleCreateRoom() {
     const name = playerName.trim() || '房主';
-    initLocalSimTransport();
-    roomStore.createRoom(name, {});
-    startHeartbeat();
+    createRoom(name, {});
   }
 
-  function handleJoinRoom() {
+  async function handleJoinRoom() {
     const name = playerName.trim() || '挑战者';
     const code = roomCodeInput.trim().toUpperCase();
     if (!code) return;
-    initLocalSimTransport();
-    roomStore.joinRoom(code, name);
-    startHeartbeat();
+
+    isJoining = true;
+    joinError = '';
+
+    try {
+      await joinRoom(code, name);
+    } catch (e) {
+      const err = /** @type {Error} */ (e);
+      joinError = err.message || '加入房间失败';
+      isJoining = false;
+      return;
+    }
+
+    isJoining = false;
   }
 
   /** @param {'red' | 'blue' | 'none'} faction */
@@ -44,8 +62,7 @@
   }
 
   function handleBackToMenu() {
-    stopHeartbeat();
-    roomStore.reset();
+    leaveRoom();
   }
 
   /** @param {'red' | 'blue' | 'none'} faction */
@@ -112,10 +129,14 @@
             bind:value={roomCodeInput}
             placeholder="输入6位房间号..."
             maxlength={6}
+            disabled={isJoining}
           />
         </div>
-        <button class="btn-primary" on:click={handleJoinRoom}>
-          🚀 加入房间
+        {#if joinError}
+          <div class="error-text">{joinError}</div>
+        {/if}
+        <button class="btn-primary" on:click={handleJoinRoom} disabled={isJoining}>
+          {#if isJoining}⏳ 加入中...{:else}🚀 加入房间{/if}
         </button>
       {/if}
 
@@ -351,6 +372,22 @@
     font-weight: bold;
     cursor: pointer;
     transition: all 0.2s;
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+  }
+
+  .error-text {
+    color: #e74c3c;
+    font-size: 13px;
+    text-align: center;
+    padding: 8px;
+    background: rgba(231, 76, 60, 0.1);
+    border-radius: 6px;
+    width: 100%;
   }
 
   .btn-primary:hover {
