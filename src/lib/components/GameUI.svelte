@@ -8,7 +8,7 @@
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
   import { saveRosterFromGame, getFactionRoster, clearRoster, loadRoster } from '$lib/utils/storageRoster';
-  import { saveToSlot, loadFromSlot, deleteSlot, getAllSlotMetas, hasAutoSave, loadAutoSave, clearAutoSave, getManualSlots, getAutoSlot } from '$lib/utils/storageSave';
+  import { saveToSlot, loadFromSlot, deleteSlot, getAllSlotMetas, hasAutoSave, loadAutoSave, clearAutoSave, getManualSlots, getAutoSlot, autoSave } from '$lib/utils/storageSave';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -341,6 +341,7 @@
           gameState.setMessage(`已恢复上次游戏进度（第${result.state.turn}回合，${fName}行动）`);
         }
         gameState.enableAutoSave();
+        autoSave(state);
         return;
       }
     }
@@ -349,6 +350,7 @@
       initHands();
     }
     gameState.enableAutoSave();
+    autoSave(state);
   });
 
   onDestroy(() => {
@@ -461,6 +463,7 @@
     initHands();
     gameState.setMessage('游戏开始！红方先行动');
     gameState.enableAutoSave();
+    autoSave(state);
   }
 
   /**
