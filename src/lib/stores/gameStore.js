@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
-import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO } from '$lib/config/unitConfig';
+import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO, UNIT_COUNTER_TYPE } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
 import { debouncedAutoSave, cancelPendingAutoSave } from '$lib/utils/storageSave';
@@ -24,6 +24,8 @@ import {
   processTileEffectsOnUnits,
   tickTileEffects as tickTileEffectsLogic,
   calculateCombatPreview,
+  resolveCounterAttack,
+  getCounterTypeForDefender,
   getTerrain,
   checkTimeoutVictory,
   calculateScoreSettlement,
@@ -645,25 +647,34 @@ function createGameState() {
       const atkTerrain = attacker ? getTerrain(attacker.x, attacker.y, layout) : null;
       const defTerrain = defender ? getTerrain(defender.x, defender.y, layout) : null;
 
-      const preview = (attacker && defender)
-        ? calculateCombatPreview(attacker, defender, defTerrain || undefined, atkTerrain || undefined)
-        : null;
+      const defenderWillDie = !hasShield && defender && defender.currentHp - finalDamage <= 0;
+      const counterResult = (attacker && defender)
+        ? resolveCounterAttack(attacker, defender, atkTerrain, !!defenderWillDie)
+        : {
+            counterType: COUNTER_TYPES.NONE,
+            willCounter: false,
+            counterDamage: 0,
+            counterWillKill: false,
+            attackerRemainingHp: attacker?.currentHp || 0,
+            counterShieldBlocked: false,
+            counterStatusApplied: false,
+            counterStatusType: null,
+            counterStatusDuration: 0
+          };
 
-      let counterDamage = 0;
-      let counterShieldBlocked = false;
-      if (preview && preview.willCounter) {
-        counterDamage = preview.counterDamage;
-        counterShieldBlocked = attacker?.buffs?.some(/** @param {any} b */ b => b.type === 'shield') || false;
-        if (counterShieldBlocked) {
-          counterDamage = 0;
-        }
-      }
+      let counterDamage = counterResult.willCounter ? counterResult.counterDamage : 0;
+      let counterShieldBlocked = counterResult.counterShieldBlocked;
+      const counterType = counterResult.counterType;
+      const counterTypeInfo = COUNTER_TYPE_INFO[counterType];
 
       /** @type {MoraleChange[]} */
       const moraleChanges = [];
 
       const clampMorale = (/** @type {number} */ v) =>
         Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, v));
+
+      /** @type {{unitId: string, statusType: string, duration: number, value?: number}[]} */
+      const counterStatusQueue = [];
 
       let updatedUnits = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === attackerId) {
@@ -689,6 +700,22 @@ function createGameState() {
           } else if (counterShieldBlocked) {
             const newBuffs = (updated.buffs || []).filter(/** @param {any} b */ b => b.type !== 'shield');
             updated = { ...updated, buffs: newBuffs };
+          }
+
+          if (counterResult.willCounter && counterResult.counterStatusApplied && counterResult.counterStatusType) {
+            const statusEffect = {
+              type: counterResult.counterStatusType,
+              duration: counterResult.counterStatusDuration,
+              value: undefined,
+              id: `se_${Date.now()}_counter_${Math.random().toString(36).slice(2, 8)}`
+            };
+            const existing = (updated.statusEffects || []).filter(s => s.type !== statusEffect.type);
+            counterStatusQueue.push({
+              unitId: attackerId,
+              statusType: counterResult.counterStatusType,
+              duration: counterResult.counterStatusDuration
+            });
+            updated = { ...updated, statusEffects: [...existing, statusEffect] };
           }
 
           return updated;
@@ -771,6 +798,7 @@ function createGameState() {
                 delta += gameRules.morale.winStreakBonus;
               }
               const after = clampMorale(before + delta);
+              const counterLabel = counterType === COUNTER_TYPES.SKILL ? '追击击杀' : '反击击杀';
               moraleChanges.push({
                 unitId: u.id,
                 unitName: defenderName,
@@ -779,8 +807,8 @@ function createGameState() {
                 after,
                 delta: after - before,
                 reason: newStreak >= gameRules.morale.winStreakThreshold
-                  ? `反击击杀+连胜(${newStreak}连杀)`
-                  : `反击击杀`
+                  ? `${counterLabel}+连胜(${newStreak}连杀)`
+                  : counterLabel
               });
               return { ...u, morale: after, winStreak: newStreak };
             }
@@ -811,10 +839,21 @@ function createGameState() {
       const killTag = defenderDead ? '【击杀！】' : '';
       const shieldTag = hasShield ? '（护盾抵消）' : '';
       const counterShieldTag = counterShieldBlocked ? '（护盾抵消反击）' : '';
-      const counterKillTag = attackerDeadFromCounter ? '【反击击杀！】' : '';
-      const counterTag = counterDamage > 0 || counterShieldBlocked
-        ? `；${defFactionName}${defenderName}反击造成${counterShieldBlocked ? 0 : counterDamage}伤害${counterShieldTag}${counterKillTag}`
-        : '';
+      const counterKillTag = attackerDeadFromCounter ? `【${counterType === COUNTER_TYPES.SKILL ? '追击击杀' : '反击击杀'}！】` : '';
+
+      let counterTag = '';
+      if (counterResult.willCounter) {
+        const counterLabel = counterTypeInfo ? counterTypeInfo.name : '反击';
+        const counterIcon = counterTypeInfo ? counterTypeInfo.icon : '↩';
+        counterTag = `；${defFactionName}${defenderName}${counterIcon}${counterLabel}造成${counterShieldBlocked ? 0 : counterDamage}伤害${counterShieldTag}${counterKillTag}`;
+        if (counterResult.counterStatusApplied && counterResult.counterStatusType) {
+          const statusInfo = getStatusInfo(counterResult.counterStatusType);
+          counterTag += `，附加【${statusInfo.name}】`;
+        }
+      } else if (counterType === COUNTER_TYPES.RANGED) {
+        counterTag = `；${defFactionName}${defenderName}🚫远程单位不可反击`;
+      }
+
       const attackDesc = `${atkFactionName}${attackerName} 攻击 ${defFactionName}${defenderName}，造成 ${finalDamage} 伤害${shieldTag}${killTag}${counterTag}`;
 
       const attackLog = {
@@ -837,10 +876,15 @@ function createGameState() {
           shieldBlocked: hasShield,
           defenderDead,
           defenderRemainingHp: updatedDefender?.currentHp || 0,
+          counterType,
+          counterTypeName: counterTypeInfo ? counterTypeInfo.name : '无法反击',
           counterDamage: counterShieldBlocked ? 0 : counterDamage,
           counterShieldBlocked,
           attackerDeadFromCounter,
-          attackerRemainingHp: updatedAttacker?.currentHp || 0
+          attackerRemainingHp: updatedAttacker?.currentHp || 0,
+          counterStatusApplied: counterResult.counterStatusApplied,
+          counterStatusType: counterResult.counterStatusType,
+          counterStatusDuration: counterResult.counterStatusDuration
         },
         timestamp: Date.now()
       };

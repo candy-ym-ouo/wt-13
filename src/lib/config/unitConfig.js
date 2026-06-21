@@ -1,3 +1,57 @@
+export const COUNTER_TYPES = {
+  MELEE: 'melee',
+  RANGED: 'ranged',
+  SKILL: 'skill',
+  NONE: 'none'
+};
+
+export const COUNTER_TYPE_INFO = {
+  [COUNTER_TYPES.MELEE]: {
+    name: '近战反击',
+    icon: '↩',
+    color: '#ff9800',
+    description: '防守方在攻击范围内时进行近战反击，造成部分伤害',
+    canCounter: true,
+    damageRatio: 0.5,
+    canApplyStatus: false
+  },
+  [COUNTER_TYPES.RANGED]: {
+    name: '远程不可反击',
+    icon: '🚫',
+    color: '#9e9e9e',
+    description: '防守方为远程单位，被近战攻击时无法反击',
+    canCounter: false,
+    damageRatio: 0,
+    canApplyStatus: false
+  },
+  [COUNTER_TYPES.SKILL]: {
+    name: '技能追击',
+    icon: '⚡',
+    color: '#9b59b6',
+    description: '防守方以技能进行追击反击，伤害较低但可附加状态效果',
+    canCounter: true,
+    damageRatio: 0.35,
+    canApplyStatus: true
+  },
+  [COUNTER_TYPES.NONE]: {
+    name: '无法反击',
+    icon: '✕',
+    color: '#666666',
+    description: '超出射程或被控制，无法反击',
+    canCounter: false,
+    damageRatio: 0,
+    canApplyStatus: false
+  }
+};
+
+export const UNIT_COUNTER_TYPE = {
+  infantry: COUNTER_TYPES.MELEE,
+  cavalry: COUNTER_TYPES.MELEE,
+  archer: COUNTER_TYPES.RANGED,
+  mage: COUNTER_TYPES.SKILL,
+  tank: COUNTER_TYPES.MELEE
+};
+
 export const MOVE_SKILL_TYPES = {
   CHARGE: 'charge',
   PENETRATE: 'penetrate',

@@ -43,7 +43,35 @@ export const gameRules = {
     damageFormula: 'attack * (100 / (100 + defense))',
     counterAttack: true,
     counterAttackDamageRatio: 0.5,
-    terrainDefenseBonus: true
+    terrainDefenseBonus: true,
+    counterTypes: {
+      melee: {
+        damageRatio: 0.5,
+        canApplyStatus: false,
+        statusType: null,
+        statusDuration: 0,
+        statusChance: 0
+      },
+      ranged: {
+        damageRatio: 0,
+        canApplyStatus: false,
+        statusType: null,
+        statusDuration: 0,
+        statusChance: 0
+      },
+      skill: {
+        damageRatio: 0.35,
+        canApplyStatus: true,
+        statusType: 'slow',
+        statusDuration: 1,
+        statusChance: 0.4
+      }
+    },
+    counterRangeOverride: {
+      melee: null,
+      ranged: null,
+      skill: 1
+    }
   },
   movement: {
     canMoveThroughFriendly: true,

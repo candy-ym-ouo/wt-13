@@ -1,5 +1,5 @@
 import { boardConfig, tileEffectConfig, TILE_EFFECT_TYPES } from '$lib/config/boardConfig';
-import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO } from '$lib/config/unitConfig';
+import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO, UNIT_COUNTER_TYPE } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 
 /**
@@ -810,6 +810,128 @@ export function buildFullThreatMap(enemyUnits, friendlyUnit, allUnits, boardLayo
 }
 
 /**
+ * @param {Unit} attacker
+ * @param {Unit} defender
+ * @returns {string} COUNTER_TYPES value
+ */
+export function getCounterTypeForDefender(attacker, defender) {
+  if (!gameRules.combat.counterAttack) return COUNTER_TYPES.NONE;
+  if (isHardCC(defender)) return COUNTER_TYPES.NONE;
+
+  const distance = Math.abs(attacker.x - defender.x) + Math.abs(attacker.y - defender.y);
+  const defenderType = /** @type {UnitType} */ (defender.type);
+  const defenderConfig = unitConfig[defenderType];
+  let defenderAtkRange = defenderConfig.attackRange;
+  if (defender.specialization) {
+    const spec = SPECIALIZATION_CONFIG[defender.type]?.find(s => s.id === defender.specialization);
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.attackRange) defenderAtkRange += bonuses.attackRange;
+  }
+
+  const unitCounterType = UNIT_COUNTER_TYPE[defenderType] || COUNTER_TYPES.NONE;
+
+  if (distance > defenderAtkRange) return COUNTER_TYPES.NONE;
+
+  if (unitCounterType === COUNTER_TYPES.SKILL) {
+    const skillRangeOverride = gameRules.combat.counterRangeOverride?.skill;
+    const effectiveRange = skillRangeOverride != null ? skillRangeOverride : defenderAtkRange;
+    if (distance > effectiveRange) return COUNTER_TYPES.NONE;
+    return COUNTER_TYPES.SKILL;
+  }
+
+  if (unitCounterType === COUNTER_TYPES.RANGED) {
+    return COUNTER_TYPES.RANGED;
+  }
+
+  if (unitCounterType === COUNTER_TYPES.MELEE) {
+    if (distance > 1) return COUNTER_TYPES.NONE;
+    return COUNTER_TYPES.MELEE;
+  }
+
+  return COUNTER_TYPES.NONE;
+}
+
+/**
+ * @typedef {object} CounterAttackResult
+ * @property {string} counterType - COUNTER_TYPES value
+ * @property {boolean} willCounter
+ * @property {number} counterDamage
+ * @property {boolean} counterWillKill
+ * @property {number} attackerRemainingHp
+ * @property {boolean} counterShieldBlocked
+ * @property {boolean} counterStatusApplied
+ * @property {string | null} counterStatusType
+ * @property {number} counterStatusDuration
+ */
+
+/**
+ * @param {Unit} attacker
+ * @param {Unit} defender
+ * @param {TerrainInfo | null} attackerTerrain
+ * @param {boolean} defenderWillDie
+ * @returns {CounterAttackResult}
+ */
+export function resolveCounterAttack(attacker, defender, attackerTerrain, defenderWillDie) {
+  const counterType = getCounterTypeForDefender(attacker, defender);
+  const typeInfo = COUNTER_TYPE_INFO[counterType];
+
+  if (!typeInfo || !typeInfo.canCounter || defenderWillDie) {
+    return {
+      counterType,
+      willCounter: false,
+      counterDamage: 0,
+      counterWillKill: false,
+      attackerRemainingHp: attacker.currentHp,
+      counterShieldBlocked: false,
+      counterStatusApplied: false,
+      counterStatusType: null,
+      counterStatusDuration: 0
+    };
+  }
+
+  const typeRules = gameRules.combat.counterTypes[counterType] || {};
+  const damageRatio = typeRules.damageRatio != null ? typeRules.damageRatio : gameRules.combat.counterAttackDamageRatio;
+
+  const fullCounterDamage = calculateDamage(defender, attacker, attackerTerrain);
+  let counterDamage = Math.max(1, Math.floor(fullCounterDamage * damageRatio));
+
+  const attackerHasShield = attacker.buffs?.some(b => b.type === 'shield');
+  let counterShieldBlocked = false;
+  if (attackerHasShield) {
+    counterDamage = 0;
+    counterShieldBlocked = true;
+  }
+
+  const counterWillKill = counterDamage > 0 && attacker.currentHp - counterDamage <= 0;
+  const attackerRemainingHp = counterDamage > 0 ? Math.max(0, attacker.currentHp - counterDamage) : attacker.currentHp;
+
+  let counterStatusApplied = false;
+  let counterStatusType = null;
+  let counterStatusDuration = 0;
+
+  if (typeRules.canApplyStatus && typeRules.statusType && !counterShieldBlocked && !counterWillKill) {
+    const statusChance = typeRules.statusChance || 0;
+    if (statusChance > 0 && Math.random() < statusChance) {
+      counterStatusApplied = true;
+      counterStatusType = typeRules.statusType;
+      counterStatusDuration = typeRules.statusDuration || 1;
+    }
+  }
+
+  return {
+    counterType,
+    willCounter: true,
+    counterDamage,
+    counterWillKill,
+    attackerRemainingHp,
+    counterShieldBlocked,
+    counterStatusApplied,
+    counterStatusType,
+    counterStatusDuration
+  };
+}
+
+/**
  * @param {UnitType} attackerType
  * @param {UnitType} defenderType
  * @returns {number}
@@ -1140,6 +1262,12 @@ function heuristic(a, b) {
  * @property {number} attackerRemainingHp
  * @property {CombatPreviewModifier[]} attackModifiers
  * @property {CombatPreviewModifier[]} terrainModifiers
+ * @property {string} counterType
+ * @property {string} counterTypeName
+ * @property {string} counterTypeIcon
+ * @property {boolean} counterStatusApplied
+ * @property {string | null} counterStatusType
+ * @property {number} counterStatusDuration
  */
 
 /**
@@ -1157,26 +1285,36 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
   const willKill = !shieldBlocked && defender.currentHp - estimatedDamage <= 0;
   const defenderRemainingHp = shieldBlocked ? defender.currentHp : Math.max(0, defender.currentHp - estimatedDamage);
 
-  const defenderConfig = unitConfig[/** @type {UnitType} */ (defender.type)];
-  const distance = Math.abs(attacker.x - defender.x) + Math.abs(attacker.y - defender.y);
-  const canCounter = gameRules.combat.counterAttack
-    && distance <= defenderConfig.attackRange
-    && !isHardCC(defender);
+  const counterType = getCounterTypeForDefender(attacker, defender);
+  const counterTypeInfo = COUNTER_TYPE_INFO[counterType];
+  const canCounter = counterTypeInfo ? counterTypeInfo.canCounter : false;
   const willCounter = canCounter && !willKill;
 
   let counterDamage = 0;
   let counterWillKill = false;
   let attackerRemainingHp = attacker.currentHp;
+  let counterStatusApplied = false;
+  let counterStatusType = null;
+  let counterStatusDuration = 0;
 
   if (willCounter) {
+    const typeRules = gameRules.combat.counterTypes[counterType] || {};
+    const damageRatio = typeRules.damageRatio != null ? typeRules.damageRatio : gameRules.combat.counterAttackDamageRatio;
+
     const fullCounterDamage = calculateDamage(defender, attacker, attackerTerrain);
-    counterDamage = Math.max(1, Math.floor(fullCounterDamage * gameRules.combat.counterAttackDamageRatio));
+    counterDamage = Math.max(1, Math.floor(fullCounterDamage * damageRatio));
     const attackerHasShield = attacker.buffs?.some(b => b.type === 'shield');
     if (attackerHasShield) {
       counterDamage = 0;
     }
     counterWillKill = counterDamage > 0 && attacker.currentHp - counterDamage <= 0;
     attackerRemainingHp = counterDamage > 0 ? Math.max(0, attacker.currentHp - counterDamage) : attacker.currentHp;
+
+    if (typeRules.canApplyStatus && typeRules.statusType && counterDamage > 0) {
+      counterStatusApplied = true;
+      counterStatusType = typeRules.statusType;
+      counterStatusDuration = typeRules.statusDuration || 1;
+    }
   }
 
   /** @type {CombatPreviewModifier[]} */
@@ -1277,12 +1415,22 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
   }
 
   if (willCounter) {
-    const defMorale = getMoraleTier(defender.morale ?? 80);
+    const typeRules = gameRules.combat.counterTypes[counterType] || {};
+    const ratio = typeRules.damageRatio != null ? typeRules.damageRatio : gameRules.combat.counterAttackDamageRatio;
     terrainModifiers.push({
-      label: `反击（×${gameRules.combat.counterAttackDamageRatio}）`,
+      label: `${counterTypeInfo.name}（×${ratio}）`,
       value: `${counterDamage} 伤害`,
-      color: '#ff9800'
+      color: counterTypeInfo.color
     });
+    if (counterStatusApplied && counterStatusType) {
+      const statusInfo = getStatusInfo(counterStatusType);
+      terrainModifiers.push({
+        label: `追击附加【${statusInfo.name}】`,
+        value: `${Math.round((typeRules.statusChance || 0) * 100)}%概率`,
+        color: '#9b59b6'
+      });
+    }
+    const defMorale = getMoraleTier(defender.morale ?? 80);
     if (defMorale.damageMultiplier !== 1.0) {
       const isBoost = defMorale.damageMultiplier > 1.0;
       terrainModifiers.push({
@@ -1292,10 +1440,24 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
       });
     }
   } else if (gameRules.combat.counterAttack) {
+    const distance = Math.abs(attacker.x - defender.x) + Math.abs(attacker.y - defender.y);
+    const defenderConfig = unitConfig[/** @type {UnitType} */ (defender.type)];
+    let reason = '';
+    if (willKill) {
+      reason = '将被击杀';
+    } else if (distance > defenderConfig.attackRange) {
+      reason = '超出射程';
+    } else if (isHardCC(defender)) {
+      reason = '被控制';
+    } else if (counterType === COUNTER_TYPES.RANGED) {
+      reason = '远程单位不可反击';
+    } else {
+      reason = '超出反击范围';
+    }
     terrainModifiers.push({
-      label: '无法反击',
-      value: willKill ? '将被击杀' : (distance > defenderConfig.attackRange ? '超出射程' : '被控制'),
-      color: '#9e9e9e'
+      label: counterTypeInfo ? counterTypeInfo.name : '无法反击',
+      value: reason,
+      color: counterTypeInfo ? counterTypeInfo.color : '#9e9e9e'
     });
   }
 
@@ -1310,7 +1472,13 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
     counterWillKill,
     attackerRemainingHp,
     attackModifiers,
-    terrainModifiers
+    terrainModifiers,
+    counterType,
+    counterTypeName: counterTypeInfo ? counterTypeInfo.name : '无法反击',
+    counterTypeIcon: counterTypeInfo ? counterTypeInfo.icon : '✕',
+    counterStatusApplied,
+    counterStatusType,
+    counterStatusDuration
   };
 }
 

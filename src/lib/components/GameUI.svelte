@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId, currentDrawHistory, currentPityCounter } from '$lib/stores/gameStore';
-  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO } from '$lib/config/unitConfig';
+  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, CARD_RARITY_LABELS, CARD_RARITY_COLORS, CARD_RARITY_BG, CARD_RARITY_ICONS, cardRarityConfig, eventCards } from '$lib/config/eventCardConfig';
   import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview } from '$lib/utils/gameLogic';
@@ -2254,23 +2254,44 @@
           </div>
           {#if combatPreview.willCounter}
             <div class="combat-preview-counter">
-              <span class="preview-counter-label">⚡ 反击</span>
-              <span class="preview-counter-value" style="color: {combatPreview.counterWillKill ? '#e74c3c' : '#ff9800'}">
+              {#if combatPreview.counterType === COUNTER_TYPES.MELEE}
+                <span class="preview-counter-label" style="color: #ff9800">↩ 近战反击</span>
+              {:else if combatPreview.counterType === COUNTER_TYPES.SKILL}
+                <span class="preview-counter-label" style="color: #9b59b6">⚡ 技能追击</span>
+              {:else}
+                <span class="preview-counter-label">⚡ 反击</span>
+              {/if}
+              <span class="preview-counter-value" style="color: {combatPreview.counterWillKill ? '#e74c3c' : (combatPreview.counterType === COUNTER_TYPES.SKILL ? '#9b59b6' : '#ff9800')}">
                 {combatPreview.counterDamage}
               </span>
               <span class="preview-counter-after" style="color: {combatPreview.counterWillKill ? '#e74c3c' : '#aaa'}">
                 → {combatPreview.counterWillKill ? '被击杀！' : `己方${combatPreview.attackerRemainingHp}HP`}
               </span>
+              {#if combatPreview.counterStatusApplied && combatPreview.counterStatusType}
+                <span class="preview-counter-status" style="color: #e74c3c">
+                  附加【{getStatusInfo(combatPreview.counterStatusType).name}】
+                </span>
+              {/if}
             </div>
           {:else}
             <div class="combat-preview-counter combat-preview-no-counter">
-              <span class="preview-counter-label">⚡ 反击</span>
-              <span class="preview-counter-value" style="color: #666">
-                无法反击
-              </span>
-              <span class="preview-counter-after" style="color: #555">
-                {combatPreview.willKill ? '（将被击杀）' : (Math.abs(selectedUnitData.x - combatPreview.targetX) + Math.abs(selectedUnitData.y - combatPreview.targetY) > getUnitAttackRange(combatPreview.targetType) ? '（超出射程）' : '（被控制）')}
-              </span>
+              {#if combatPreview.counterType === COUNTER_TYPES.RANGED}
+                <span class="preview-counter-label" style="color: #888">🚫 远程不可反击</span>
+                <span class="preview-counter-value" style="color: #666">
+                  无法反击
+                </span>
+                <span class="preview-counter-after" style="color: #555">
+                  （远程单位无反击能力）
+                </span>
+              {:else}
+                <span class="preview-counter-label">⚡ 反击</span>
+                <span class="preview-counter-value" style="color: #666">
+                  无法反击
+                </span>
+                <span class="preview-counter-after" style="color: #555">
+                  {combatPreview.willKill ? '（将被击杀）' : (Math.abs(selectedUnitData.x - combatPreview.targetX) + Math.abs(selectedUnitData.y - combatPreview.targetY) > getUnitAttackRange(combatPreview.targetType) ? '（超出射程）' : '（被控制）')}
+                </span>
+              {/if}
             </div>
           {/if}
           {#if combatPreview.attackModifiers.length > 0}
@@ -3389,6 +3410,15 @@
   .preview-counter-after {
     font-size: 11px;
     font-weight: bold;
+  }
+
+  .preview-counter-status {
+    font-size: 10px;
+    font-weight: bold;
+    margin-left: 6px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(231, 76, 60, 0.15);
   }
 
   .combat-preview-modifiers {

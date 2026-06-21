@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import * as PIXI from 'pixi.js';
   import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
-  import { unitConfig, MOVE_SKILL_TYPES, MOVE_SKILL_INFO } from '$lib/config/unitConfig';
+  import { unitConfig, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTargetId } from '$lib/stores/gameStore';
   import {
@@ -1312,7 +1312,10 @@
           defTerrain || undefined,
           atkTerrain || undefined
         );
-        if (preview.willCounter) {
+        const counterType = preview.counterType || COUNTER_TYPES.NONE;
+        const counterTypeInfo = COUNTER_TYPE_INFO[counterType];
+
+        if (counterType === COUNTER_TYPES.MELEE) {
           const counterIcon = new PIXI.Text('↩', {
             fontSize: 12,
             fill: 0xff9800,
@@ -1339,6 +1342,45 @@
             attackHighlights.push(counterDmgText);
             overlayLayer.addChild(counterDmgText);
           }
+        } else if (counterType === COUNTER_TYPES.SKILL) {
+          const skillIcon = new PIXI.Text('⚡', {
+            fontSize: 12,
+            fill: 0x9b59b6,
+            stroke: 0x000000,
+            strokeThickness: 2,
+            fontWeight: 'bold'
+          });
+          skillIcon.anchor.set(0.5);
+          skillIcon.x = tile.x * boardConfig.tileSize + boardConfig.tileSize - 9;
+          skillIcon.y = tile.y * boardConfig.tileSize + boardConfig.tileSize - 9;
+          attackHighlights.push(skillIcon);
+          overlayLayer.addChild(skillIcon);
+
+          if (preview.counterDamage > 0) {
+            const counterDmgText = new PIXI.Text(`-${preview.counterDamage}`, {
+              fontSize: 8,
+              fill: 0x9b59b6,
+              stroke: 0x000000,
+              strokeThickness: 1
+            });
+            counterDmgText.anchor.set(0.5);
+            counterDmgText.x = tile.x * boardConfig.tileSize + boardConfig.tileSize - 10;
+            counterDmgText.y = tile.y * boardConfig.tileSize + boardConfig.tileSize - 19;
+            attackHighlights.push(counterDmgText);
+            overlayLayer.addChild(counterDmgText);
+          }
+        } else if (counterType === COUNTER_TYPES.RANGED) {
+          const noCounterIcon = new PIXI.Text('🚫', {
+            fontSize: 10,
+            fill: 0x888888,
+            stroke: 0x000000,
+            strokeThickness: 1
+          });
+          noCounterIcon.anchor.set(0.5);
+          noCounterIcon.x = tile.x * boardConfig.tileSize + boardConfig.tileSize - 9;
+          noCounterIcon.y = tile.y * boardConfig.tileSize + boardConfig.tileSize - 9;
+          attackHighlights.push(noCounterIcon);
+          overlayLayer.addChild(noCounterIcon);
         }
       }
     }
@@ -1844,6 +1886,8 @@
 
     const preview = calculateCombatPreview(attacker, defender, defTerrain || undefined, atkTerrain || undefined);
     const willCounter = preview.willCounter;
+    const counterType = preview.counterType || COUNTER_TYPES.NONE;
+    const counterTypeInfo = COUNTER_TYPE_INFO[counterType];
     const counterDmg = willCounter ? preview.counterDamage : 0;
     const counterShielded = willCounter && attacker.buffs?.some(
       /** @param {any} b */ b => b.type === 'shield'
@@ -1885,7 +1929,8 @@
 
     if (attackerKilledByCounter) {
       const defFaction = defender.faction === 'red' ? '红方' : '蓝方';
-      moraleMsgs.push(`${defFaction}${defenderName}反击击杀${attackerName}`);
+      const killLabel = counterType === COUNTER_TYPES.SKILL ? '追击击杀' : '反击击杀';
+      moraleMsgs.push(`${defFaction}${defenderName}${killLabel}${attackerName}`);
       const atkFaction = attacker.faction === 'red' ? '红方' : '蓝方';
       const atkAllyCount = state.units.filter(u => u.faction === attacker.faction && u.id !== attacker.id).length;
       if (atkAllyCount > 0) {
@@ -1902,13 +1947,21 @@
 
     let counterMsg = '';
     if (willCounter) {
+      const counterLabel = counterTypeInfo ? counterTypeInfo.name : '反击';
+      const counterIcon = counterTypeInfo ? counterTypeInfo.icon : '↩';
       if (counterShielded) {
-        counterMsg = `；${defenderName}反击被护盾抵消`;
+        counterMsg = `；${defenderName}${counterIcon}${counterLabel}被护盾抵消`;
       } else if (attackerKilledByCounter) {
-        counterMsg = `；${defenderName}反击造成${actualCounterDmg}伤害【反击击杀！】`;
+        counterMsg = `；${defenderName}${counterIcon}${counterLabel}造成${actualCounterDmg}伤害【${counterType === COUNTER_TYPES.SKILL ? '追击击杀' : '反击击杀'}！】`;
       } else {
-        counterMsg = `；${defenderName}反击造成${actualCounterDmg}伤害`;
+        counterMsg = `；${defenderName}${counterIcon}${counterLabel}造成${actualCounterDmg}伤害`;
       }
+      if (preview.counterStatusApplied && preview.counterStatusType) {
+        const statusInfo = getStatusInfo(preview.counterStatusType);
+        counterMsg += `，附加【${statusInfo.name}】`;
+      }
+    } else if (counterType === COUNTER_TYPES.RANGED) {
+      counterMsg = `；${defenderName}🚫远程单位不可反击`;
     }
 
     if (willAttackAgain) {
