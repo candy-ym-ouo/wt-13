@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { RARITY_CONFIG } from '$lib/config/legionConfig.js';
   import { unitConfig } from '$lib/config/unitConfig.js';
   

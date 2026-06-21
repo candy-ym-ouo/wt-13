@@ -3,6 +3,8 @@
 	import GameUI from '$lib/components/GameUI.svelte';
 	import { seasonStore } from '$lib/stores/seasonStore.js';
 	import { RANK_TIERS, RANK_SUB_TIERS } from '$lib/config/seasonConfig.js';
+	/** @typedef {import('$lib/config/seasonConfig.js').RankTier} RankTier */
+	/** @typedef {import('$lib/config/seasonConfig.js').RankSubTier} RankSubTier */
 	
 	let showMainMenu = true;
 	
@@ -18,9 +20,14 @@
 		window.location.href = '/season';
 	}
 
+	/**
+	 * @param {string} rankId
+	 * @param {number} subTierId
+	 * @returns {string}
+	 */
 	function getRankDisplay(rankId, subTierId) {
-		const r = RANK_TIERS.find(t => t.id === rankId) || RANK_TIERS[0];
-		const st = RANK_SUB_TIERS.find(t => t.id === subTierId) || RANK_SUB_TIERS[0];
+		const r = RANK_TIERS.find(/** @param {RankTier} t */ t => t.id === rankId) || RANK_TIERS[0];
+		const st = RANK_SUB_TIERS.find(/** @param {RankSubTier} t */ t => t.id === subTierId) || RANK_SUB_TIERS[0];
 		if (rankId === 'grandmaster') return `${r.icon} ${r.name}`;
 		return `${r.icon} ${r.name} ${st.name}`;
 	}
@@ -45,7 +52,7 @@
 			</div>
 
 			{#if $seasonStore}
-				<div class="season-badge" style="--rank-color: {RANK_TIERS.find(r => r.id === $seasonStore.rank)?.color || '#c0c0c0'}">
+				<div class="season-badge" style="--rank-color: {RANK_TIERS.find((/** @type {RankTier} */ r) => r.id === $seasonStore.rank)?.color || '#c0c0c0'}">
 					<span class="badge-rank">{getRankDisplay($seasonStore.rank, $seasonStore.subTier)}</span>
 					<span class="badge-points">{$seasonStore.points} 分</span>
 					{#if $seasonStore.winStreak >= 3}

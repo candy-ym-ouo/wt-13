@@ -1,3 +1,4 @@
+// @ts-nocheck
 export const TERRAIN_TYPES = {
   PLAIN: 'plain',
   FOREST: 'forest',

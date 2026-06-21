@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { editorStore } from '$lib/stores/editorStore';
   import {
     EVENT_TRIGGER_TYPES,

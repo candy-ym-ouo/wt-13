@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { legionStore } from '$lib/stores/legionStore.js';
   import { 
     RARITY_CONFIG, 

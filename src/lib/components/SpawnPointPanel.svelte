@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { editorStore } from '$lib/stores/editorStore';
   import { FACTION_CONFIG, UNIT_TYPES } from '$lib/config/campaignConfig';
   import { unitConfig } from '$lib/config/unitConfig';

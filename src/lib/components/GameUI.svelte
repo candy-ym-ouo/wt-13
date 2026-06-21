@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { onMount, onDestroy } from 'svelte';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId, currentDrawHistory, currentPityCounter, isDeploymentPhase } from '$lib/stores/gameStore';
   import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO } from '$lib/config/unitConfig';

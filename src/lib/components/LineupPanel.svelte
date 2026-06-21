@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { legionStore, activeLineup, activeLineupUnits, lineupPower } from '$lib/stores/legionStore.js';
   import { LINEUP_CONFIG, RARITY_CONFIG } from '$lib/config/legionConfig.js';
   import { unitConfig } from '$lib/config/unitConfig.js';

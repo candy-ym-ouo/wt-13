@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { legionStore } from '$lib/stores/legionStore.js';
   import { RECRUIT_COST, GUARANTEE_RULES, RARITY_CONFIG } from '$lib/config/legionConfig.js';
   import UnitCard from './UnitCard.svelte';

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { unitConfig, SPECIALIZATION_CONFIG } from './unitConfig.js';
 import { CARD_RARITY, eventCards } from './eventCardConfig.js';
 

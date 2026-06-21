@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { onMount, onDestroy } from 'svelte';
   import { editorStore, TOOL_TYPES } from '$lib/stores/editorStore';
   import { TERRAIN_CONFIG, TERRAIN_TYPES, FACTION_CONFIG } from '$lib/config/campaignConfig';

@@ -1,14 +1,77 @@
 import { SEASON_STORAGE_KEY, SEASON_HISTORY_KEY, SEASON_DURATION_DAYS } from '$lib/config/seasonConfig.js';
 
+/**
+ * @typedef {Object} PromotionProgress
+ * @property {number} matches
+ * @property {number} wins
+ * @property {boolean} active
+ */
+
+/**
+ * @typedef {Object} MatchRecord
+ * @property {'win'|'lose'|'draw'} result
+ * @property {number} pointChange
+ * @property {number} pointsAfter
+ * @property {string} rankAfter
+ * @property {number} subTierAfter
+ * @property {Record<string, any>} details
+ * @property {number} timestamp
+ */
+
+/**
+ * @typedef {Object} SeasonData
+ * @property {string} seasonId
+ * @property {number} startTime
+ * @property {number} endTime
+ * @property {number} points
+ * @property {string} rank
+ * @property {number} subTier
+ * @property {number} winStreak
+ * @property {number} totalWins
+ * @property {number} totalLosses
+ * @property {number} totalDraws
+ * @property {number} maxPoints
+ * @property {string} maxRank
+ * @property {number} maxSubTier
+ * @property {PromotionProgress} promotionProgress
+ * @property {MatchRecord[]} matchHistory
+ * @property {boolean} isSettled
+ * @property {string|null} [settledRank]
+ * @property {{type: string, from: string, to: string}|null} [lastRankChange]
+ * @property {number|null} [lastPointChange]
+ */
+
+/**
+ * @typedef {Object} SeasonHistoryEntry
+ * @property {string} seasonId
+ * @property {number} startTime
+ * @property {number} endTime
+ * @property {number} finalPoints
+ * @property {string} finalRank
+ * @property {number} finalSubTier
+ * @property {number} maxPoints
+ * @property {string} maxRank
+ * @property {number} maxSubTier
+ * @property {number} totalWins
+ * @property {number} totalLosses
+ * @property {number} totalDraws
+ * @property {string} settledRank
+ */
+
+/** @returns {SeasonData|null} */
 export function loadSeasonData() {
   try {
     const data = localStorage.getItem(SEASON_STORAGE_KEY);
-    return data ? JSON.parse(data) : null;
+    return data ? /** @type {SeasonData} */ (JSON.parse(data)) : null;
   } catch (e) {
     return null;
   }
 }
 
+/**
+ * @param {SeasonData} data
+ * @returns {boolean}
+ */
 export function saveSeasonData(data) {
   try {
     localStorage.setItem(SEASON_STORAGE_KEY, JSON.stringify(data));
@@ -18,15 +81,20 @@ export function saveSeasonData(data) {
   }
 }
 
+/** @returns {SeasonHistoryEntry[]} */
 export function loadSeasonHistory() {
   try {
     const data = localStorage.getItem(SEASON_HISTORY_KEY);
-    return data ? JSON.parse(data) : [];
+    return data ? /** @type {SeasonHistoryEntry[]} */ (JSON.parse(data)) : [];
   } catch (e) {
     return [];
   }
 }
 
+/**
+ * @param {SeasonHistoryEntry[]} history
+ * @returns {boolean}
+ */
 export function saveSeasonHistory(history) {
   try {
     if (history.length > 20) {
@@ -39,11 +107,13 @@ export function saveSeasonHistory(history) {
   }
 }
 
+/** @returns {string} */
 export function generateSeasonId() {
   const now = new Date();
   return `S${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/** @returns {SeasonData} */
 export function createNewSeasonData() {
   const now = Date.now();
   const startDate = new Date(now);
@@ -71,7 +141,10 @@ export function createNewSeasonData() {
   };
 }
 
-/** @param {Record<string, any>} seasonData */
+/**
+ * @param {SeasonData} seasonData
+ * @returns {SeasonHistoryEntry[]}
+ */
 export function archiveSeason(seasonData) {
   const history = loadSeasonHistory();
   history.unshift({

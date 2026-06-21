@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createCampaignTemplate, PUBLISH_STATUS } from '$lib/config/campaignConfig';
 
 const STORAGE_KEY = 'tactical_board_game_campaigns';

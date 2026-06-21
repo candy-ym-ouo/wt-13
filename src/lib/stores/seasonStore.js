@@ -3,11 +3,9 @@ import {
   RANK_TIERS,
   RANK_SUB_TIERS,
   POINT_RULES,
-  SEASON_DURATION_DAYS,
   SEASON_REWARDS,
   PROMOTION_MATCHES,
   PROMOTION_WIN_RATE,
-  DEMOTION_THRESHOLD,
   GRANDMASTER_DEMOTION_POINTS
 } from '$lib/config/seasonConfig.js';
 import {
@@ -18,6 +16,25 @@ import {
   archiveSeason
 } from '$lib/utils/seasonStorage.js';
 
+/** @typedef {import('$lib/utils/seasonStorage.js').SeasonData} SeasonData */
+/** @typedef {import('$lib/utils/seasonStorage.js').SeasonHistoryEntry} SeasonHistoryEntry */
+/** @typedef {import('$lib/utils/seasonStorage.js').PromotionProgress} PromotionProgress */
+/** @typedef {import('$lib/config/seasonConfig.js').RankTier} RankTier */
+/** @typedef {import('$lib/config/seasonConfig.js').RankSubTier} RankSubTier */
+
+/**
+ * @typedef {Object} MatchDetails
+ * @property {number} [turns]
+ * @property {number} [kills]
+ * @property {boolean} [baseCaptured]
+ * @property {number} [winStreak]
+ * @property {number} [scoreDiff]
+ */
+
+/**
+ * @param {number} points
+ * @returns {RankTier}
+ */
 function getRankForPoints(points) {
   for (let i = RANK_TIERS.length - 1; i >= 0; i--) {
     if (points >= RANK_TIERS[i].minPoints) {
@@ -27,6 +44,11 @@ function getRankForPoints(points) {
   return RANK_TIERS[0];
 }
 
+/**
+ * @param {number} points
+ * @param {RankTier} rank
+ * @returns {number}
+ */
 function getSubTierForPoints(points, rank) {
   if (rank.id === 'grandmaster') return 1;
   const range = rank.maxPoints === Infinity ? 3000 : (rank.maxPoints - rank.minPoints);
@@ -37,10 +59,10 @@ function getSubTierForPoints(points, rank) {
   return 3;
 }
 
-function getPointsInRank(points, rank) {
-  return points - rank.minPoints;
-}
-
+/**
+ * @param {number} points
+ * @returns {number}
+ */
 function getPointsToNextRank(points) {
   const currentRank = getRankForPoints(points);
   const nextRankIndex = RANK_TIERS.indexOf(currentRank) + 1;
@@ -48,6 +70,11 @@ function getPointsToNextRank(points) {
   return RANK_TIERS[nextRankIndex].minPoints - points;
 }
 
+/**
+ * @param {'win'|'lose'|'draw'} result
+ * @param {MatchDetails} [details]
+ * @returns {number}
+ */
 function calculatePointChange(result, details) {
   const rules = POINT_RULES[result];
   if (!rules) return 0;
@@ -55,42 +82,64 @@ function calculatePointChange(result, details) {
   let change = rules.base;
 
   if (result === 'win') {
-    if (details && details.turns && details.turns <= rules.turnsBonus.threshold) {
-      change += rules.turnsBonus.fast;
+    const winRules = /** @type {import('$lib/config/seasonConfig.js').PointRuleWin} */ (rules);
+    if (details && details.turns && details.turns <= winRules.turnsBonus.threshold) {
+      change += winRules.turnsBonus.fast;
     }
     if (details && details.kills) {
-      change += details.kills * rules.killBonus;
+      change += details.kills * winRules.killBonus;
     }
     if (details && details.baseCaptured) {
-      change += rules.baseCaptureBonus;
+      change += winRules.baseCaptureBonus;
     }
-    if (details && details.winStreak && details.winStreak >= rules.streakBonus.threshold) {
+    if (details && details.winStreak && details.winStreak >= winRules.streakBonus.threshold) {
       const streakBonus = Math.min(
-        rules.streakBonus.bonus * Math.floor(details.winStreak / rules.streakBonus.threshold),
-        rules.maxStreakBonus
+        winRules.streakBonus.bonus * Math.floor(details.winStreak / winRules.streakBonus.threshold),
+        winRules.maxStreakBonus
       );
       change += streakBonus;
     }
   } else if (result === 'lose') {
-    if (details && details.scoreDiff !== undefined && details.scoreDiff <= rules.closeGameThreshold) {
-      change += rules.closeGameBonus;
+    const loseRules = /** @type {import('$lib/config/seasonConfig.js').PointRuleLose} */ (rules);
+    if (details && details.scoreDiff !== undefined && details.scoreDiff <= loseRules.closeGameThreshold) {
+      change += loseRules.closeGameBonus;
     }
-    if (details && details.turns && details.turns <= rules.mercyThreshold) {
-      change += rules.mercyReduction;
+    if (details && details.turns && details.turns <= loseRules.mercyThreshold) {
+      change += loseRules.mercyReduction;
     }
-    change = Math.max(change, rules.base);
+    change = Math.max(change, loseRules.base);
   }
 
   return change;
 }
 
-/** @param {Record<string, any>} seasonData */
+/**
+ * @param {SeasonData} seasonData
+ * @returns {boolean}
+ */
 function checkSeasonExpired(seasonData) {
   if (!seasonData || !seasonData.endTime) return true;
   return Date.now() >= seasonData.endTime;
 }
 
+/**
+ * @typedef {Object} SeasonStoreMethods
+ * @property {(result: 'win'|'lose'|'draw', details?: MatchDetails) => void} processMatchResult
+ * @property {() => void} resetSeason
+ * @property {() => void} checkAndRefreshSeason
+ * @property {() => void} clearLastRankChange
+ * @property {(rankId: string) => RankTier} getRankInfo
+ * @property {(points: number) => RankTier} getRankForPoints
+ * @property {() => SeasonHistoryEntry[]} getSeasonHistory
+ * @property {(rankId: string) => import('$lib/config/seasonConfig.js').SeasonReward} getSeasonRewards
+ * @property {(state: SeasonData) => number} getDaysRemaining
+ */
+
+/** @typedef {import('svelte/store').Writable<SeasonData> & SeasonStoreMethods} SeasonStore */
+
+/** @returns {SeasonStore} */
 function createSeasonStore() {
+  /** @type {SeasonData|null} */
   let savedData = loadSeasonData();
   if (!savedData || checkSeasonExpired(savedData)) {
     if (savedData && checkSeasonExpired(savedData) && !savedData.isSettled) {
@@ -107,17 +156,23 @@ function createSeasonStore() {
 
   const { subscribe, set, update } = writable(savedData);
 
-  subscribe(state => {
+  subscribe(/** @param {SeasonData} state */ state => {
     if (state) {
       saveSeasonData(state);
     }
   });
 
-  return {
+  /** @type {SeasonStore} */
+  // @ts-ignore
+  const store = {
     subscribe,
     set,
     update,
 
+    /**
+     * @param {'win'|'lose'|'draw'} result
+     * @param {MatchDetails} [details]
+     */
     processMatchResult: (result, details) => update(state => {
       if (state.isSettled) return state;
 
@@ -125,8 +180,8 @@ function createSeasonStore() {
       const newPoints = Math.max(0, state.points + pointChange);
       const newRank = getRankForPoints(newPoints);
       const newSubTier = getSubTierForPoints(newPoints, newRank);
-      const oldRankIndex = RANK_TIERS.findIndex(r => r.id === state.rank);
-      const newRankIndex = RANK_TIERS.findIndex(r => r.id === newRank.id);
+      const oldRankIndex = RANK_TIERS.findIndex(/** @param {RankTier} r */ r => r.id === state.rank);
+      const newRankIndex = RANK_TIERS.findIndex(/** @param {RankTier} r */ r => r.id === newRank.id);
 
       let winStreak = state.winStreak;
       if (result === 'win') {
@@ -141,11 +196,13 @@ function createSeasonStore() {
         pointsAfter: newPoints,
         rankAfter: newRank.id,
         subTierAfter: newSubTier,
-        details: details || {},
+        details: details || /** @type {Record<string, any>} */ ({}),
         timestamp: Date.now()
       };
 
+      /** @type {import('$lib/utils/seasonStorage.js').PromotionProgress} */
       let promotionProgress = { ...state.promotionProgress };
+      /** @type {{type: string, from: string, to: string}|null} */
       let rankChanged = null;
 
       if (newRankIndex > oldRankIndex) {
@@ -172,7 +229,7 @@ function createSeasonStore() {
           } else {
             const demotePoints = newRank.id === 'grandmaster'
               ? GRANDMASTER_DEMOTION_POINTS
-              : RANK_TIERS[newRankIndex - 1]?.maxPoints || newRank.minPoints;
+              : (RANK_TIERS[Math.max(0, newRankIndex - 1)]?.maxPoints || newRank.minPoints);
             return {
               ...state,
               points: demotePoints,
@@ -183,7 +240,7 @@ function createSeasonStore() {
               totalLosses: state.totalLosses + (result === 'lose' ? 1 : 0),
               totalDraws: state.totalDraws + (result === 'draw' ? 1 : 0),
               maxPoints: Math.max(state.maxPoints, demotePoints),
-              maxRank: RANK_TIERS.findIndex(r => r.id === state.maxRank) < newRankIndex - 1
+              maxRank: RANK_TIERS.findIndex(/** @param {RankTier} r */ r => r.id === state.maxRank) < newRankIndex - 1
                 ? RANK_TIERS[Math.max(0, newRankIndex - 1)].id : state.maxRank,
               promotionProgress: { matches: 0, wins: 0, active: false },
               matchHistory: [matchRecord, ...state.matchHistory].slice(0, 50),
@@ -196,10 +253,12 @@ function createSeasonStore() {
 
       let maxRank = state.maxRank;
       let maxSubTier = state.maxSubTier;
-      if (newRankIndex > RANK_TIERS.findIndex(r => r.id === maxRank)) {
+      /** @type {number} */
+      const maxRankIdx = RANK_TIERS.findIndex(/** @param {RankTier} r */ r => r.id === maxRank);
+      if (newRankIndex > maxRankIdx) {
         maxRank = newRank.id;
         maxSubTier = newSubTier;
-      } else if (newRankIndex === RANK_TIERS.findIndex(r => r.id === maxRank) && newSubTier < maxSubTier) {
+      } else if (newRankIndex === maxRankIdx && newSubTier < maxSubTier) {
         maxSubTier = newSubTier;
       }
 
@@ -248,35 +307,54 @@ function createSeasonStore() {
       lastPointChange: null
     })),
 
+    /**
+     * @param {string} rankId
+     * @returns {RankTier}
+     */
     getRankInfo: (rankId) => {
-      return RANK_TIERS.find(r => r.id === rankId) || RANK_TIERS[0];
+      return RANK_TIERS.find(/** @param {RankTier} r */ r => r.id === rankId) || RANK_TIERS[0];
     },
 
+    /**
+     * @param {number} points
+     * @returns {RankTier}
+     */
     getRankForPoints: (points) => {
       return getRankForPoints(points);
     },
 
+    /** @returns {SeasonHistoryEntry[]} */
     getSeasonHistory: () => {
       return loadSeasonHistory();
     },
 
+    /**
+     * @param {string} rankId
+     * @returns {import('$lib/config/seasonConfig.js').SeasonReward}
+     */
     getSeasonRewards: (rankId) => {
       return SEASON_REWARDS[rankId] || SEASON_REWARDS.bronze;
     },
 
+    /**
+     * @param {SeasonData} state
+     * @returns {number}
+     */
     getDaysRemaining: (state) => {
       if (!state || !state.endTime) return 0;
       const remaining = state.endTime - Date.now();
       return Math.max(0, Math.ceil(remaining / (1000 * 60 * 60 * 24)));
     }
   };
+
+  return store;
 }
 
 export const seasonStore = createSeasonStore();
 
 export const currentRankInfo = derived(seasonStore, $season => {
   if (!$season) return RANK_TIERS[0];
-  return RANK_TIERS.find(r => r.id === $season.rank) || RANK_TIERS[0];
+  return RANK_TIERS.find(/** @param {RankTier} r */ r => r.id === $season.rank) || RANK_TIERS[0];
 });
 
 export const currentSubTierInfo = derived(seasonStore, $season => {
@@ -292,7 +370,7 @@ export const pointsToNextRank = derived(seasonStore, $season => {
 export const rankProgress = derived(seasonStore, $season => {
   if (!$season) return 0;
   const rank = getRankForPoints($season.points);
-  const pointsInRank = getPointsInRank($season.points, rank);
+  const pointsInRank = $season.points - rank.minPoints;
   const range = rank.maxPoints === Infinity ? 3000 : (rank.maxPoints - rank.minPoints);
   return Math.min(100, Math.floor((pointsInRank / range) * 100));
 });

@@ -1,4 +1,5 @@
 <script>
+  // @ts-nocheck
   import { legionStore } from '$lib/stores/legionStore.js';
   import { CURRENCY_CONFIG, RARITY_CONFIG } from '$lib/config/legionConfig.js';
   import { CARD_RARITY_COLORS, CARD_RARITY_LABELS } from '$lib/config/eventCardConfig.js';

@@ -1,6 +1,63 @@
 export const SEASON_STORAGE_KEY = 'season_ladder_data';
 export const SEASON_HISTORY_KEY = 'season_history';
 
+/**
+ * @typedef {Object} RankTier
+ * @property {string} id
+ * @property {string} name
+ * @property {string} icon
+ * @property {string} color
+ * @property {number} minPoints
+ * @property {number} maxPoints
+ */
+
+/**
+ * @typedef {Object} RankSubTier
+ * @property {number} id
+ * @property {string} name
+ * @property {number} order
+ */
+
+/**
+ * @typedef {Object} PointRuleWin
+ * @property {number} base
+ * @property {{fast: number, threshold: number}} turnsBonus
+ * @property {number} killBonus
+ * @property {number} baseCaptureBonus
+ * @property {{threshold: number, bonus: number}} streakBonus
+ * @property {number} maxStreakBonus
+ */
+
+/**
+ * @typedef {Object} PointRuleLose
+ * @property {number} base
+ * @property {number} closeGameBonus
+ * @property {number} closeGameThreshold
+ * @property {number} mercyThreshold
+ * @property {number} mercyReduction
+ */
+
+/**
+ * @typedef {Object} PointRuleDraw
+ * @property {number} base
+ */
+
+/**
+ * @typedef {Object} PointRules
+ * @property {PointRuleWin} win
+ * @property {PointRuleLose} lose
+ * @property {PointRuleDraw} draw
+ */
+
+/**
+ * @typedef {Object} SeasonReward
+ * @property {number} gold
+ * @property {number} recruitTicket
+ * @property {number} [promotionStone]
+ * @property {string} title
+ */
+
+/** @type {RankTier[]} */
 export const RANK_TIERS = [
   { id: 'bronze', name: '青铜', icon: '🥉', color: '#cd7f32', minPoints: 0, maxPoints: 999 },
   { id: 'silver', name: '白银', icon: '🥈', color: '#c0c0c0', minPoints: 1000, maxPoints: 1999 },
@@ -11,12 +68,14 @@ export const RANK_TIERS = [
   { id: 'grandmaster', name: '宗师', icon: '👑', color: '#ff1493', minPoints: 10000, maxPoints: Infinity }
 ];
 
+/** @type {RankSubTier[]} */
 export const RANK_SUB_TIERS = [
   { id: 3, name: 'III', order: 0 },
   { id: 2, name: 'II', order: 1 },
   { id: 1, name: 'I', order: 2 }
 ];
 
+/** @type {PointRules} */
 export const POINT_RULES = {
   win: {
     base: 60,
@@ -40,6 +99,7 @@ export const POINT_RULES = {
 
 export const SEASON_DURATION_DAYS = 30;
 
+/** @type {Record<string, SeasonReward>} */
 export const SEASON_REWARDS = {
   bronze: { gold: 200, recruitTicket: 1, title: '青铜战士' },
   silver: { gold: 500, recruitTicket: 3, title: '白银勇者' },

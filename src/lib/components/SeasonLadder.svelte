@@ -9,16 +9,22 @@
     winRate
   } from '$lib/stores/seasonStore.js';
   import { RANK_TIERS, RANK_SUB_TIERS, SEASON_REWARDS, PROMOTION_MATCHES } from '$lib/config/seasonConfig.js';
+  /** @typedef {import('$lib/config/seasonConfig.js').RankTier} RankTier */
+  /** @typedef {import('$lib/config/seasonConfig.js').RankSubTier} RankSubTier */
+  /** @typedef {import('$lib/config/seasonConfig.js').SeasonReward} SeasonReward */
+  /** @typedef {import('$lib/utils/seasonStorage.js').SeasonData} SeasonData */
+  /** @typedef {import('$lib/utils/seasonStorage.js').MatchRecord} MatchRecord */
+  /** @typedef {import('$lib/utils/seasonStorage.js').SeasonHistoryEntry} SeasonHistoryEntry */
 
-  export let showHistory = false;
+  /** @typedef {{type: string, msg: string, color: string}} RankChangeBanner */
 
-  $: season = $seasonStore;
-  $: rank = $currentRankInfo;
-  $: subTier = $currentSubTierInfo;
-  $: progress = $rankProgress;
-  $: nextPts = $pointsToNextRank;
-  $: matches = $totalMatches;
-  $: wr = $winRate;
+  $: season = /** @type {SeasonData} */ ($seasonStore);
+  $: rank = /** @type {RankTier} */ ($currentRankInfo);
+  $: subTier = /** @type {RankSubTier} */ ($currentSubTierInfo);
+  $: progress = /** @type {number} */ ($rankProgress);
+  $: nextPts = /** @type {number} */ ($pointsToNextRank);
+  $: matches = /** @type {number} */ ($totalMatches);
+  $: wr = /** @type {number} */ ($winRate);
 
   $: daysLeft = (() => {
     if (!season || !season.endTime) return 0;
@@ -26,46 +32,61 @@
     return Math.max(0, Math.ceil(remaining / (1000 * 60 * 60 * 24)));
   })();
 
-  $: seasonHistory = $seasonStore.getSeasonHistory();
+  $: seasonHistory = /** @type {SeasonHistoryEntry[]} */ (seasonStore.getSeasonHistory());
 
-  $: rankChangeMsg = (() => {
+  $: rankChangeMsg = /** @type {RankChangeBanner|null} */ ((() => {
     if (!season || !season.lastRankChange) return null;
     const change = season.lastRankChange;
+    /** @type {(r: RankTier) => boolean} */
+    const findFrom = r => r.id === change.from;
+    /** @type {(r: RankTier) => boolean} */
+    const findTo = r => r.id === change.to;
     if (change.type === 'promote') {
-      const fromRank = RANK_TIERS.find(r => r.id === change.from);
-      const toRank = RANK_TIERS.find(r => r.id === change.to);
+      const fromRank = RANK_TIERS.find(findFrom);
+      const toRank = RANK_TIERS.find(findTo);
       return { type: 'promote', msg: `段位晋升！${fromRank?.icon || ''}${fromRank?.name || ''} → ${toRank?.icon || ''}${toRank?.name || ''}`, color: '#4caf50' };
     } else if (change.type === 'demote') {
-      const fromRank = RANK_TIERS.find(r => r.id === change.from);
-      const toRank = RANK_TIERS.find(r => r.id === change.to);
+      const fromRank = RANK_TIERS.find(findFrom);
+      const toRank = RANK_TIERS.find(findTo);
       return { type: 'demote', msg: `段位下降 ${fromRank?.icon || ''}${fromRank?.name || ''} → ${toRank?.icon || ''}${toRank?.name || ''}`, color: '#f44336' };
     } else if (change.type === 'demote_promo') {
-      const fromRank = RANK_TIERS.find(r => r.id === change.from);
-      const toRank = RANK_TIERS.find(r => r.id === change.to);
+      const fromRank = RANK_TIERS.find(findFrom);
+      const toRank = RANK_TIERS.find(findTo);
       return { type: 'demote', msg: `晋升赛未通过 ${fromRank?.icon || ''}${fromRank?.name || ''} → ${toRank?.icon || ''}${toRank?.name || ''}`, color: '#ff9800' };
     }
     return null;
-  })();
+  })());
 
+  /**
+   * @param {string} rankId
+   * @param {number} subTierId
+   * @returns {string}
+   */
   function getRankDisplay(rankId, subTierId) {
-    const r = RANK_TIERS.find(t => t.id === rankId) || RANK_TIERS[0];
-    const st = RANK_SUB_TIERS.find(t => t.id === subTierId) || RANK_SUB_TIERS[0];
+    const r = RANK_TIERS.find(/** @param {RankTier} t */ t => t.id === rankId) || RANK_TIERS[0];
+    const st = RANK_SUB_TIERS.find(/** @param {RankSubTier} t */ t => t.id === subTierId) || RANK_SUB_TIERS[0];
     if (rankId === 'grandmaster') return `${r.icon} ${r.name}`;
     return `${r.icon} ${r.name} ${st.name}`;
   }
 
+  /** @returns {number} */
   function getPointsInRank() {
     if (!season) return 0;
-    const r = RANK_TIERS.find(t => t.id === season.rank) || RANK_TIERS[0];
+    const r = RANK_TIERS.find(/** @param {RankTier} t */ t => t.id === season.rank) || RANK_TIERS[0];
     return season.points - r.minPoints;
   }
 
+  /** @returns {number} */
   function getRankRange() {
     if (!season) return 0;
-    const r = RANK_TIERS.find(t => t.id === season.rank) || RANK_TIERS[0];
+    const r = RANK_TIERS.find(/** @param {RankTier} t */ t => t.id === season.rank) || RANK_TIERS[0];
     return r.maxPoints === Infinity ? 3000 : (r.maxPoints - r.minPoints);
   }
 
+  /**
+   * @param {number} ts
+   * @returns {string}
+   */
   function formatTime(ts) {
     if (!ts) return '';
     return new Date(ts).toLocaleString('zh-CN', {
@@ -82,7 +103,10 @@
     }
   }
 
-  function dismissRankChange() {
+  /**
+   * @param {MouseEvent} [_e]
+   */
+  function dismissRankChange(_e) {
     seasonStore.clearLastRankChange();
   }
 </script>
@@ -97,7 +121,7 @@
   </div>
 
   {#if rankChangeMsg}
-    <div class="rank-change-banner" style="border-color: {rankChangeMsg.color};" on:click={dismissRankChange}>
+    <div class="rank-change-banner" style="border-color: {rankChangeMsg.color};" on:click={dismissRankChange} role="button" tabindex="0" on:keydown={(/** @type {KeyboardEvent} */ e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dismissRankChange(); } }}>
       <span class="rank-change-text" style="color: {rankChangeMsg.color};">{rankChangeMsg.msg}</span>
       {#if season?.lastPointChange !== undefined && season?.lastPointChange !== null}
         <span class="rank-change-pts" style="color: {season.lastPointChange >= 0 ? '#4caf50' : '#f44336'};">

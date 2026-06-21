@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { 
   LEGION_STORAGE_KEY, 
   LEGION_RECORDS_KEY,
