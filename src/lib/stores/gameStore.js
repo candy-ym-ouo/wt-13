@@ -1021,6 +1021,11 @@ function createGameState() {
         red: [...state.hands.red],
         blue: [...state.hands.blue]
       };
+      const drawHistory = {
+        red: { ...state.drawHistory.red },
+        blue: { ...state.drawHistory.blue }
+      };
+      const pityCounter = { ...state.pityCounter };
       if (hands[faction].length < cardConfig.maxHandSize) {
         hands[faction] = [...hands[faction], {
           ...card,
@@ -1029,17 +1034,13 @@ function createGameState() {
           remainingDuration: 0,
           remainingCooldown: 0
         }];
-      }
-      const drawHistory = {
-        red: { ...state.drawHistory.red },
-        blue: { ...state.drawHistory.blue }
-      };
-      drawHistory[faction][card.id] = (drawHistory[faction][card.id] || 0) + 1;
-      const pityCounter = { ...state.pityCounter };
-      if (card.rarity === 'rare' || card.rarity === 'limited') {
-        pityCounter[faction] = 0;
-      } else {
-        pityCounter[faction] = (pityCounter[faction] || 0) + 1;
+        drawHistory[faction] = { ...drawHistory[faction] };
+        drawHistory[faction][card.id] = (drawHistory[faction][card.id] || 0) + 1;
+        if (card.rarity === 'rare' || card.rarity === 'limited') {
+          pityCounter[faction] = 0;
+        } else {
+          pityCounter[faction] = (pityCounter[faction] || 0) + 1;
+        }
       }
       return { ...state, hands, drawHistory, pityCounter };
     }),
