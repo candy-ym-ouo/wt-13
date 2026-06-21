@@ -474,7 +474,15 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
       break;
     }
     case 'reveal':
-      effects.push({ type: 'reveal', duration: card.effect.duration });
+      if (targetPos) {
+        effects.push({
+          type: 'reveal',
+          duration: card.effect.duration,
+          radius: card.effect.radius || 3,
+          x: targetPos.x,
+          y: targetPos.y
+        });
+      }
       break;
     case 'counterAttack': {
       const friendlyUnit = (selectedUnit && selectedUnit.faction === currentFaction)

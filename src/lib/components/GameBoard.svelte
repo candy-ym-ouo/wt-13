@@ -46,6 +46,13 @@
   let unitsLayer;
   /** @type {any} */
   let overlayLayer;
+  /** @type {any} */
+  let fogLayer;
+  /** @type {any} */
+  let scoutPreviewLayer;
+
+  /** @type {number | null} */
+  let animationFrameId = null;
 
   /** @type {GameState | null} */
   let state = null;
@@ -104,9 +111,14 @@
 
     window.addEventListener('resize', handleResize);
     handleResize();
+
+    animationLoop();
   });
 
   onDestroy(() => {
+    if (animationFrameId !== null) {
+      cancelAnimationFrame(animationFrameId);
+    }
     if (unsubscribeState) unsubscribeState();
     if (unsubscribeSelected) unsubscribeSelected();
     if (unsubscribeHand) unsubscribeHand();
@@ -135,6 +147,12 @@
 
     unitsLayer = new PIXI.Container();
     app.stage.addChild(unitsLayer);
+
+    fogLayer = new PIXI.Container();
+    app.stage.addChild(fogLayer);
+
+    scoutPreviewLayer = new PIXI.Container();
+    app.stage.addChild(scoutPreviewLayer);
 
     overlayLayer = new PIXI.Container();
     app.stage.addChild(overlayLayer);
@@ -317,9 +335,291 @@
     }
   }
 
+  function drawFogOfWar() {
+    if (!fogLayer || !state || !state.fogOfWarEnabled) return;
+    fogLayer.removeChildren();
+
+    const currentFaction = state.currentFaction;
+    const revealedAreas = state.revealedAreas[currentFaction] || [];
+    const friendlyUnits = state.units.filter(u => u.faction === currentFaction);
+    const enemyMarkers = state.enemyMarkers[currentFaction] || [];
+
+    for (let y = 0; y < boardConfig.height; y++) {
+      for (let x = 0; x < boardConfig.width; x++) {
+        let isRevealed = false;
+        let revealIntensity = 0;
+
+        for (const unit of friendlyUnits) {
+          const distance = Math.abs(unit.x - x) + Math.abs(unit.y - y);
+          const sightRange = 2;
+          if (distance <= sightRange) {
+            isRevealed = true;
+            revealIntensity = Math.max(revealIntensity, 1 - distance / (sightRange + 1));
+          }
+        }
+
+        for (const area of revealedAreas) {
+          const distance = Math.abs(area.x - x) + Math.abs(area.y - y);
+          if (distance <= area.radius) {
+            isRevealed = true;
+            const areaIntensity = area.remainingTurns / area.maxTurns;
+            revealIntensity = Math.max(revealIntensity, areaIntensity * 0.8);
+          }
+        }
+
+        const hasMarker = enemyMarkers.some(m => m.x === x && m.y === y);
+        if (hasMarker) {
+          revealIntensity = Math.max(revealIntensity, 0.6);
+          isRevealed = true;
+        }
+
+        if (!isRevealed) {
+          const fogTile = new PIXI.Graphics();
+          fogTile.beginFill(0x0a0a1a, 0.85);
+          fogTile.drawRect(
+            x * boardConfig.tileSize,
+            y * boardConfig.tileSize,
+            boardConfig.tileSize,
+            boardConfig.tileSize
+          );
+          fogTile.endFill();
+          fogLayer.addChild(fogTile);
+        } else if (revealIntensity < 1) {
+          const fogTile = new PIXI.Graphics();
+          const alpha = 0.85 * (1 - revealIntensity);
+          if (alpha > 0.1) {
+            fogTile.beginFill(0x1a1a2e, alpha);
+            fogTile.drawRect(
+              x * boardConfig.tileSize,
+              y * boardConfig.tileSize,
+              boardConfig.tileSize,
+              boardConfig.tileSize
+            );
+            fogTile.endFill();
+            fogLayer.addChild(fogTile);
+          }
+        }
+      }
+    }
+  }
+
+  function drawRevealedAreas() {
+    if (!boardLayer || !state) return;
+
+    const currentFaction = state.currentFaction;
+    const revealedAreas = state.revealedAreas[currentFaction] || [];
+
+    for (const area of revealedAreas) {
+      const intensity = area.remainingTurns / area.maxTurns;
+      const color = area.faction === 'red' ? 0xff6b6b : 0x4ecdc4;
+
+      for (let dy = -area.radius; dy <= area.radius; dy++) {
+        for (let dx = -area.radius; dx <= area.radius; dx++) {
+          const distance = Math.abs(dx) + Math.abs(dy);
+          if (distance > area.radius) continue;
+
+          const x = area.x + dx;
+          const y = area.y + dy;
+          if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) continue;
+
+          const overlay = new PIXI.Graphics();
+          const alpha = 0.15 * intensity * (1 - distance / (area.radius + 1));
+          overlay.beginFill(color, alpha);
+          overlay.drawRect(
+            x * boardConfig.tileSize,
+            y * boardConfig.tileSize,
+            boardConfig.tileSize,
+            boardConfig.tileSize
+          );
+          overlay.endFill();
+          boardLayer.addChild(overlay);
+        }
+      }
+
+      const centerX = area.x * boardConfig.tileSize + boardConfig.tileSize / 2;
+      const centerY = area.y * boardConfig.tileSize + boardConfig.tileSize / 2;
+
+      const border = new PIXI.Graphics();
+      border.lineStyle(2, color, 0.5 * intensity);
+      border.drawCircle(centerX, centerY, area.radius * boardConfig.tileSize * 0.9);
+      boardLayer.addChild(border);
+
+      const durationText = new PIXI.Text(`${area.remainingTurns}`, {
+        fontSize: 12,
+        fill: 0xffffff,
+        stroke: 0x000000,
+        strokeThickness: 2,
+        fontWeight: 'bold'
+      });
+      durationText.anchor.set(0.5);
+      durationText.x = centerX;
+      durationText.y = centerY;
+      boardLayer.addChild(durationText);
+
+      const iconText = new PIXI.Text('👁️', { fontSize: 16 });
+      iconText.anchor.set(0.5);
+      iconText.x = centerX;
+      iconText.y = centerY - 18;
+      boardLayer.addChild(iconText);
+    }
+  }
+
+  function drawEnemyMarkers() {
+    if (!unitsLayer || !state) return;
+
+    const currentFaction = state.currentFaction;
+    const markers = state.enemyMarkers[currentFaction] || [];
+    const revealTurns = state.revealTurns || 0;
+
+    for (const marker of markers) {
+      const unit = state.units.find(u => u.id === marker.unitId);
+      if (!unit) continue;
+
+      const hasDetailedInfo = marker.detailedInfo || revealTurns > 0;
+      const x = marker.x * boardConfig.tileSize + boardConfig.tileSize / 2;
+      const y = marker.y * boardConfig.tileSize + boardConfig.tileSize / 2;
+
+      const markerBg = new PIXI.Graphics();
+      markerBg.beginFill(0xff4444, 0.3);
+      markerBg.lineStyle(2, 0xff0000, 0.8);
+      markerBg.drawCircle(x, y, boardConfig.tileSize * 0.4);
+      markerBg.endFill();
+      unitsLayer.addChild(markerBg);
+
+      const pulseAlpha = 0.3 + 0.2 * Math.sin(Date.now() / 300);
+      const pulse = new PIXI.Graphics();
+      pulse.beginFill(0xff0000, pulseAlpha);
+      pulse.drawCircle(x, y, boardConfig.tileSize * 0.45);
+      pulse.endFill();
+      unitsLayer.addChild(pulse);
+
+      const unitConfigData = unitConfig[/** @type {UnitType} */ (unit.type)];
+      const iconText = new PIXI.Text(unitConfigData?.icon || '❓', { fontSize: 20 });
+      iconText.anchor.set(0.5);
+      iconText.x = x;
+      iconText.y = y - 5;
+      unitsLayer.addChild(iconText);
+
+      if (hasDetailedInfo) {
+        const hpPercent = unit.currentHp / unit.maxHp;
+        const hpBarBg = new PIXI.Graphics();
+        hpBarBg.beginFill(0x333333, 0.9);
+        hpBarBg.drawRect(x - 20, y + 15, 40, 5);
+        hpBarBg.endFill();
+        unitsLayer.addChild(hpBarBg);
+
+        const hpColor = hpPercent > 0.6 ? 0x2ecc71 : hpPercent > 0.3 ? 0xf1c40f : 0xe74c3c;
+        const hpBar = new PIXI.Graphics();
+        hpBar.beginFill(hpColor);
+        hpBar.drawRect(x - 20, y + 15, 40 * hpPercent, 5);
+        hpBar.endFill();
+        unitsLayer.addChild(hpBar);
+
+        const hpText = new PIXI.Text(`${unit.currentHp}/${unit.maxHp}`, {
+          fontSize: 8,
+          fill: 0xffffff,
+          stroke: 0x000000,
+          strokeThickness: 1
+        });
+        hpText.anchor.set(0.5);
+        hpText.x = x;
+        hpText.y = y + 25;
+        unitsLayer.addChild(hpText);
+      }
+
+      const durationBadge = new PIXI.Graphics();
+      durationBadge.beginFill(0x3498db, 0.9);
+      durationBadge.drawCircle(x + 18, y - 18, 10);
+      durationBadge.endFill();
+      unitsLayer.addChild(durationBadge);
+
+      const durationText = new PIXI.Text(`${marker.remainingTurns}`, {
+        fontSize: 9,
+        fill: 0xffffff,
+        fontWeight: 'bold'
+      });
+      durationText.anchor.set(0.5);
+      durationText.x = x + 18;
+      durationText.y = y - 18;
+      unitsLayer.addChild(durationText);
+
+      const alertIcon = new PIXI.Text('⚠️', { fontSize: 12 });
+      alertIcon.anchor.set(0.5);
+      alertIcon.x = x - 18;
+      alertIcon.y = y - 18;
+      unitsLayer.addChild(alertIcon);
+    }
+  }
+
+  function drawScoutPreview() {
+    if (!scoutPreviewLayer || !state || !state.selectedCardId) return;
+    scoutPreviewLayer.removeChildren();
+
+    const card = handCards.find(c => c.instanceId === state.selectedCardId);
+    if (!card || card.effect.type !== 'reveal') return;
+
+    const radius = card.effect.radius || 3;
+    const tx = hoverTile.x;
+    const ty = hoverTile.y;
+
+    if (tx < 0 || tx >= boardConfig.width || ty < 0 || ty >= boardConfig.height) return;
+
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const distance = Math.abs(dx) + Math.abs(dy);
+        if (distance > radius) continue;
+
+        const x = tx + dx;
+        const y = ty + dy;
+        if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) continue;
+
+        const preview = new PIXI.Graphics();
+        const alpha = 0.25 * (1 - distance / (radius + 1));
+        preview.beginFill(0x00ff88, alpha);
+        preview.drawRect(
+          x * boardConfig.tileSize,
+          y * boardConfig.tileSize,
+          boardConfig.tileSize,
+          boardConfig.tileSize
+        );
+        preview.endFill();
+        scoutPreviewLayer.addChild(preview);
+      }
+    }
+
+    const centerX = tx * boardConfig.tileSize + boardConfig.tileSize / 2;
+    const centerY = ty * boardConfig.tileSize + boardConfig.tileSize / 2;
+
+    const border = new PIXI.Graphics();
+    border.lineStyle(3, 0x00ff88, 0.7);
+    border.drawCircle(centerX, centerY, radius * boardConfig.tileSize * 0.9);
+    scoutPreviewLayer.addChild(border);
+
+    const iconText = new PIXI.Text('👁️', { fontSize: 24 });
+    iconText.anchor.set(0.5);
+    iconText.x = centerX;
+    iconText.y = centerY;
+    scoutPreviewLayer.addChild(iconText);
+
+    const infoText = new PIXI.Text(`侦查范围: 半径${radius}格`, {
+      fontSize: 12,
+      fill: 0x00ff88,
+      stroke: 0x000000,
+      strokeThickness: 2
+    });
+    infoText.anchor.set(0.5);
+    infoText.x = centerX;
+    infoText.y = centerY - radius * boardConfig.tileSize * 0.9 - 15;
+    scoutPreviewLayer.addChild(infoText);
+  }
+
   function renderBoard() {
     drawBoard();
     drawBaseStatus();
+    drawFogOfWar();
+    drawRevealedAreas();
+    drawEnemyMarkers();
+    drawScoutPreview();
   }
 
   function renderUnits() {
@@ -912,7 +1212,16 @@
           }
           break;
         case 'reveal':
-          if (effect.duration !== undefined) {
+          if (effect.x !== undefined && effect.y !== undefined && effect.radius !== undefined && effect.duration !== undefined) {
+            gameState.addRevealedArea(
+              state.currentFaction,
+              effect.x,
+              effect.y,
+              effect.radius,
+              effect.duration
+            );
+            gameState.setReveal(Math.max(state.revealTurns, effect.duration));
+          } else if (effect.duration !== undefined) {
             gameState.setReveal(effect.duration);
           }
           break;
@@ -967,7 +1276,7 @@
         return '点击任意位置确认召唤';
       }
       case 'reveal':
-        return '点击任意位置触发侦查';
+        return '点击任意位置施放侦查，揭示该区域内的敌军';
       default:
         return '请选择合适的目标';
     }
@@ -1230,6 +1539,17 @@
         `${victory.winner === 'red' ? '红方' : '蓝方'}胜利！${victory.condition}`
       );
     }
+  }
+
+  function animationLoop() {
+    if (state && state.enemyMarkers && state.currentFaction) {
+      const markers = state.enemyMarkers[state.currentFaction] || [];
+      if (markers.length > 0) {
+        drawEnemyMarkers();
+        drawScoutPreview();
+      }
+    }
+    animationFrameId = requestAnimationFrame(animationLoop);
   }
 
   function handleResize() {

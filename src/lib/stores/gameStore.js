@@ -50,6 +50,28 @@ import {
  */
 
 /**
+ * @typedef {object} RevealedArea
+ * @property {number} x
+ * @property {number} y
+ * @property {number} radius
+ * @property {number} remainingTurns
+ * @property {string} faction
+ * @property {number} maxTurns
+ */
+
+/**
+ * @typedef {object} EnemyMarker
+ * @property {string} unitId
+ * @property {string} unitType
+ * @property {number} x
+ * @property {number} y
+ * @property {string} faction
+ * @property {number} spottedTurn
+ * @property {number} remainingTurns
+ * @property {boolean} detailedInfo
+ */
+
+/**
  * @typedef {object} GameState
  * @property {Unit[]} units
  * @property {string} currentFaction
@@ -77,6 +99,9 @@ import {
  * @property {Record<string, import('../utils/gameLogic').TileEffect>} tileEffects
  * @property {{red: Record<string, number>, blue: Record<string, number>}} drawHistory
  * @property {{red: number, blue: number}} pityCounter
+ * @property {{red: RevealedArea[], blue: RevealedArea[]}} revealedAreas
+ * @property {{red: EnemyMarker[], blue: EnemyMarker[]}} enemyMarkers
+ * @property {boolean} fogOfWarEnabled
  */
 
 /**
@@ -311,7 +336,10 @@ function createInitialState() {
     lastActionLog: null,
     tileEffects: {},
     drawHistory: { red: {}, blue: {} },
-    pityCounter: { red: 0, blue: 0 }
+    pityCounter: { red: 0, blue: 0 },
+    revealedAreas: { red: [], blue: [] },
+    enemyMarkers: { red: [], blue: [] },
+    fogOfWarEnabled: true
   };
 }
 
@@ -465,6 +493,20 @@ function createGameState() {
         });
       }
 
+      const enemyFaction = unitFaction === 'red' ? 'blue' : 'red';
+      const updatedMarkers = {
+        red: [...state.enemyMarkers.red],
+        blue: [...state.enemyMarkers.blue]
+      };
+      const markerIndex = updatedMarkers[enemyFaction].findIndex(m => m.unitId === unitId);
+      if (markerIndex >= 0) {
+        updatedMarkers[enemyFaction][markerIndex] = {
+          ...updatedMarkers[enemyFaction][markerIndex],
+          x,
+          y
+        };
+      }
+
       return {
         ...state,
         units: filteredUnits,
@@ -472,7 +514,8 @@ function createGameState() {
         gamePhase: 'unitMoved',
         lastStatusMessages: statusMsgs,
         actionLogs: newActionLogs,
-        lastActionLog: moveLog
+        lastActionLog: moveLog,
+        enemyMarkers: updatedMarkers
       };
     }),
     /**
@@ -788,6 +831,15 @@ function createGameState() {
         }
       }
 
+      const markersAfterDeath = {
+        red: state.enemyMarkers.red.filter(m => 
+          updatedUnits.some(u => u.id === m.unitId)
+        ),
+        blue: state.enemyMarkers.blue.filter(m => 
+          updatedUnits.some(u => u.id === m.unitId)
+        )
+      };
+
       return {
         ...state,
         units: updatedUnits,
@@ -795,7 +847,8 @@ function createGameState() {
         gamePhase: 'idle',
         lastMoraleChanges: moraleChanges,
         actionLogs: newActionLogs,
-        lastActionLog: attackLog
+        lastActionLog: attackLog,
+        enemyMarkers: markersAfterDeath
       };
     }),
     endTurn: () => update(state => {
@@ -976,6 +1029,28 @@ function createGameState() {
         newRevealTurns = state.revealTurns ? state.revealTurns : 0;
       }
 
+      const tickedRevealedAreas = {
+        red: state.revealedAreas.red.map(area => ({
+          ...area,
+          remainingTurns: area.remainingTurns - 1
+        })).filter(area => area.remainingTurns > 0),
+        blue: state.revealedAreas.blue.map(area => ({
+          ...area,
+          remainingTurns: area.remainingTurns - 1
+        })).filter(area => area.remainingTurns > 0)
+      };
+
+      const tickedMarkers = {
+        red: state.enemyMarkers.red.map(marker => ({
+          ...marker,
+          remainingTurns: marker.remainingTurns - 1
+        })).filter(marker => marker.remainingTurns > 0),
+        blue: state.enemyMarkers.blue.map(marker => ({
+          ...marker,
+          remainingTurns: marker.remainingTurns - 1
+        })).filter(marker => marker.remainingTurns > 0)
+      };
+
       const currentHand = state.hands[nextFaction];
       const tickResult = tickActiveCards(currentHand);
 
@@ -1126,6 +1201,8 @@ function createGameState() {
         cooldowns: nextCooldowns,
         energy: nextEnergy,
         revealTurns: newRevealTurns,
+        revealedAreas: tickedRevealedAreas,
+        enemyMarkers: tickedMarkers,
         turnHistory: [...state.turnHistory, { turn: state.turn, faction: state.currentFaction }],
         lastStatusMessages: statusMessages,
         lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges,
@@ -1823,6 +1900,188 @@ function createGameState() {
     setReveal: (duration) => update(/** @param {GameState} state */ state => ({
       ...state,
       revealTurns: duration
+    })),
+    /**
+     * @param {string} faction
+     * @param {number} x
+     * @param {number} y
+     * @param {number} radius
+     * @param {number} duration
+     */
+    addRevealedArea: (faction, x, y, radius, duration) => update(state => {
+      const newRevealedAreas = {
+        red: [...state.revealedAreas.red],
+        blue: [...state.revealedAreas.blue]
+      };
+
+      const existingIndex = newRevealedAreas[faction].findIndex(
+        area => Math.abs(area.x - x) <= 1 && Math.abs(area.y - y) <= 1 && area.radius === radius
+      );
+
+      if (existingIndex >= 0) {
+        newRevealedAreas[faction][existingIndex] = {
+          ...newRevealedAreas[faction][existingIndex],
+          remainingTurns: Math.max(newRevealedAreas[faction][existingIndex].remainingTurns, duration),
+          maxTurns: Math.max(newRevealedAreas[faction][existingIndex].maxTurns, duration)
+        };
+      } else {
+        newRevealedAreas[faction].push({
+          x,
+          y,
+          radius,
+          remainingTurns: duration,
+          maxTurns: duration,
+          faction
+        });
+      }
+
+      const enemyFaction = faction === 'red' ? 'blue' : 'red';
+      const newMarkers = {
+        red: [...state.enemyMarkers.red],
+        blue: [...state.enemyMarkers.blue]
+      };
+
+      const enemyUnits = state.units.filter(u => u.faction === enemyFaction);
+      for (const unit of enemyUnits) {
+        const distance = Math.abs(unit.x - x) + Math.abs(unit.y - y);
+        if (distance <= radius) {
+          const existingMarkerIndex = newMarkers[faction].findIndex(m => m.unitId === unit.id);
+          if (existingMarkerIndex >= 0) {
+            newMarkers[faction][existingMarkerIndex] = {
+              ...newMarkers[faction][existingMarkerIndex],
+              x: unit.x,
+              y: unit.y,
+              remainingTurns: Math.max(newMarkers[faction][existingMarkerIndex].remainingTurns, duration),
+              detailedInfo: true,
+              spottedTurn: state.turn
+            };
+          } else {
+            newMarkers[faction].push({
+              unitId: unit.id,
+              unitType: unit.type,
+              x: unit.x,
+              y: unit.y,
+              faction: enemyFaction,
+              spottedTurn: state.turn,
+              remainingTurns: duration,
+              detailedInfo: true
+            });
+          }
+        }
+      }
+
+      const factionName = faction === 'red' ? '红方' : '蓝方';
+      const revealDesc = `${factionName}在 (${x},${y}) 施放侦查，揭示半径 ${radius} 区域内敌军，持续 ${duration} 回合`;
+      const revealLog = {
+        id: `log_${Date.now()}_scout_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction,
+        type: /** @type {ActionLogType} */ ('card'),
+        description: revealDesc,
+        details: {
+          x,
+          y,
+          radius,
+          duration,
+          revealedCount: newMarkers[faction].length
+        },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, revealLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction,
+          actions: [revealLog]
+        });
+      }
+
+      return {
+        ...state,
+        revealedAreas: newRevealedAreas,
+        enemyMarkers: newMarkers,
+        actionLogs: newActionLogs,
+        lastActionLog: revealLog
+      };
+    }),
+    /**
+     * @param {string} faction
+     */
+    tickRevealedAreas: (faction) => update(state => {
+      const newRevealedAreas = {
+        red: state.revealedAreas.red.map(area => ({
+          ...area,
+          remainingTurns: area.remainingTurns - 1
+        })).filter(area => area.remainingTurns > 0),
+        blue: state.revealedAreas.blue.map(area => ({
+          ...area,
+          remainingTurns: area.remainingTurns - 1
+        })).filter(area => area.remainingTurns > 0)
+      };
+
+      const newMarkers = {
+        red: state.enemyMarkers.red.map(marker => ({
+          ...marker,
+          remainingTurns: marker.remainingTurns - 1
+        })).filter(marker => marker.remainingTurns > 0),
+        blue: state.enemyMarkers.blue.map(marker => ({
+          ...marker,
+          remainingTurns: marker.remainingTurns - 1
+        })).filter(marker => marker.remainingTurns > 0)
+      };
+
+      return {
+        ...state,
+        revealedAreas: newRevealedAreas,
+        enemyMarkers: newMarkers
+      };
+    }),
+    /**
+     * @param {string} faction
+     * @param {string} unitId
+     * @param {number} newX
+     * @param {number} newY
+     */
+    updateEnemyMarkerPosition: (faction, unitId, newX, newY) => update(state => {
+      const newMarkers = {
+        red: [...state.enemyMarkers.red],
+        blue: [...state.enemyMarkers.blue]
+      };
+
+      const markerIndex = newMarkers[faction].findIndex(m => m.unitId === unitId);
+      if (markerIndex >= 0) {
+        newMarkers[faction][markerIndex] = {
+          ...newMarkers[faction][markerIndex],
+          x: newX,
+          y: newY
+        };
+      }
+
+      return { ...state, enemyMarkers: newMarkers };
+    }),
+    /**
+     * @param {string} unitId
+     */
+    removeEnemyMarkersForUnit: (unitId) => update(state => {
+      const newMarkers = {
+        red: state.enemyMarkers.red.filter(m => m.unitId !== unitId),
+        blue: state.enemyMarkers.blue.filter(m => m.unitId !== unitId)
+      };
+      return { ...state, enemyMarkers: newMarkers };
+    }),
+    /**
+     * @param {boolean} enabled
+     */
+    setFogOfWar: (enabled) => update(state => ({
+      ...state,
+      fogOfWarEnabled: enabled
     })),
     /**
      * @param {number} x

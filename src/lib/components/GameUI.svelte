@@ -77,6 +77,11 @@
 
   $: combatPreview = getCombatPreview();
 
+  $: currentEnemyMarkers = state?.enemyMarkers?.[state.currentFaction] || [];
+  $: currentRevealedAreas = state?.revealedAreas?.[state.currentFaction] || [];
+  $: enemyUnitCount = state?.units?.filter(u => u.faction !== state?.currentFaction).length || 0;
+  $: totalEnemyPower = state?.units?.filter(u => u.faction !== state?.currentFaction).reduce((sum, u) => sum + (unitConfig[u.type]?.attack || 0), 0) || 0;
+
   let recordSaved = false;
   let showRoster = false;
   let rosterSaved = false;
@@ -842,6 +847,101 @@
           {/if}
         </div>
       {/each}
+    </div>
+  {/if}
+
+  {#if !state?.gameOver && (currentEnemyMarkers.length > 0 || currentRevealedAreas.length > 0 || state?.fogOfWarEnabled)}
+    <div class="enemy-intel-panel">
+      <div class="enemy-intel-header">
+        <span class="enemy-intel-title">👁️ 敌军情报</span>
+        <span class="enemy-intel-count">已标记 {currentEnemyMarkers.length}/{enemyUnitCount}</span>
+      </div>
+
+      {#if currentRevealedAreas.length > 0}
+        <div class="intel-section">
+          <div class="intel-section-title">📡 侦查区域</div>
+          {#each currentRevealedAreas as area (area.x + '_' + area.y)}
+            <div class="revealed-area-item">
+              <span class="area-icon">📍</span>
+              <span class="area-info">
+                <span class="area-pos">({area.x}, {area.y})</span>
+                <span class="area-radius">半径{area.radius}格</span>
+              </span>
+              <span class="area-duration" style="color: {area.remainingTurns <= 1 ? '#e74c3c' : '#3498db'}">
+                ⏱️ {area.remainingTurns}/{area.maxTurns}
+              </span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      {#if currentEnemyMarkers.length > 0}
+        <div class="intel-section">
+          <div class="intel-section-title">⚠️ 已标记敌军</div>
+          {#each currentEnemyMarkers as marker (marker.unitId)}
+            {@const unit = state.units.find(u => u.id === marker.unitId)}
+            {#if unit}
+              <div class="enemy-marker-item">
+                <span class="marker-icon">{getUnitIcon(unit.type)}</span>
+                <div class="marker-info">
+                  <div class="marker-header">
+                    <span class="marker-name">{getUnitName(unit.type)}</span>
+                    <span class="marker-faction" style="color: {getFactionColor(unit.faction)}">
+                      {getFactionName(unit.faction)}
+                    </span>
+                  </div>
+                  <div class="marker-details">
+                    <span class="marker-pos">位置: ({marker.x}, {marker.y})</span>
+                    <span class="marker-duration" style="color: {marker.remainingTurns <= 1 ? '#e74c3c' : '#3498db'}">
+                      ⏱️ {marker.remainingTurns}回合
+                    </span>
+                  </div>
+                  {#if marker.detailedInfo || state.revealTurns > 0}
+                    <div class="marker-stats">
+                      <div class="mini-stat">
+                        <span>❤️</span>
+                        <div class="mini-stat-bar">
+                          <div 
+                            class="mini-stat-fill hp" 
+                            style="width: {(unit.currentHp / unit.maxHp) * 100}%"
+                          ></div>
+                        </div>
+                        <span class="mini-stat-text">{unit.currentHp}/{unit.maxHp}</span>
+                      </div>
+                      <div class="mini-stat-row">
+                        <span class="mini-stat-badge">⚔️ {getEffectiveAttack(unit)}</span>
+                        <span class="mini-stat-badge">🛡️ {getEffectiveDefense(unit)}</span>
+                        <span class="mini-stat-badge">👟 {getUnitMoveRange(unit.type)}</span>
+                        <span class="mini-stat-badge">🎯 {getUnitAttackRange(unit.type)}</span>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          {/each}
+        </div>
+      {:else}
+        <div class="no-intel">
+          <span class="no-intel-icon">🔍</span>
+          <span class="no-intel-text">使用「侦查」卡获取敌军情报</span>
+        </div>
+      {/if}
+
+      <div class="intel-summary">
+        <div class="intel-summary-item">
+          <span class="summary-label">总敌军数</span>
+          <span class="summary-value">{enemyUnitCount}</span>
+        </div>
+        <div class="intel-summary-item">
+          <span class="summary-label">总战力</span>
+          <span class="summary-value">⚔️ {totalEnemyPower}</span>
+        </div>
+        <div class="intel-summary-item">
+          <span class="summary-label">侦查区域</span>
+          <span class="summary-value">📡 {currentRevealedAreas.length}</span>
+        </div>
+      </div>
     </div>
   {/if}
 
@@ -3005,4 +3105,243 @@
   .alloc-tag.hp { background: rgba(46,204,113,0.2); color: #2ecc71; }
   .alloc-tag.move { background: rgba(241,196,15,0.2); color: #f1c40f; }
   .alloc-tag.points { background: rgba(243,156,18,0.2); color: #f39c12; }
+
+  .enemy-intel-panel {
+    position: absolute;
+    left: 20px;
+    top: 110px;
+    width: 260px;
+    max-height: calc(100vh - 300px);
+    background: rgba(26, 26, 46, 0.95);
+    border: 2px solid #9b59b6;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: white;
+    z-index: 50;
+    overflow-y: auto;
+    pointer-events: auto;
+  }
+
+  .enemy-intel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #9b59b6;
+  }
+
+  .enemy-intel-title {
+    font-size: 14px;
+    font-weight: bold;
+    color: #9b59b6;
+  }
+
+  .enemy-intel-count {
+    font-size: 11px;
+    color: #bb8fce;
+    background: rgba(155, 89, 182, 0.2);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .intel-section {
+    margin-bottom: 10px;
+  }
+
+  .intel-section-title {
+    font-size: 11px;
+    font-weight: bold;
+    color: #8e44ad;
+    margin-bottom: 6px;
+    padding-bottom: 3px;
+    border-bottom: 1px dashed rgba(155, 89, 182, 0.3);
+  }
+
+  .revealed-area-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    background: rgba(155, 89, 182, 0.1);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-size: 11px;
+  }
+
+  .area-icon {
+    font-size: 12px;
+  }
+
+  .area-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  .area-pos {
+    font-weight: bold;
+    color: #ddd;
+  }
+
+  .area-radius {
+    font-size: 9px;
+    color: #888;
+  }
+
+  .area-duration {
+    font-size: 10px;
+    font-weight: bold;
+  }
+
+  .enemy-marker-item {
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    background: rgba(231, 76, 60, 0.08);
+    border: 1px solid rgba(231, 76, 60, 0.3);
+    border-radius: 6px;
+    margin-bottom: 6px;
+  }
+
+  .marker-icon {
+    font-size: 20px;
+    align-self: flex-start;
+  }
+
+  .marker-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .marker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+
+  .marker-name {
+    font-size: 12px;
+    font-weight: bold;
+    color: #e74c3c;
+  }
+
+  .marker-faction {
+    font-size: 10px;
+    font-weight: bold;
+  }
+
+  .marker-details {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+    color: #aaa;
+    margin-bottom: 6px;
+  }
+
+  .marker-pos {
+    color: #888;
+  }
+
+  .marker-duration {
+    font-weight: bold;
+  }
+
+  .marker-stats {
+    padding-top: 6px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  }
+
+  .mini-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .mini-stat-bar {
+    flex: 1;
+    height: 5px;
+    background: #333;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .mini-stat-fill {
+    height: 100%;
+    transition: width 0.3s;
+  }
+
+  .mini-stat-fill.hp {
+    background: linear-gradient(90deg, #e74c3c, #c0392b);
+  }
+
+  .mini-stat-text {
+    font-size: 9px;
+    color: #ccc;
+    min-width: 50px;
+    text-align: right;
+  }
+
+  .mini-stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .mini-stat-badge {
+    font-size: 9px;
+    padding: 1px 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    color: #bbb;
+  }
+
+  .no-intel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 10px;
+    color: #666;
+    text-align: center;
+  }
+
+  .no-intel-icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+    opacity: 0.5;
+  }
+
+  .no-intel-text {
+    font-size: 11px;
+  }
+
+  .intel-summary {
+    display: flex;
+    justify-content: space-around;
+    padding-top: 10px;
+    margin-top: 10px;
+    border-top: 2px solid rgba(155, 89, 182, 0.3);
+  }
+
+  .intel-summary-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .summary-label {
+    font-size: 9px;
+    color: #888;
+  }
+
+  .summary-value {
+    font-size: 14px;
+    font-weight: bold;
+    color: #9b59b6;
+  }
 </style>

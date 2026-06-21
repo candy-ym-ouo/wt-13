@@ -152,15 +152,28 @@ export const eventCards = [
   {
     id: 'reveal',
     name: '侦查',
-    category: CARD_CATEGORY.SUSTAIN,
+    category: CARD_CATEGORY.INSTANT,
     type: 'special',
-    description: '显示所有敌方单位的详细信息，持续 2 回合',
-    effect: { type: 'reveal', duration: 2 },
+    description: '在目标区域揭示半径 3 格内的敌军，标记敌方位置并显示详细信息，持续 3 回合',
+    effect: { type: 'reveal', duration: 3, radius: 3 },
     icon: '👁️',
     cost: 2,
     cooldown: 2,
     rarity: CARD_RARITY.BASIC,
     weight: 50
+  },
+  {
+    id: 'advanced_recon',
+    name: '深度侦查',
+    category: CARD_CATEGORY.INSTANT,
+    type: 'special',
+    description: '在目标区域揭示半径 5 格内的敌军，标记敌方位置并显示详细信息，持续 4 回合',
+    effect: { type: 'reveal', duration: 4, radius: 5 },
+    icon: '🔭',
+    cost: 4,
+    cooldown: 3,
+    rarity: CARD_RARITY.RARE,
+    weight: 20
   },
   {
     id: 'stun',
