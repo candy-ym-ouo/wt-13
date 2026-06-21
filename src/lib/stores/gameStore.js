@@ -3391,10 +3391,33 @@ function createGameState() {
         } else if (item.type === 'resource') {
           if (item.effect === 'gold_bonus_next_turn' && item.value) {
             newNextTurnGoldBonus[faction] = (newNextTurnGoldBonus[faction] || 0) + item.value;
+            /** @type {number} */
+            const val = item.value;
+            const moralePenalty = /** @type {number} */ (item.moraleCost || 0);
+            if (moralePenalty > 0) {
+              newUnits = newUnits.map(u => {
+                if (u.faction !== faction) return u;
+                const before = u.morale;
+                const after = clampMorale(before - moralePenalty);
+                if (before !== after) {
+                  moraleChanges.push({
+                    unitId: u.id,
+                    unitName: unitConfig[/** @type {UnitType} */ (u.type)].name,
+                    faction,
+                    before,
+                    after,
+                    delta: after - before,
+                    reason: `商店【${item.name}】军费压力`
+                  });
+                }
+                return { ...u, morale: after };
+              });
+            }
+            const msgTail = moralePenalty > 0 ? `，士气-${moralePenalty}` : '';
             newEconNotifications.push({
               id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
               type: 'purchase',
-              message: `🛒 购买【${item.name}】-${item.cost}金币，下回合额外+${item.value}金币`,
+              message: `🛒 购买【${item.name}】-${item.cost}金币，下回合额外+${val}金币${msgTail}`,
               amount: -item.cost,
               faction,
               turn: state.turn

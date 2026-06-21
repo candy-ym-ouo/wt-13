@@ -18,6 +18,13 @@ import { gameRules } from '$lib/config/gameRules';
  * @property {boolean} [isBase]
  * @property {string} [faction]
  * @property {string} type
+ * @property {boolean} [isCapturePoint]
+ * @property {number} [captureGoldPerTurn]
+ * @property {string} [icon]
+ * @property {number} [baseDurability]
+ * @property {number} [maxDurability]
+ * @property {number} [repairPerTurn]
+ * @property {number} [goldPerTurn]
  */
 
 /**
@@ -2328,6 +2335,7 @@ export function canMulligan(used) {
 
 /**
  * @typedef {object} CapturePointState
+ * @property {string} id
  * @property {number} x
  * @property {number} y
  * @property {string} type
@@ -2366,6 +2374,7 @@ export function createInitialCapturePoints(boardLayout) {
       const terrain = boardConfig.terrain[terrainType];
       if (terrain && terrain.isCapturePoint) {
         points.push({
+          id: `cp_${x}_${y}`,
           x,
           y,
           type: terrainType,

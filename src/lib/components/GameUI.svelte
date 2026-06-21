@@ -1253,15 +1253,18 @@
       </div>
       <div class="economy-info-grid">
         {#each ['red', 'blue'] as faction}
-          {@const captureCount = state.capturePoints.filter(cp => cp.owner === faction).length}
+          {@const captureCount = state.capturePoints.filter(cp => cp.ownerFaction === faction).length}
           {@const ownedBases = state.bases.filter(b => b.faction === faction).length}
           {@const unitCount = state.units.filter(u => u.faction === faction).length}
           {@const freeUnits = gameRules.economy.maintenanceFreeUnits}
           {@const payingUnits = Math.max(0, unitCount - freeUnits)}
           {@const maintenanceTotal = calculateMaintenanceCost(state.units, faction, state.maintenanceDiscountNextTurn[faction])}
+          {@const cpGoldSum = state.capturePoints
+            .filter(cp => cp.ownerFaction === faction)
+            .reduce((sum, cp) => sum + (cp.goldPerTurn || 0), 0)}
           {@const nextIncome = gameRules.economy.baseGoldPerTurn
             + ownedBases * gameRules.economy.goldPerSurvivingBase
-            + captureCount * gameRules.economy.capturePointGoldPerTurn
+            + cpGoldSum
             + (state.nextTurnGoldBonus[faction] || 0)}
           <div class="economy-faction-block" style="border-color: {getFactionColor(faction)}">
             <div class="economy-faction-name" style="color: {getFactionColor(faction)}">
@@ -1309,8 +1312,8 @@
                   <span class="cp-name">{cp.name} ({cp.x},{cp.y})</span>
                   <span class="cp-gold">+{cp.goldPerTurn}💰/回合</span>
                 </div>
-                <span class="cp-owner" style="color: {cp.owner ? getFactionColor(cp.owner) : '#999'}">
-                  {cp.owner ? getFactionName(cp.owner) : '中立'}
+                <span class="cp-owner" style="color: {cp.ownerFaction !== 'neutral' ? getFactionColor((/** @type {'red' | 'blue'} */ (cp.ownerFaction))) : '#999'}">
+                  {cp.ownerFaction !== 'neutral' ? getFactionName((/** @type {'red' | 'blue'} */ (cp.ownerFaction))) : '中立'}
                 </span>
               </div>
             {/each}

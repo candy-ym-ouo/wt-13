@@ -13,6 +13,7 @@
  * @property {string} [icon]
  * @property {number} [value]
  * @property {string} [effect]
+ * @property {number} [moraleCost]
  * @property {number} [cooldown]
  * @property {number} [maxPurchasesPerTurn]
  */
@@ -72,23 +73,24 @@ export const shopItems = [
   {
     id: 'repair_base',
     name: '修复基地',
-    type: 'repair',
+    type: 'resource',
     description: '立即恢复己方基地40点耐久',
     cost: 80,
     icon: '🔧',
     value: 40,
-    effect: 'repair_base',
+    effect: 'base_repair',
     maxPurchasesPerTurn: 2
   },
   {
     id: 'gold_infusion',
     name: '紧急筹款',
     type: 'resource',
-    description: '下回合额外获得50金币，但所有单位士气-5',
-    cost: 0,
+    description: '消耗20金币换取下回合额外50金币收入（单位士气-5）',
+    cost: 20,
     icon: '💸',
     value: 50,
-    effect: 'next_turn_gold_bonus',
+    effect: 'gold_bonus_next_turn',
+    moraleCost: 5,
     maxPurchasesPerTurn: 1
   },
   {

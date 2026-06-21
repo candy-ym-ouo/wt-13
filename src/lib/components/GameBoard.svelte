@@ -315,6 +315,68 @@
       }
     }
 
+    if (state && state.capturePoints && state.capturePoints.length > 0) {
+      for (const cp of state.capturePoints) {
+        const terrain = getTerrain(cp.x, cp.y, layout);
+        if (!terrain) continue;
+        const faction = cp.ownerFaction;
+
+        if (faction !== 'neutral') {
+          const ownerColor = faction === 'red' ? 0xc0392b : 0x2980b9;
+          const ownerBorder = new PIXI.Graphics();
+          ownerBorder.lineStyle(2.5, ownerColor, 0.85);
+          ownerBorder.drawRect(
+            cp.x * boardConfig.tileSize + 2,
+            cp.y * boardConfig.tileSize + 2,
+            boardConfig.tileSize - 4,
+            boardConfig.tileSize - 4
+          );
+          boardLayer.addChild(ownerBorder);
+
+          const ownerFlag = new PIXI.Graphics();
+          ownerFlag.beginFill(ownerColor, 0.22);
+          ownerFlag.drawRect(
+            cp.x * boardConfig.tileSize + 3,
+            cp.y * boardConfig.tileSize + 3,
+            boardConfig.tileSize - 6,
+            boardConfig.tileSize - 6
+          );
+          ownerFlag.endFill();
+          boardLayer.addChild(ownerFlag);
+        }
+
+        const labelBg = new PIXI.Graphics();
+        labelBg.beginFill(0x000000, 0.55);
+        labelBg.drawRoundedRect(
+          cp.x * boardConfig.tileSize + 3,
+          cp.y * boardConfig.tileSize + 3,
+          20,
+          11,
+          2
+        );
+        labelBg.endFill();
+        boardLayer.addChild(labelBg);
+
+        const cpIcon = new PIXI.Text(terrain.icon || '🏴', {
+          fontSize: 10
+        });
+        cpIcon.anchor.set(0.5);
+        cpIcon.x = cp.x * boardConfig.tileSize + 13;
+        cpIcon.y = cp.y * boardConfig.tileSize + 8.5;
+        boardLayer.addChild(cpIcon);
+
+        if (faction !== 'neutral') {
+          const mark = new PIXI.Text(faction === 'red' ? '🔴' : '🔵', {
+          fontSize: 8
+        });
+        mark.anchor.set(1, 0);
+        mark.x = cp.x * boardConfig.tileSize + boardConfig.tileSize - 4;
+        mark.y = cp.y * boardConfig.tileSize + 4;
+        boardLayer.addChild(mark);
+        }
+      }
+    }
+
     if (state && state.tileEffects) {
       for (const [key, effect] of Object.entries(state.tileEffects)) {
         const config = tileEffectConfig[effect.type];
