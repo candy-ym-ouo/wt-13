@@ -1,23 +1,43 @@
 <script>
 	import GameBoard from '$lib/components/GameBoard.svelte';
 	import GameUI from '$lib/components/GameUI.svelte';
+	import RoomLobby from '$lib/components/RoomLobby.svelte';
+	import RoomPanel from '$lib/components/RoomPanel.svelte';
 	import { seasonStore } from '$lib/stores/seasonStore.js';
+	import { roomStore, isInRoom, isPlaying } from '$lib/stores/roomStore.js';
 	import { RANK_TIERS, RANK_SUB_TIERS } from '$lib/config/seasonConfig.js';
 	/** @typedef {import('$lib/config/seasonConfig.js').RankTier} RankTier */
 	/** @typedef {import('$lib/config/seasonConfig.js').RankSubTier} RankSubTier */
 	
-	let showMainMenu = true;
-	
-	function enterGame() {
-		showMainMenu = false;
+	/** @type {'menu' | 'solo' | 'multiplayer' | 'playing'} */
+	let viewMode = 'menu';
+
+	function enterSoloGame() {
+		viewMode = 'solo';
 	}
-	
+
+	function enterMultiplayer() {
+		viewMode = 'multiplayer';
+	}
+
 	function enterLegion() {
 		window.location.href = '/legion';
 	}
 
 	function enterSeason() {
 		window.location.href = '/season';
+	}
+
+	function goBackToMenu() {
+		viewMode = 'menu';
+	}
+
+	$: if (viewMode === 'multiplayer' && $isPlaying) {
+		viewMode = 'playing';
+	}
+
+	$: if (viewMode === 'playing' && !$isInRoom) {
+		viewMode = 'menu';
 	}
 
 	/**
@@ -33,15 +53,18 @@
 	}
 </script>
 
-{#if showMainMenu}
+{#if viewMode === 'menu'}
 	<div class="main-menu">
 		<div class="menu-content">
 			<h1 class="game-title">⚔️ 战棋军团</h1>
 			<p class="game-subtitle">战术策略 · 军团养成 · 卡牌对决</p>
 			
 			<div class="menu-buttons">
-				<button class="menu-btn primary" on:click={enterGame}>
-					🎮 开始战斗
+				<button class="menu-btn primary" on:click={enterSoloGame}>
+					🎮 单人战斗
+				</button>
+				<button class="menu-btn multiplayer" on:click={enterMultiplayer}>
+					⚔️ 多人对战
 				</button>
 				<button class="menu-btn secondary" on:click={enterLegion}>
 					🏰 军团养成
@@ -78,11 +101,23 @@
 					<p>多种阵容自由组合，发挥协同作战威力</p>
 				</div>
 				<div class="feature">
-					<span class="feature-icon">�</span>
+					<span class="feature-icon">🏅</span>
 					<h3>赛季天梯</h3>
 					<p>积分对决、段位晋升、赛季重置，攀登巅峰</p>
 				</div>
 			</div>
+		</div>
+	</div>
+{:else if viewMode === 'multiplayer'}
+	<div class="multiplayer-screen">
+		<RoomLobby />
+	</div>
+{:else if viewMode === 'playing'}
+	<div class="game-container multiplayer-game">
+		<GameUI />
+		<GameBoard />
+		<div class="room-panel-wrapper">
+			<RoomPanel />
 		</div>
 	</div>
 {:else}
@@ -245,6 +280,41 @@
 		line-height: 1.5;
 	}
 	
+	.menu-btn.multiplayer {
+		background: linear-gradient(135deg, #9b59b6, #8e44ad);
+		color: white;
+		box-shadow: 0 6px 20px rgba(155, 89, 182, 0.4);
+	}
+
+	.menu-btn.multiplayer:hover {
+		transform: translateY(-3px);
+		box-shadow: 0 10px 30px rgba(155, 89, 182, 0.6);
+	}
+
+	.multiplayer-screen {
+		width: 100vw;
+		height: 100vh;
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 50%, #16213e 100%);
+		color: #fff;
+		overflow: auto;
+		padding-top: 40px;
+	}
+
+	.multiplayer-game {
+		position: relative;
+	}
+
+	.room-panel-wrapper {
+		position: fixed;
+		top: 10px;
+		right: 10px;
+		width: 280px;
+		z-index: 100;
+	}
+
 	.game-container {
 		width: 100vw;
 		height: 100vh;
@@ -276,6 +346,10 @@
 		
 		.menu-features {
 			grid-template-columns: 1fr;
+		}
+
+		.room-panel-wrapper {
+			width: 220px;
 		}
 	}
 </style>
