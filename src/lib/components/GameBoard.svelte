@@ -6,38 +6,40 @@
   import { gameRules } from '$lib/config/gameRules';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTargetId } from '$lib/stores/gameStore';
   import {
-    getTerrain,
-    getMoveRange,
-    getAttackRange,
-    getAttackRangeTiles,
-    getEnemyMoveAttackCoverage,
-    getCounterThreatAtPosition,
-    buildFullThreatMap,
-    findPath,
-    calculateDamage,
-    getUnitAt,
-    checkVictory,
-    getMoraleTier,
-    getBaseAt,
-    isHardCC,
-    hasStatusEffect,
-    getStatusEffect,
-    getEffectiveMoveRange,
-    getCounterInfo,
-    getTileEffectAt,
-    calculateCombatPreview,
-    checkSummonFeasibility,
-    findSummonPosition,
-    validateSummonTile,
-    getMoveSkillForUnit,
-    getHaltStationaryBonus,
-    normalizeCounterType,
-    getCounterTypeInfo,
-    isWithinDeploymentZone,
-    validateDeploymentPosition,
-    getDeploymentZoneTiles,
-    getValidDeploymentPositions
-  } from '$lib/utils/gameLogic';
+  getTerrain,
+  getMoveRange,
+  getAttackRange,
+  getAttackRangeTiles,
+  getEnemyMoveAttackCoverage,
+  getCounterThreatAtPosition,
+  buildFullThreatMap,
+  findPath,
+  calculateDamage,
+  getUnitAt,
+  checkVictory,
+  getMoraleTier,
+  getBaseAt,
+  isHardCC,
+  hasStatusEffect,
+  getStatusEffect,
+  getEffectiveMoveRange,
+  getCounterInfo,
+  getTileEffectAt,
+  calculateCombatPreview,
+  checkSummonFeasibility,
+  findSummonPosition,
+  validateSummonTile,
+  getMoveSkillForUnit,
+  getHaltStationaryBonus,
+  normalizeCounterType,
+  getCounterTypeInfo,
+  isWithinDeploymentZone,
+  validateDeploymentPosition,
+  getDeploymentZoneTiles,
+  getValidDeploymentPositions,
+  calculateFactionVision,
+  getSightRange
+} from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard, canUseSummonCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
 
@@ -441,40 +443,38 @@
 
     /** @type {'red' | 'blue'} */
     const currentFaction = /** @type {'red' | 'blue'} */ (state.currentFaction);
-    const revealedAreas = state.revealedAreas[currentFaction];
-    const friendlyUnits = state.units.filter(/** @param {import('../stores/gameStore').Unit} u */ u => u.faction === currentFaction);
+    const layout = state.boardLayout || null;
+    const visionTiles = calculateFactionVision(
+      state.units,
+      currentFaction,
+      layout,
+      state.revealedAreas[currentFaction]
+    );
     const enemyMarkers = state.enemyMarkers[currentFaction];
+
+    const revealedTileSet = new Set();
+    for (const area of state.revealedAreas[currentFaction]) {
+      for (let dy = -area.radius; dy <= area.radius; dy++) {
+        for (let dx = -area.radius; dx <= area.radius; dx++) {
+          const distance = Math.abs(dx) + Math.abs(dy);
+          if (distance > area.radius) continue;
+          const x = area.x + dx;
+          const y = area.y + dy;
+          if (x >= 0 && x < boardConfig.width && y >= 0 && y < boardConfig.height) {
+            revealedTileSet.add(`${x},${y}`);
+          }
+        }
+      }
+    }
 
     for (let y = 0; y < boardConfig.height; y++) {
       for (let x = 0; x < boardConfig.width; x++) {
-        let isRevealed = false;
-        let revealIntensity = 0;
+        const key = `${x},${y}`;
+        const isVisible = visionTiles.has(key);
+        const isRevealed = revealedTileSet.has(key);
+        const hasMarker = enemyMarkers.some(m => m.x === x && m.y === y);
 
-        for (const unit of friendlyUnits) {
-          const distance = Math.abs(unit.x - x) + Math.abs(unit.y - y);
-          const sightRange = 2;
-          if (distance <= sightRange) {
-            isRevealed = true;
-            revealIntensity = Math.max(revealIntensity, 1 - distance / (sightRange + 1));
-          }
-        }
-
-        for (const area of revealedAreas) {
-          const distance = Math.abs(area.x - x) + Math.abs(area.y - y);
-          if (distance <= area.radius) {
-            isRevealed = true;
-            const areaIntensity = area.remainingTurns / area.maxTurns;
-            revealIntensity = Math.max(revealIntensity, areaIntensity * 0.8);
-          }
-        }
-
-        const hasMarker = enemyMarkers.some(/** @param {import('../stores/gameStore').EnemyMarker} m */ m => m.x === x && m.y === y);
-        if (hasMarker) {
-          revealIntensity = Math.max(revealIntensity, 0.6);
-          isRevealed = true;
-        }
-
-        if (!isRevealed) {
+        if (!isVisible && !isRevealed && !hasMarker) {
           const fogTile = new PIXI.Graphics();
           fogTile.beginFill(0x0a0a1a, 0.85);
           fogTile.drawRect(
@@ -485,20 +485,17 @@
           );
           fogTile.endFill();
           fogLayer.addChild(fogTile);
-        } else if (revealIntensity < 1) {
+        } else if (!isVisible && (isRevealed || hasMarker)) {
           const fogTile = new PIXI.Graphics();
-          const alpha = 0.85 * (1 - revealIntensity);
-          if (alpha > 0.1) {
-            fogTile.beginFill(0x1a1a2e, alpha);
-            fogTile.drawRect(
-              x * boardConfig.tileSize,
-              y * boardConfig.tileSize,
-              boardConfig.tileSize,
-              boardConfig.tileSize
-            );
-            fogTile.endFill();
-            fogLayer.addChild(fogTile);
-          }
+          fogTile.beginFill(0x1a1a2e, 0.6);
+          fogTile.drawRect(
+            x * boardConfig.tileSize,
+            y * boardConfig.tileSize,
+            boardConfig.tileSize,
+            boardConfig.tileSize
+          );
+          fogTile.endFill();
+          fogLayer.addChild(fogTile);
         }
       }
     }
@@ -884,7 +881,26 @@
     unitSprites.clear();
     unitsLayer.removeChildren();
 
+    /** @type {'red' | 'blue'} */
+    const currentFaction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    const layout = state.boardLayout || null;
+    const visionTiles = state.fogOfWarEnabled
+      ? calculateFactionVision(
+          state.units,
+          currentFaction,
+          layout,
+          state.revealedAreas[currentFaction]
+        )
+      : null;
+
     for (const unit of state.units) {
+      const isEnemy = unit.faction !== currentFaction;
+      if (isEnemy && state.fogOfWarEnabled && visionTiles) {
+        const key = `${unit.x},${unit.y}`;
+        if (!visionTiles.has(key)) {
+          continue;
+        }
+      }
       const sprite = createUnitSprite(unit);
       unitsLayer.addChild(sprite);
       unitSprites.set(unit.id, sprite);
@@ -1719,6 +1735,21 @@
             /** @param {any} t */
             t => t.x === tx && t.y === ty
           );
+          if (canAttack && state.fogOfWarEnabled) {
+            const layout = state.boardLayout || null;
+            /** @type {'red' | 'blue'} */
+            const fact = /** @type {'red' | 'blue'} */ (state.currentFaction);
+            const visionTiles = calculateFactionVision(
+              state.units,
+              fact,
+              layout,
+              state.revealedAreas[fact]
+            );
+            if (!visionTiles.has(`${tx},${ty}`)) {
+              gameState.setMessage('目标在视野外，无法攻击！');
+              return;
+            }
+          }
           if (canAttack) {
             previewTargetId.set(null);
             doAttack(selectedUnitData, clickedUnit);

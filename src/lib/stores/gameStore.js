@@ -44,7 +44,10 @@ import {
   calculateMaintenanceCost,
   findSummonPosition,
   checkSummonFeasibility,
-  getCapturePointAt
+  getCapturePointAt,
+  calculateFactionVision,
+  updateEnemyMarkers,
+  getSightRange
 } from '$lib/utils/gameLogic';
 
 /**
@@ -933,19 +936,48 @@ function createGameState() {
         });
       }
 
-      const enemyFaction = unitFaction === 'red' ? 'blue' : 'red';
-      const updatedMarkers = {
-        red: [...state.enemyMarkers.red],
-        blue: [...state.enemyMarkers.blue]
-      };
-      const markerIndex = updatedMarkers[enemyFaction].findIndex(m => m.unitId === unitId);
-      if (markerIndex >= 0) {
-        updatedMarkers[enemyFaction][markerIndex] = {
-          ...updatedMarkers[enemyFaction][markerIndex],
-          x,
-          y
-        };
+      const layout = state.boardLayout || null;
+      const faction = /** @type {'red' | 'blue'} */ (unitFaction);
+
+      const vision = calculateFactionVision(
+        filteredUnits,
+        faction,
+        layout,
+        state.revealedAreas[faction]
+      );
+
+      const markerUpdateResult = updateEnemyMarkers(
+        filteredUnits,
+        faction,
+        vision,
+        state.enemyMarkers[faction],
+        state.turn
+      );
+
+      if (markerUpdateResult.messages.length > 0) {
+        statusMsgs.push(...markerUpdateResult.messages);
       }
+
+      const updatedMarkers = {
+        red: faction === 'red' ? markerUpdateResult.markers : state.enemyMarkers.red,
+        blue: faction === 'blue' ? markerUpdateResult.markers : state.enemyMarkers.blue
+      };
+
+      const enemyFaction = unitFaction === 'red' ? 'blue' : 'red';
+      const enemyVision = calculateFactionVision(
+        filteredUnits,
+        enemyFaction,
+        layout,
+        state.revealedAreas[enemyFaction]
+      );
+      const enemyMarkerUpdate = updateEnemyMarkers(
+        filteredUnits,
+        enemyFaction,
+        enemyVision,
+        state.enemyMarkers[enemyFaction],
+        state.turn
+      );
+      updatedMarkers[enemyFaction] = enemyMarkerUpdate.markers;
 
       return {
         ...state,
@@ -1568,16 +1600,47 @@ function createGameState() {
         })).filter(area => area.remainingTurns > 0)
       };
 
+      const layout = state.boardLayout || null;
+
+      const redVision = calculateFactionVision(
+        units,
+        'red',
+        layout,
+        tickedRevealedAreas.red
+      );
+      const blueVision = calculateFactionVision(
+        units,
+        'blue',
+        layout,
+        tickedRevealedAreas.blue
+      );
+
+      const redMarkerResult = updateEnemyMarkers(
+        units,
+        'red',
+        redVision,
+        state.enemyMarkers.red,
+        newTurn
+      );
+      const blueMarkerResult = updateEnemyMarkers(
+        units,
+        'blue',
+        blueVision,
+        state.enemyMarkers.blue,
+        newTurn
+      );
+
       const tickedMarkers = {
-        red: state.enemyMarkers.red.map(marker => ({
-          ...marker,
-          remainingTurns: marker.remainingTurns - 1
-        })).filter(marker => marker.remainingTurns > 0),
-        blue: state.enemyMarkers.blue.map(marker => ({
-          ...marker,
-          remainingTurns: marker.remainingTurns - 1
-        })).filter(marker => marker.remainingTurns > 0)
+        red: redMarkerResult.markers,
+        blue: blueMarkerResult.markers
       };
+
+      if (redMarkerResult.messages.length > 0) {
+        statusMessages.push(...redMarkerResult.messages);
+      }
+      if (blueMarkerResult.messages.length > 0) {
+        statusMessages.push(...blueMarkerResult.messages);
+      }
 
       const currentHand = state.hands[nextFaction];
       const tickResult = tickActiveCards(currentHand);

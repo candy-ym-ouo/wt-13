@@ -2627,3 +2627,251 @@ export function getCapturePointAt(capturePoints, x, y) {
   return capturePoints.find(p => p.x === x && p.y === y) || null;
 }
 
+/**
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @returns {number}
+ */
+export function getSightRange(unit, unitType) {
+  const config = unitConfig[unitType];
+  let sightRange = config.sightRange || 2;
+
+  const allocatedStats = unit.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 };
+  const growth = /** @type {any} */ (gameRules.experience?.statGrowth) || {};
+  if (growth.sight && allocatedStats.move) {
+    sightRange += Math.floor(allocatedStats.move * growth.sight);
+  }
+
+  if (unit.specialization) {
+    const spec = SPECIALIZATION_CONFIG[unitType]?.find(s => s.id === unit.specialization);
+    const bonuses = /** @type {any} */ (spec?.bonuses);
+    if (bonuses?.sightRange) sightRange += bonuses.sightRange;
+  }
+
+  if (unit.buffs) {
+    for (const buff of unit.buffs) {
+      if (buff.type === 'sightBoost') {
+        sightRange += /** @type {number} */ (buff.value);
+      }
+    }
+  }
+
+  return Math.max(1, sightRange);
+}
+
+/**
+ * @param {{x: number, y: number}} from
+ * @param {{x: number, y: number}} to
+ * @param {number} maxRange
+ * @param {string[][] | null} [boardLayout]
+ * @returns {boolean}
+ */
+export function hasLineOfSight(from, to, maxRange, boardLayout) {
+  const distance = Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
+  if (distance > maxRange) return false;
+  if (distance === 0) return true;
+
+  const layout = boardLayout || boardConfig.layout;
+  const dx = Math.sign(to.x - from.x);
+  const dy = Math.sign(to.y - from.y);
+
+  let x = from.x;
+  let y = from.y;
+
+  while (x !== to.x || y !== to.y) {
+    if (x !== from.x || y !== from.y) {
+      const terrain = getTerrain(x, y, layout);
+      if (terrain && /** @type {any} */ (terrain).blocksSight) {
+        return false;
+      }
+    }
+
+    if (x !== to.x) x += dx;
+    else if (y !== to.y) y += dy;
+  }
+
+  return true;
+}
+
+/**
+ * @param {Unit} unit
+ * @param {string[][] | null} [boardLayout]
+ * @returns {{x: number, y: number, distance: number}[]}
+ */
+export function calculateUnitVision(unit, boardLayout) {
+  const unitType = /** @type {UnitType} */ (unit.type);
+  const sightRange = getSightRange(unit, unitType);
+  const layout = boardLayout || boardConfig.layout;
+
+  /** @type {{x: number, y: number, distance: number}[]} */
+  const visible = [];
+
+  for (let dy = -sightRange; dy <= sightRange; dy++) {
+    for (let dx = -sightRange; dx <= sightRange; dx++) {
+      const distance = Math.abs(dx) + Math.abs(dy);
+      if (distance === 0 || distance > sightRange) continue;
+
+      const x = unit.x + dx;
+      const y = unit.y + dy;
+
+      if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) continue;
+
+      const terrain = getTerrain(x, y, layout);
+      if (!terrain || terrain.passable === false) continue;
+
+      if (hasLineOfSight({ x: unit.x, y: unit.y }, { x, y }, sightRange, layout)) {
+        visible.push({ x, y, distance });
+      }
+    }
+  }
+
+  return visible;
+}
+
+/**
+ * @param {Unit[]} units
+ * @param {string} faction
+ * @param {string[][] | null} [boardLayout]
+ * @param {{x: number, y: number, radius: number, remainingTurns: number}[]} [revealedAreas]
+ * @returns {Set<string>}
+ */
+export function calculateFactionVision(units, faction, boardLayout, revealedAreas) {
+  const visibleTiles = new Set();
+  const layout = boardLayout || boardConfig.layout;
+
+  const factionUnits = units.filter(u => u.faction === faction && u.currentHp > 0);
+
+  for (const unit of factionUnits) {
+    visibleTiles.add(`${unit.x},${unit.y}`);
+    const vision = calculateUnitVision(unit, layout);
+    for (const tile of vision) {
+      visibleTiles.add(`${tile.x},${tile.y}`);
+    }
+  }
+
+  if (revealedAreas && revealedAreas.length > 0) {
+    for (const area of revealedAreas) {
+      for (let dy = -area.radius; dy <= area.radius; dy++) {
+        for (let dx = -area.radius; dx <= area.radius; dx++) {
+          const distance = Math.abs(dx) + Math.abs(dy);
+          if (distance > area.radius) continue;
+          const x = area.x + dx;
+          const y = area.y + dy;
+          if (x >= 0 && x < boardConfig.width && y >= 0 && y < boardConfig.height) {
+            visibleTiles.add(`${x},${y}`);
+          }
+        }
+      }
+    }
+  }
+
+  return visibleTiles;
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {Set<string>} visibleTiles
+ * @returns {boolean}
+ */
+export function isTileVisible(x, y, visibleTiles) {
+  return visibleTiles.has(`${x},${y}`);
+}
+
+/**
+ * @param {Unit} unit
+ * @param {Set<string>} visibleTiles
+ * @returns {boolean}
+ */
+export function isUnitVisible(unit, visibleTiles) {
+  return visibleTiles.has(`${unit.x},${unit.y}`);
+}
+
+/**
+ * @typedef {object} EnemyMarkerUpdateResult
+ * @property {import('../stores/gameStore').EnemyMarker[]} markers
+ * @property {string[]} messages
+ */
+
+/**
+ * @param {Unit[]} units
+ * @param {string} observerFaction
+ * @param {Set<string>} visibleTiles
+ * @param {import('../stores/gameStore').EnemyMarker[]} existingMarkers
+ * @param {number} currentTurn
+ * @returns {EnemyMarkerUpdateResult}
+ */
+export function updateEnemyMarkers(units, observerFaction, visibleTiles, existingMarkers, currentTurn) {
+  const enemyFaction = observerFaction === 'red' ? 'blue' : 'red';
+  const enemyUnits = units.filter(u => u.faction === enemyFaction && u.currentHp > 0);
+
+  /** @type {import('../stores/gameStore').EnemyMarker[]} */
+  const newMarkers = [];
+  /** @type {string[]} */
+  const messages = [];
+
+  for (const enemy of enemyUnits) {
+    const key = `${enemy.x},${enemy.y}`;
+    const isVisible = visibleTiles.has(key);
+
+    const existingMarker = existingMarkers.find(m => m.unitId === enemy.id);
+
+    if (isVisible) {
+      newMarkers.push({
+        unitId: enemy.id,
+        unitType: enemy.type,
+        x: enemy.x,
+        y: enemy.y,
+        faction: enemy.faction,
+        spottedTurn: currentTurn,
+        remainingTurns: existingMarker ? Math.max(existingMarker.remainingTurns, 2) : 2,
+        detailedInfo: true
+      });
+
+      if (!existingMarker) {
+        const unitName = unitConfig[/** @type {UnitType} */ (enemy.type)].name;
+        const factionName = observerFaction === 'red' ? '蓝方' : '红方';
+        messages.push(`【侦察发现】${factionName}${unitName} 位置暴露 (${enemy.x},${enemy.y})`);
+      }
+    } else if (existingMarker) {
+      newMarkers.push({
+        ...existingMarker,
+        x: enemy.x,
+        y: enemy.y,
+        remainingTurns: existingMarker.remainingTurns - 1,
+        detailedInfo: false
+      });
+    }
+  }
+
+  const filteredMarkers = newMarkers.filter(m => m.remainingTurns > 0);
+
+  return { markers: filteredMarkers, messages };
+}
+
+/**
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @param {string[][] | null} [boardLayout]
+ * @returns {number}
+ */
+export function getEffectiveSightRange(unit, unitType, boardLayout) {
+  const baseSight = getSightRange(unit, unitType);
+  const layout = boardLayout || boardConfig.layout;
+  const terrain = getTerrain(unit.x, unit.y, layout);
+
+  let effectiveSight = baseSight;
+
+  if (terrain) {
+    const terrainAny = /** @type {any} */ (terrain);
+    if (terrainAny.sightBonus) {
+      effectiveSight += terrainAny.sightBonus;
+    }
+    if (terrainAny.sightPenalty) {
+      effectiveSight -= terrainAny.sightPenalty;
+    }
+  }
+
+  return Math.max(1, effectiveSight);
+}
+
