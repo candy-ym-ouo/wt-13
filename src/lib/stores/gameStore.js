@@ -27,6 +27,9 @@ import {
   resolveCounterAttack,
   getCounterTypeForDefender,
   getTerrain,
+  normalizeCounterType,
+  getCounterTypeInfo,
+  getCounterTypeRules,
   checkTimeoutVictory,
   calculateScoreSettlement,
   getMoveSkillForUnit,
@@ -648,33 +651,31 @@ function createGameState() {
       const defTerrain = defender ? getTerrain(defender.x, defender.y, layout) : null;
 
       const defenderWillDie = !hasShield && defender && defender.currentHp - finalDamage <= 0;
-      const counterResult = (attacker && defender)
+      const rawCounterResult = (attacker && defender)
         ? resolveCounterAttack(attacker, defender, atkTerrain, !!defenderWillDie)
-        : {
-            counterType: COUNTER_TYPES.NONE,
-            willCounter: false,
-            counterDamage: 0,
-            counterWillKill: false,
-            attackerRemainingHp: attacker?.currentHp || 0,
-            counterShieldBlocked: false,
-            counterStatusApplied: false,
-            counterStatusType: null,
-            counterStatusDuration: 0
-          };
+        : null;
+      const counterResult = rawCounterResult || {
+        counterType: COUNTER_TYPES.NONE,
+        willCounter: false,
+        counterDamage: 0,
+        counterWillKill: false,
+        attackerRemainingHp: attacker?.currentHp || 0,
+        counterShieldBlocked: false,
+        counterStatusApplied: false,
+        counterStatusType: null,
+        counterStatusDuration: 0
+      };
 
       let counterDamage = counterResult.willCounter ? counterResult.counterDamage : 0;
       let counterShieldBlocked = counterResult.counterShieldBlocked;
-      const counterType = counterResult.counterType;
-      const counterTypeInfo = COUNTER_TYPE_INFO[counterType];
+      const counterType = normalizeCounterType(counterResult.counterType);
+      const counterTypeInfo = getCounterTypeInfo(counterType);
 
       /** @type {MoraleChange[]} */
       const moraleChanges = [];
 
       const clampMorale = (/** @type {number} */ v) =>
         Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, v));
-
-      /** @type {{unitId: string, statusType: string, duration: number, value?: number}[]} */
-      const counterStatusQueue = [];
 
       let updatedUnits = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === attackerId) {

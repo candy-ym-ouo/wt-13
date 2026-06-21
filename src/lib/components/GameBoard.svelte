@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import * as PIXI from 'pixi.js';
   import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
-  import { unitConfig, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO } from '$lib/config/unitConfig';
+  import { unitConfig, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTargetId } from '$lib/stores/gameStore';
   import {
@@ -30,7 +30,9 @@
     findSummonPosition,
     validateSummonTile,
     getMoveSkillForUnit,
-    getHaltStationaryBonus
+    getHaltStationaryBonus,
+    normalizeCounterType,
+    getCounterTypeInfo
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard, canUseSummonCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
@@ -1312,8 +1314,8 @@
           defTerrain || undefined,
           atkTerrain || undefined
         );
-        const counterType = preview.counterType || COUNTER_TYPES.NONE;
-        const counterTypeInfo = COUNTER_TYPE_INFO[counterType];
+        const counterType = normalizeCounterType(preview.counterType);
+        const counterTypeInfo = getCounterTypeInfo(counterType);
 
         if (counterType === COUNTER_TYPES.MELEE) {
           const counterIcon = new PIXI.Text('↩', {
@@ -1886,8 +1888,8 @@
 
     const preview = calculateCombatPreview(attacker, defender, defTerrain || undefined, atkTerrain || undefined);
     const willCounter = preview.willCounter;
-    const counterType = preview.counterType || COUNTER_TYPES.NONE;
-    const counterTypeInfo = COUNTER_TYPE_INFO[counterType];
+    const counterType = normalizeCounterType(preview.counterType);
+    const counterTypeInfo = getCounterTypeInfo(counterType);
     const counterDmg = willCounter ? preview.counterDamage : 0;
     const counterShielded = willCounter && attacker.buffs?.some(
       /** @param {any} b */ b => b.type === 'shield'
