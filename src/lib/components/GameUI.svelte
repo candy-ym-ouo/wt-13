@@ -77,10 +77,54 @@
 
   $: combatPreview = getCombatPreview();
 
-  $: currentEnemyMarkers = state?.enemyMarkers?.[state.currentFaction] || [];
-  $: currentRevealedAreas = state?.revealedAreas?.[state.currentFaction] || [];
-  $: enemyUnitCount = state?.units?.filter(u => u.faction !== state?.currentFaction).length || 0;
-  $: totalEnemyPower = state?.units?.filter(u => u.faction !== state?.currentFaction).reduce((sum, u) => sum + (unitConfig[u.type]?.attack || 0), 0) || 0;
+  $: currentEnemyMarkers = getCurrentEnemyMarkers();
+  $: currentRevealedAreas = getCurrentRevealedAreas();
+  $: enemyUnitCount = getEnemyUnitCount();
+  $: totalEnemyPower = getTotalEnemyPower();
+
+  /** @returns {import('../stores/gameStore').EnemyMarker[]} */
+  function getCurrentEnemyMarkers() {
+    if (!state) return [];
+    /** @type {'red' | 'blue'} */
+    const faction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    return state.enemyMarkers[faction] || [];
+  }
+
+  /** @returns {import('../stores/gameStore').RevealedArea[]} */
+  function getCurrentRevealedAreas() {
+    if (!state) return [];
+    /** @type {'red' | 'blue'} */
+    const faction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    return state.revealedAreas[faction] || [];
+  }
+
+  function getEnemyUnitCount() {
+    if (!state) return 0;
+    /** @type {'red' | 'blue'} */
+    const faction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    return state.units.filter(/** @param {import('../stores/gameStore').Unit} u */ u => u.faction !== faction).length;
+  }
+
+  function getTotalEnemyPower() {
+    if (!state) return 0;
+    /** @type {'red' | 'blue'} */
+    const faction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    return state.units
+      .filter(/** @param {import('../stores/gameStore').Unit} u */ u => u.faction !== faction)
+      .reduce((sum, u) => {
+        const cfg = unitConfig[/** @type {import('../stores/gameStore').UnitType} */ (u.type)];
+        return sum + (cfg?.attack || 0);
+      }, 0);
+  }
+
+  /**
+   * @param {string} unitId
+   * @returns {import('../stores/gameStore').Unit | undefined}
+   */
+  function getUnitById(unitId) {
+    if (!state) return undefined;
+    return state.units.find(/** @param {import('../stores/gameStore').Unit} u */ u => u.id === unitId);
+  }
 
   let recordSaved = false;
   let showRoster = false;
@@ -850,7 +894,7 @@
     </div>
   {/if}
 
-  {#if !state?.gameOver && (currentEnemyMarkers.length > 0 || currentRevealedAreas.length > 0 || state?.fogOfWarEnabled)}
+  {#if state && !state.gameOver && (currentEnemyMarkers.length > 0 || currentRevealedAreas.length > 0 || state.fogOfWarEnabled)}
     <div class="enemy-intel-panel">
       <div class="enemy-intel-header">
         <span class="enemy-intel-title">👁️ 敌军情报</span>
@@ -879,7 +923,7 @@
         <div class="intel-section">
           <div class="intel-section-title">⚠️ 已标记敌军</div>
           {#each currentEnemyMarkers as marker (marker.unitId)}
-            {@const unit = state.units.find(u => u.id === marker.unitId)}
+            {@const unit = getUnitById(marker.unitId)}
             {#if unit}
               <div class="enemy-marker-item">
                 <span class="marker-icon">{getUnitIcon(unit.type)}</span>

@@ -66,6 +66,23 @@
 
   /** @type {Map<string, any>} */
   const unitSprites = new Map();
+
+  /**
+   * @param {string} type
+   * @returns {string}
+   */
+  function getUnitIcon(type) {
+    /** @type {Record<string, string>} */
+    const icons = {
+      infantry: '⚔️',
+      cavalry: '🐴',
+      archer: '🏹',
+      mage: '🔮',
+      tank: '🛡️'
+    };
+    return icons[type] || '❓';
+  }
+
   /** @type {any[]} */
   let moveHighlights = [];
   /** @type {any[]} */
@@ -339,10 +356,11 @@
     if (!fogLayer || !state || !state.fogOfWarEnabled) return;
     fogLayer.removeChildren();
 
-    const currentFaction = state.currentFaction;
-    const revealedAreas = state.revealedAreas[currentFaction] || [];
-    const friendlyUnits = state.units.filter(u => u.faction === currentFaction);
-    const enemyMarkers = state.enemyMarkers[currentFaction] || [];
+    /** @type {'red' | 'blue'} */
+    const currentFaction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    const revealedAreas = state.revealedAreas[currentFaction];
+    const friendlyUnits = state.units.filter(/** @param {import('../stores/gameStore').Unit} u */ u => u.faction === currentFaction);
+    const enemyMarkers = state.enemyMarkers[currentFaction];
 
     for (let y = 0; y < boardConfig.height; y++) {
       for (let x = 0; x < boardConfig.width; x++) {
@@ -367,7 +385,7 @@
           }
         }
 
-        const hasMarker = enemyMarkers.some(m => m.x === x && m.y === y);
+        const hasMarker = enemyMarkers.some(/** @param {import('../stores/gameStore').EnemyMarker} m */ m => m.x === x && m.y === y);
         if (hasMarker) {
           revealIntensity = Math.max(revealIntensity, 0.6);
           isRevealed = true;
@@ -406,8 +424,9 @@
   function drawRevealedAreas() {
     if (!boardLayer || !state) return;
 
-    const currentFaction = state.currentFaction;
-    const revealedAreas = state.revealedAreas[currentFaction] || [];
+    /** @type {'red' | 'blue'} */
+    const currentFaction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    const revealedAreas = state.revealedAreas[currentFaction];
 
     for (const area of revealedAreas) {
       const intensity = area.remainingTurns / area.maxTurns;
@@ -467,12 +486,13 @@
   function drawEnemyMarkers() {
     if (!unitsLayer || !state) return;
 
-    const currentFaction = state.currentFaction;
-    const markers = state.enemyMarkers[currentFaction] || [];
+    /** @type {'red' | 'blue'} */
+    const currentFaction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    const markers = state.enemyMarkers[currentFaction];
     const revealTurns = state.revealTurns || 0;
 
     for (const marker of markers) {
-      const unit = state.units.find(u => u.id === marker.unitId);
+      const unit = state.units.find(/** @param {import('../stores/gameStore').Unit} u */ u => u.id === marker.unitId);
       if (!unit) continue;
 
       const hasDetailedInfo = marker.detailedInfo || revealTurns > 0;
@@ -493,8 +513,7 @@
       pulse.endFill();
       unitsLayer.addChild(pulse);
 
-      const unitConfigData = unitConfig[/** @type {UnitType} */ (unit.type)];
-      const iconText = new PIXI.Text(unitConfigData?.icon || '❓', { fontSize: 20 });
+      const iconText = new PIXI.Text(getUnitIcon(unit.type), { fontSize: 20 });
       iconText.anchor.set(0.5);
       iconText.x = x;
       iconText.y = y - 5;
@@ -555,7 +574,11 @@
     if (!scoutPreviewLayer || !state || !state.selectedCardId) return;
     scoutPreviewLayer.removeChildren();
 
-    const card = handCards.find(c => c.instanceId === state.selectedCardId);
+    const currentState = state;
+    const card = handCards.find(
+      /** @param {import('../utils/cardSystem').EventCard} c */
+      c => c.instanceId === currentState.selectedCardId
+    );
     if (!card || card.effect.type !== 'reveal') return;
 
     const radius = card.effect.radius || 3;
@@ -1543,7 +1566,9 @@
 
   function animationLoop() {
     if (state && state.enemyMarkers && state.currentFaction) {
-      const markers = state.enemyMarkers[state.currentFaction] || [];
+      /** @type {'red' | 'blue'} */
+      const faction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+      const markers = state.enemyMarkers[faction];
       if (markers.length > 0) {
         drawEnemyMarkers();
         drawScoutPreview();

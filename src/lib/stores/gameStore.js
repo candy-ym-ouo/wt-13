@@ -1909,54 +1909,60 @@ function createGameState() {
      * @param {number} duration
      */
     addRevealedArea: (faction, x, y, radius, duration) => update(state => {
+      /** @type {'red' | 'blue'} */
+      const fact = /** @type {'red' | 'blue'} */ (faction);
       const newRevealedAreas = {
         red: [...state.revealedAreas.red],
         blue: [...state.revealedAreas.blue]
       };
 
-      const existingIndex = newRevealedAreas[faction].findIndex(
+      const existingIndex = newRevealedAreas[fact].findIndex(
+        /** @param {RevealedArea} area */
         area => Math.abs(area.x - x) <= 1 && Math.abs(area.y - y) <= 1 && area.radius === radius
       );
 
       if (existingIndex >= 0) {
-        newRevealedAreas[faction][existingIndex] = {
-          ...newRevealedAreas[faction][existingIndex],
-          remainingTurns: Math.max(newRevealedAreas[faction][existingIndex].remainingTurns, duration),
-          maxTurns: Math.max(newRevealedAreas[faction][existingIndex].maxTurns, duration)
+        newRevealedAreas[fact][existingIndex] = {
+          ...newRevealedAreas[fact][existingIndex],
+          remainingTurns: Math.max(newRevealedAreas[fact][existingIndex].remainingTurns, duration),
+          maxTurns: Math.max(newRevealedAreas[fact][existingIndex].maxTurns, duration)
         };
       } else {
-        newRevealedAreas[faction].push({
+        newRevealedAreas[fact].push({
           x,
           y,
           radius,
           remainingTurns: duration,
           maxTurns: duration,
-          faction
+          faction: fact
         });
       }
 
-      const enemyFaction = faction === 'red' ? 'blue' : 'red';
+      const enemyFaction = fact === 'red' ? 'blue' : 'red';
       const newMarkers = {
         red: [...state.enemyMarkers.red],
         blue: [...state.enemyMarkers.blue]
       };
 
-      const enemyUnits = state.units.filter(u => u.faction === enemyFaction);
+      const enemyUnits = state.units.filter(/** @param {Unit} u */ u => u.faction === enemyFaction);
       for (const unit of enemyUnits) {
         const distance = Math.abs(unit.x - x) + Math.abs(unit.y - y);
         if (distance <= radius) {
-          const existingMarkerIndex = newMarkers[faction].findIndex(m => m.unitId === unit.id);
+          const existingMarkerIndex = newMarkers[fact].findIndex(
+            /** @param {EnemyMarker} m */
+            m => m.unitId === unit.id
+          );
           if (existingMarkerIndex >= 0) {
-            newMarkers[faction][existingMarkerIndex] = {
-              ...newMarkers[faction][existingMarkerIndex],
+            newMarkers[fact][existingMarkerIndex] = {
+              ...newMarkers[fact][existingMarkerIndex],
               x: unit.x,
               y: unit.y,
-              remainingTurns: Math.max(newMarkers[faction][existingMarkerIndex].remainingTurns, duration),
+              remainingTurns: Math.max(newMarkers[fact][existingMarkerIndex].remainingTurns, duration),
               detailedInfo: true,
               spottedTurn: state.turn
             };
           } else {
-            newMarkers[faction].push({
+            newMarkers[fact].push({
               unitId: unit.id,
               unitType: unit.type,
               x: unit.x,
@@ -1970,12 +1976,12 @@ function createGameState() {
         }
       }
 
-      const factionName = faction === 'red' ? '红方' : '蓝方';
+      const factionName = fact === 'red' ? '红方' : '蓝方';
       const revealDesc = `${factionName}在 (${x},${y}) 施放侦查，揭示半径 ${radius} 区域内敌军，持续 ${duration} 回合`;
       const revealLog = {
         id: `log_${Date.now()}_scout_${Math.random().toString(36).slice(2, 6)}`,
         turn: state.turn,
-        faction,
+        faction: fact,
         type: /** @type {ActionLogType} */ ('card'),
         description: revealDesc,
         details: {
@@ -1983,14 +1989,14 @@ function createGameState() {
           y,
           radius,
           duration,
-          revealedCount: newMarkers[faction].length
+          revealedCount: newMarkers[fact].length
         },
         timestamp: Date.now()
       };
 
       const newActionLogs = [...state.actionLogs];
       const lastTurnLog = newActionLogs[newActionLogs.length - 1];
-      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === faction) {
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === fact) {
         newActionLogs[newActionLogs.length - 1] = {
           ...lastTurnLog,
           actions: [...lastTurnLog.actions, revealLog]
@@ -1998,7 +2004,7 @@ function createGameState() {
       } else {
         newActionLogs.push({
           turn: state.turn,
-          faction,
+          faction: fact,
           actions: [revealLog]
         });
       }
@@ -2050,15 +2056,20 @@ function createGameState() {
      * @param {number} newY
      */
     updateEnemyMarkerPosition: (faction, unitId, newX, newY) => update(state => {
+      /** @type {'red' | 'blue'} */
+      const fact = /** @type {'red' | 'blue'} */ (faction);
       const newMarkers = {
         red: [...state.enemyMarkers.red],
         blue: [...state.enemyMarkers.blue]
       };
 
-      const markerIndex = newMarkers[faction].findIndex(m => m.unitId === unitId);
+      const markerIndex = newMarkers[fact].findIndex(
+        /** @param {EnemyMarker} m */
+        m => m.unitId === unitId
+      );
       if (markerIndex >= 0) {
-        newMarkers[faction][markerIndex] = {
-          ...newMarkers[faction][markerIndex],
+        newMarkers[fact][markerIndex] = {
+          ...newMarkers[fact][markerIndex],
           x: newX,
           y: newY
         };
@@ -2071,8 +2082,8 @@ function createGameState() {
      */
     removeEnemyMarkersForUnit: (unitId) => update(state => {
       const newMarkers = {
-        red: state.enemyMarkers.red.filter(m => m.unitId !== unitId),
-        blue: state.enemyMarkers.blue.filter(m => m.unitId !== unitId)
+        red: state.enemyMarkers.red.filter(/** @param {EnemyMarker} m */ m => m.unitId !== unitId),
+        blue: state.enemyMarkers.blue.filter(/** @param {EnemyMarker} m */ m => m.unitId !== unitId)
       };
       return { ...state, enemyMarkers: newMarkers };
     }),
