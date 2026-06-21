@@ -163,5 +163,38 @@ export const gameRules = {
     forbiddenTerrains: ['water'],
     forbiddenTileEffects: ['burning', 'frozen', 'poison_swamp'],
     summonExhausted: true
+  },
+  deployment: {
+    enabled: true,
+    maxMulligan: 2,
+    canAdjustPosition: true,
+    canMulligan: true,
+    timeLimitPerPlayer: 120,
+    deploymentZones: {
+      red: {
+        xMin: 0,
+        xMax: 2,
+        yMin: 0,
+        yMax: 7
+      },
+      blue: {
+        xMin: 13,
+        xMax: 15,
+        yMin: 0,
+        yMax: 7
+      }
+    },
+    restrictions: {
+      allowSameTile: false,
+      requireAllUnitsDeployed: true,
+      minDistanceFromEnemy: 3,
+      allowSwap: true
+    },
+    handStrategy: {
+      enabled: true,
+      canReorder: true,
+      showEnemyHandCount: true,
+      previewDrawPile: false
+    }
   }
 };

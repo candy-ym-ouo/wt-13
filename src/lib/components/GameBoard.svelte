@@ -32,7 +32,11 @@
     getMoveSkillForUnit,
     getHaltStationaryBonus,
     normalizeCounterType,
-    getCounterTypeInfo
+    getCounterTypeInfo,
+    isWithinDeploymentZone,
+    validateDeploymentPosition,
+    getDeploymentZoneTiles,
+    getValidDeploymentPositions
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard, canUseSummonCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
@@ -1057,9 +1061,103 @@
     pathDots = [];
     overlayLayer.removeChildren();
 
+    if (!state) return;
+
+    const isDeployRed = state.gamePhase === 'deploymentRed';
+    const isDeployBlue = state.gamePhase === 'deploymentBlue';
+    const isDeploying = isDeployRed || isDeployBlue;
+
+    if (isDeploying) {
+      const deployingFaction = isDeployRed ? 'red' : 'blue';
+      const deployingFactionName = deployingFaction === 'red' ? '红方' : '蓝方';
+      const zoneColor = deployingFaction === 'red' ? 0xe74c3c : 0x3498db;
+      const deploymentZone = getDeploymentZoneTiles(deployingFaction);
+
+      for (const tile of deploymentZone) {
+        const h = new PIXI.Graphics();
+        h.beginFill(zoneColor, 0.15);
+        h.drawRect(
+          tile.x * boardConfig.tileSize,
+          tile.y * boardConfig.tileSize,
+          boardConfig.tileSize,
+          boardConfig.tileSize
+        );
+        h.endFill();
+        h.lineStyle(1, zoneColor, 0.4);
+        h.drawRect(
+          tile.x * boardConfig.tileSize + 1,
+          tile.y * boardConfig.tileSize + 1,
+          boardConfig.tileSize - 2,
+          boardConfig.tileSize - 2
+        );
+        moveHighlights.push(h);
+        overlayLayer.addChild(h);
+      }
+
+      const enemyFaction = deployingFaction === 'red' ? 'blue' : 'red';
+      const enemyZoneColor = enemyFaction === 'red' ? 0xe74c3c : 0x3498db;
+      const enemyZone = getDeploymentZoneTiles(enemyFaction);
+
+      for (const tile of enemyZone) {
+        const h = new PIXI.Graphics();
+        h.beginFill(enemyZoneColor, 0.08);
+        h.drawRect(
+          tile.x * boardConfig.tileSize,
+          tile.y * boardConfig.tileSize,
+          boardConfig.tileSize,
+          boardConfig.tileSize
+        );
+        h.endFill();
+        moveHighlights.push(h);
+        overlayLayer.addChild(h);
+      }
+
+      const deploySelectedUnitId = state.deployment?.selectedUnitId;
+      if (deploySelectedUnitId) {
+        const deployUnit = state.units.find(u => u.id === deploySelectedUnitId);
+        if (deployUnit && deployUnit.faction === deployingFaction) {
+          const selSprite = unitSprites.get(deployUnit.id);
+          if (selSprite) {
+            const highlight = new PIXI.Graphics();
+            highlight.lineStyle(3, 0xffff00, 1);
+            highlight.drawCircle(
+              deployUnit.x * boardConfig.tileSize + boardConfig.tileSize / 2,
+              deployUnit.y * boardConfig.tileSize + boardConfig.tileSize / 2,
+              boardConfig.tileSize * 0.45
+            );
+            overlayLayer.addChild(highlight);
+          }
+
+          const validPositions = getValidDeploymentPositions(deployUnit, state.units);
+
+          for (const pos of validPositions) {
+            const h = new PIXI.Graphics();
+            h.beginFill(0x00ff00, 0.4);
+            h.drawRect(
+              pos.x * boardConfig.tileSize,
+              pos.y * boardConfig.tileSize,
+              boardConfig.tileSize,
+              boardConfig.tileSize
+            );
+            h.endFill();
+            h.lineStyle(2, 0x00ff00, 0.8);
+            h.drawRect(
+              pos.x * boardConfig.tileSize + 1,
+              pos.y * boardConfig.tileSize + 1,
+              boardConfig.tileSize - 2,
+              boardConfig.tileSize - 2
+            );
+            moveHighlights.push(h);
+            overlayLayer.addChild(h);
+          }
+        }
+      }
+      return;
+    }
+
     drawDangerZones();
 
-    if (!selectedUnitData || !state || state.gameOver) return;
+    if (!selectedUnitData || state.gameOver) return;
     if (selectedUnitData.faction !== state.currentFaction) return;
 
     const selSprite = unitSprites.get(selectedUnitData.id);
@@ -1482,13 +1580,60 @@
    * @param {any} event
    */
   function onPointerDown(event) {
-    if (!state || state.gameOver) return;
+    if (!state) return;
 
     const pos = event.data.global;
     const tx = Math.floor(pos.x / boardConfig.tileSize);
     const ty = Math.floor(pos.y / boardConfig.tileSize);
 
     if (tx < 0 || tx >= boardConfig.width || ty < 0 || ty >= boardConfig.height) return;
+
+    const isDeployRed = state.gamePhase === 'deploymentRed';
+    const isDeployBlue = state.gamePhase === 'deploymentBlue';
+    const isDeploying = isDeployRed || isDeployBlue;
+
+    if (isDeploying) {
+      const deployingFaction = isDeployRed ? 'red' : 'blue';
+      const deploySelectedUnitId = state.deployment?.selectedUnitId;
+      const clickedUnit = getUnitAt(state.units, tx, ty);
+
+      if (deploySelectedUnitId) {
+        const selectedUnit = state.units.find(u => u.id === deploySelectedUnitId);
+        if (selectedUnit && selectedUnit.faction === deployingFaction) {
+          if (clickedUnit && clickedUnit.id === deploySelectedUnitId) {
+            gameState.selectUnit(null);
+            return;
+          }
+
+          const validation = validateDeploymentPosition(
+            tx,
+            ty,
+            deployingFaction,
+            state.units,
+            deploySelectedUnitId,
+            state.boardLayout
+          );
+
+          if (validation.valid) {
+            gameState.deploymentMoveUnit(deploySelectedUnitId, tx, ty);
+          } else {
+            gameState.setMessage(`无法放置：${validation.reason}`);
+          }
+          return;
+        }
+      }
+
+      if (clickedUnit && clickedUnit.faction === deployingFaction) {
+        gameState.selectUnit(clickedUnit.id);
+        previewTargetId.set(null);
+      } else if (!clickedUnit) {
+        gameState.selectUnit(null);
+        previewTargetId.set(null);
+      }
+      return;
+    }
+
+    if (state.gameOver) return;
 
     const clickedUnit = getUnitAt(state.units, tx, ty);
 

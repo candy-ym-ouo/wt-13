@@ -823,7 +823,7 @@ export function normalizeCounterType(type) {
 /**
  * 获取反击类型对应的规则配置（类型安全）
  * @param {string} counterType
- * @returns {{damageRatio: number, canApplyStatus: boolean, statusType: string | null, statusDuration: number, statusChance: number}
+ * @returns {{damageRatio: number, canApplyStatus: boolean, statusType: string | null, statusDuration: number, statusChance: number}}
  */
 export function getCounterTypeRules(counterType) {
   const safeType = normalizeCounterType(counterType);
@@ -849,7 +849,7 @@ export function getCounterTypeRules(counterType) {
 /**
  * 获取反击类型对应的信息配置（类型安全）
  * @param {string} counterType
- * @returns {{name: string, icon: string, color: string, canCounter: boolean, damageRatio: number, canApplyStatus: boolean, description?: string}
+ * @returns {{name: string, icon: string, color: string, canCounter: boolean, damageRatio: number, canApplyStatus: boolean, description?: string}}
  */
 export function getCounterTypeInfo(counterType) {
   const safeType = normalizeCounterType(counterType);
@@ -2171,4 +2171,156 @@ export function findSummonPosition(units, faction, bases, boardLayout, tileEffec
     tier: undefined,
     terrain: null
   };
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {'red' | 'blue'} faction
+ * @returns {boolean}
+ */
+export function isWithinDeploymentZone(x, y, faction) {
+  const zones = gameRules.deployment?.deploymentZones;
+  if (!zones) return false;
+  const zone = zones[faction];
+  if (!zone) return false;
+  return x >= zone.xMin && x <= zone.xMax && y >= zone.yMin && y <= zone.yMax;
+}
+
+/**
+ * @typedef {object} DeploymentValidation
+ * @property {boolean} valid
+ * @property {string | null} reason
+ */
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {'red' | 'blue'} faction
+ * @param {Unit[]} units
+ * @param {string} [movingUnitId]
+ * @param {string[][] | null} [boardLayout]
+ * @returns {DeploymentValidation}
+ */
+export function validateDeploymentPosition(x, y, faction, units, movingUnitId, boardLayout) {
+  if (!gameRules.deployment?.enabled) {
+    return { valid: false, reason: '布阵功能未启用' };
+  }
+
+  if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) {
+    return { valid: false, reason: '超出棋盘范围' };
+  }
+
+  if (!isWithinDeploymentZone(x, y, faction)) {
+    const zone = gameRules.deployment.deploymentZones[faction];
+    return {
+      valid: false,
+      reason: `超出布阵区域（X: ${zone.xMin}-${zone.xMax}, Y: ${zone.yMin}-${zone.yMax}）`
+    };
+  }
+
+  const terrain = getTerrain(x, y, boardLayout);
+  if (!terrain || terrain.passable === false) {
+    return { valid: false, reason: `${terrain?.name || '该地形'}不可通行` };
+  }
+
+  const restrictions = gameRules.deployment.restrictions;
+  if (!restrictions.allowSameTile) {
+    const unitAtPos = units.find(u => u.x === x && u.y === y && u.id !== movingUnitId);
+    if (unitAtPos) {
+      const unitName = unitConfig[/** @type {UnitType} */ (unitAtPos.type)].name;
+      const factionName = unitAtPos.faction === 'red' ? '红方' : '蓝方';
+      return { valid: false, reason: `该位置已被${factionName}${unitName}占据` };
+    }
+  }
+
+  if (restrictions.minDistanceFromEnemy > 0) {
+    const enemyUnits = units.filter(u => u.faction !== faction);
+    for (const enemy of enemyUnits) {
+      const distance = Math.abs(enemy.x - x) + Math.abs(enemy.y - y);
+      if (distance < restrictions.minDistanceFromEnemy) {
+        const enemyName = unitConfig[/** @type {UnitType} */ (enemy.type)].name;
+        const enemyFaction = enemy.faction === 'red' ? '红方' : '蓝方';
+        return {
+          valid: false,
+          reason: `与${enemyFaction}${enemyName}距离过近（需≥${restrictions.minDistanceFromEnemy}格）`
+        };
+      }
+    }
+  }
+
+  return { valid: true, reason: null };
+}
+
+/**
+ * @param {'red' | 'blue'} faction
+ * @param {Unit[]} units
+ * @returns {DeploymentValidation}
+ */
+export function validateAllUnitsDeployed(faction, units) {
+  const factionUnits = units.filter(u => u.faction === faction);
+  const restrictions = gameRules.deployment?.restrictions;
+
+  if (restrictions?.requireAllUnitsDeployed) {
+    for (const unit of factionUnits) {
+      if (!isWithinDeploymentZone(unit.x, unit.y, faction)) {
+        const unitName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+        return {
+          valid: false,
+          reason: `${unitName} 位于布阵区域外`
+        };
+      }
+    }
+  }
+
+  return { valid: true, reason: null };
+}
+
+/**
+ * @param {'red' | 'blue'} faction
+ * @returns {{x: number, y: number}[]}
+ */
+export function getDeploymentZoneTiles(faction) {
+  const zones = gameRules.deployment?.deploymentZones;
+  if (!zones) return [];
+  const zone = zones[faction];
+  if (!zone) return [];
+
+  /** @type {{x: number, y: number}[]} */
+  const tiles = [];
+  for (let x = zone.xMin; x <= zone.xMax; x++) {
+    for (let y = zone.yMin; y <= zone.yMax; y++) {
+      tiles.push({ x, y });
+    }
+  }
+  return tiles;
+}
+
+/**
+ * @param {Unit} unit
+ * @param {Unit[]} units
+ * @returns {{x: number, y: number}[]}
+ */
+export function getValidDeploymentPositions(unit, units) {
+  const tiles = getDeploymentZoneTiles(/** @type {'red' | 'blue'} */ (unit.faction));
+  return tiles.filter(tile => {
+    const validation = validateDeploymentPosition(
+      tile.x,
+      tile.y,
+      /** @type {'red' | 'blue'} */ (unit.faction),
+      units,
+      unit.id
+    );
+    return validation.valid;
+  });
+}
+
+/**
+ * @param {number} used
+ * @returns {boolean}
+ */
+export function canMulligan(used) {
+  if (!gameRules.deployment?.canMulligan) return false;
+  const maxMulligan = gameRules.deployment.maxMulligan || 0;
+  return used < maxMulligan;
 }

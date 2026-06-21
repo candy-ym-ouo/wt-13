@@ -8,7 +8,8 @@ import {
   tickActiveCards,
   tickCooldowns,
   refillEnergy,
-  createCooldownEntry
+  createCooldownEntry,
+  drawCard
 } from '$lib/utils/cardSystem';
 import {
   checkStatusApplication,
@@ -57,7 +58,18 @@ import {
  */
 
 /**
- * @typedef {'idle' | 'unitSelected' | 'unitMoved' | 'cardSelected' | 'gameOver'} GamePhase
+ * @typedef {'idle' | 'unitSelected' | 'unitMoved' | 'cardSelected' | 'gameOver' | 'deploymentRed' | 'deploymentBlue' | 'deploymentComplete'} GamePhase
+ */
+
+/**
+ * @typedef {object} DeploymentState
+ * @property {boolean} redReady
+ * @property {boolean} blueReady
+ * @property {string} deployingFaction
+ * @property {string | null} selectedUnitId
+ * @property {EventCard[][]} initialHands
+ * @property {number[]} mulliganUsed
+ * @property {boolean} showHandStrategy
  */
 
 /**
@@ -130,6 +142,7 @@ import {
  * @property {{red: number, blue: number}} turnCardsUsed
  * @property {{red: number, blue: number}} killCounts
  * @property {import('../utils/gameLogic').ScoreSettlementResult | null} scoreSettlement
+ * @property {DeploymentState | null} deployment
  */
 
 /**
@@ -332,7 +345,7 @@ function createInitialState() {
     turn: 1,
     selectedUnitId: null,
     selectedCardId: null,
-    gamePhase: 'idle',
+    gamePhase: 'deploymentRed',
     gameOver: false,
     winner: null,
     victoryCondition: null,
@@ -343,20 +356,20 @@ function createInitialState() {
     terrainChanged: null,
     revealTurns: 0,
     turnHistory: [],
-    message: '游戏开始！红方先行动',
+    message: '【布阵阶段】红方调整初始站位和首回合手牌策略',
     lastMoraleChanges: [],
     lastCardAction: null,
     bases,
     lastStatusMessages: [],
     actionLogs: [{
-      turn: 1,
+      turn: 0,
       faction: 'red',
       actions: [{
         id: `log_${Date.now()}_init`,
-        turn: 1,
+        turn: 0,
         faction: 'red',
         type: 'turn',
-        description: '游戏开始！红方先行动',
+        description: '进入布阵阶段',
         details: {},
         timestamp: Date.now()
       }]
@@ -372,7 +385,16 @@ function createInitialState() {
     turnDamageDealt: { red: 0, blue: 0 },
     turnCardsUsed: { red: 0, blue: 0 },
     killCounts: { red: 0, blue: 0 },
-    scoreSettlement: null
+    scoreSettlement: null,
+    deployment: {
+      redReady: false,
+      blueReady: false,
+      deployingFaction: 'red',
+      selectedUnitId: null,
+      initialHands: [[], []],
+      mulliganUsed: [0, 0],
+      showHandStrategy: true
+    }
   };
 }
 
@@ -465,11 +487,270 @@ function createGameState() {
     /**
      * @param {string | null} unitId
      */
-    selectUnit: (unitId) => update(state => ({
+    selectUnit: (unitId) => update(state => {
+      if (state.gamePhase === 'deploymentRed' || state.gamePhase === 'deploymentBlue') {
+        if (!state.deployment) return state;
+        const deployingFaction = state.gamePhase === 'deploymentRed' ? 'red' : 'blue';
+        const unit = unitId ? state.units.find(u => u.id === unitId) : null;
+        if (unit && unit.faction !== deployingFaction) {
+          return state;
+        }
+        return {
+          ...state,
+          deployment: {
+            ...state.deployment,
+            selectedUnitId: unitId
+          }
+        };
+      }
+      return {
+        ...state,
+        selectedUnitId: unitId,
+        selectedCardId: null,
+        gamePhase: unitId ? 'unitSelected' : 'idle'
+      };
+    }),
+    /**
+     * @param {string} unitId
+     * @param {number} x
+     * @param {number} y
+     */
+    deploymentMoveUnit: (unitId, x, y) => update(state => {
+      if (state.gamePhase !== 'deploymentRed' && state.gamePhase !== 'deploymentBlue') {
+        return state;
+      }
+      if (!state.deployment) return state;
+      const deployingFaction = state.gamePhase === 'deploymentRed' ? 'red' : 'blue';
+      const unit = state.units.find(u => u.id === unitId);
+      if (!unit || unit.faction !== deployingFaction) {
+        return state;
+      }
+      const units = state.units.map(u => {
+        if (u.id === unitId) {
+          return { ...u, x, y };
+        }
+        return u;
+      });
+      const unitName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+      const factionName = deployingFaction === 'red' ? '红方' : '蓝方';
+      const moveDesc = `${factionName}${unitName} 布阵移动到 (${x},${y})`;
+      const moveLog = {
+        id: `log_${Date.now()}_deploy_${Math.random().toString(36).slice(2, 6)}`,
+        turn: 0,
+        faction: deployingFaction,
+        type: /** @type {ActionLogType} */ ('move'),
+        description: moveDesc,
+        details: {
+          unitId,
+          unitName,
+          unitType: unit.type,
+          from: { x: unit.x, y: unit.y },
+          to: { x, y },
+          isDeployment: true
+        },
+        timestamp: Date.now()
+      };
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === 0 && lastTurnLog.faction === deployingFaction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, moveLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: 0,
+          faction: deployingFaction,
+          actions: [moveLog]
+        });
+      }
+      return {
+        ...state,
+        units,
+        deployment: {
+          ...state.deployment,
+          selectedUnitId: null
+        },
+        actionLogs: newActionLogs,
+        lastActionLog: moveLog
+      };
+    }),
+    /**
+     * @param {'red' | 'blue'} faction
+     */
+    deploymentReady: (faction) => update(state => {
+      if (!state.deployment) return state;
+      if (faction === 'red') {
+        if (state.gamePhase !== 'deploymentRed') return state;
+        const nextPhase = state.deployment.blueReady ? 'deploymentComplete' : 'deploymentBlue';
+        const nextMsg = state.deployment.blueReady
+          ? '双方布阵完成，准备开始游戏'
+          : '【布阵阶段】蓝方调整初始站位和首回合手牌策略';
+        return {
+          ...state,
+          gamePhase: /** @type {GamePhase} */ (nextPhase),
+          currentFaction: nextPhase === 'deploymentComplete' ? 'red' : 'blue',
+          deployment: {
+            ...state.deployment,
+            redReady: true,
+            deployingFaction: nextPhase === 'deploymentComplete' ? 'none' : 'blue',
+            selectedUnitId: null
+          },
+          message: nextMsg
+        };
+      } else {
+        if (state.gamePhase !== 'deploymentBlue') return state;
+        const nextPhase = state.deployment.redReady ? 'deploymentComplete' : 'deploymentRed';
+        const nextMsg = state.deployment.redReady
+          ? '双方布阵完成，准备开始游戏'
+          : '【布阵阶段】红方调整初始站位和首回合手牌策略';
+        return {
+          ...state,
+          gamePhase: /** @type {GamePhase} */ (nextPhase),
+          currentFaction: nextPhase === 'deploymentComplete' ? 'red' : 'red',
+          deployment: {
+            ...state.deployment,
+            blueReady: true,
+            deployingFaction: nextPhase === 'deploymentComplete' ? 'none' : 'red',
+            selectedUnitId: null
+          },
+          message: nextMsg
+        };
+      }
+    }),
+    /**
+     * @param {'red' | 'blue'} faction
+     * @param {number} cardIndex
+     */
+    deploymentMulligan: (faction, cardIndex) => update(state => {
+      const factionIdx = faction === 'red' ? 0 : 1;
+      const maxMulligan = gameRules.deployment?.maxMulligan || 2;
+      if (!state.deployment || state.deployment.mulliganUsed[factionIdx] >= maxMulligan) {
+        return state;
+      }
+      const hand = state.hands[faction];
+      if (cardIndex < 0 || cardIndex >= hand.length) {
+        return state;
+      }
+      const oldCard = hand[cardIndex];
+      const newCard = drawCard(
+        state.drawHistory[faction],
+        state.pityCounter[faction],
+        1
+      );
+      const newHand = [...hand];
+      newHand[cardIndex] = {
+        ...newCard,
+        instanceId: String(Date.now() + Math.random()),
+        cardState: 'available',
+        remainingDuration: 0,
+        remainingCooldown: 0
+      };
+      const newHands = {
+        ...state.hands,
+        [faction]: newHand
+      };
+      const newMulligan = [...state.deployment.mulliganUsed];
+      newMulligan[factionIdx] += 1;
+      const factionName = faction === 'red' ? '红方' : '蓝方';
+      const mulliganDesc = `${factionName}重抽手牌【${oldCard.name}】→【${newCard.name}】`;
+      const mulliganLog = {
+        id: `log_${Date.now()}_mulligan_${Math.random().toString(36).slice(2, 6)}`,
+        turn: 0,
+        faction,
+        type: /** @type {ActionLogType} */ ('card'),
+        description: mulliganDesc,
+        details: {
+          oldCardId: oldCard.id,
+          oldCardName: oldCard.name,
+          newCardId: newCard.id,
+          newCardName: newCard.name,
+          isMulligan: true
+        },
+        timestamp: Date.now()
+      };
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === 0 && lastTurnLog.faction === faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, mulliganLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: 0,
+          faction,
+          actions: [mulliganLog]
+        });
+      }
+      return {
+        ...state,
+        hands: newHands,
+        deployment: {
+          ...state.deployment,
+          mulliganUsed: newMulligan
+        },
+        actionLogs: newActionLogs,
+        lastActionLog: mulliganLog
+      };
+    }),
+    /**
+     * @param {'red' | 'blue'} faction
+     * @param {EventCard[]} hand
+     */
+    deploymentSetInitialHand: (faction, hand) => update(state => {
+      const newHands = {
+        ...state.hands,
+        [faction]: hand
+      };
+      return {
+        ...state,
+        hands: newHands
+      };
+    }),
+    deploymentStartGame: () => update(state => {
+      if (state.gamePhase !== 'deploymentComplete') return state;
+      const redHand = state.hands.red;
+      const blueHand = state.hands.blue;
+      const initDesc = '布阵完成，游戏开始！红方先行动';
+      const initLog = {
+        id: `log_${Date.now()}_start_${Math.random().toString(36).slice(2, 6)}`,
+        turn: 1,
+        faction: 'red',
+        type: /** @type {ActionLogType} */ ('turn'),
+        description: initDesc,
+        details: {
+          redHandSize: redHand.length,
+          blueHandSize: blueHand.length,
+          deploymentComplete: true
+        },
+        timestamp: Date.now()
+      };
+      const newActionLogs = [...state.actionLogs];
+      newActionLogs.push({
+        turn: 1,
+        faction: 'red',
+        actions: [initLog]
+      });
+      return {
+        ...state,
+        gamePhase: 'idle',
+        turn: 1,
+        currentFaction: 'red',
+        message: initDesc,
+        deployment: null,
+        actionLogs: newActionLogs,
+        lastActionLog: initLog,
+        turnDamageDealt: { red: 0, blue: 0 },
+        turnCardsUsed: { red: 0, blue: 0 }
+      };
+    }),
+    /**
+     * @param {string} msg
+     */
+    setMessage: (msg) => update(state => ({
       ...state,
-      selectedUnitId: unitId,
-      selectedCardId: null,
-      gamePhase: unitId ? 'unitSelected' : 'idle'
+      message: msg
     })),
     /**
      * @param {string | null} cardId
@@ -2440,10 +2721,6 @@ function createGameState() {
       return { ...state, tileEffects: newTileEffects };
     }),
     /**
-     * @param {string} message
-     */
-    setMessage: (message) => update(/** @param {GameState} state */ state => ({ ...state, message })),
-    /**
      * @param {string} unitId
      * @param {number} terrainMoraleBonus
      * @param {string} terrainName
@@ -2886,3 +3163,19 @@ export const currentDrawHistory = derived(gameState, /** @param {GameState} $sta
 export const currentPityCounter = derived(gameState, /** @param {GameState} $state */ $state =>
   $state.pityCounter[/** @type {'red' | 'blue'} */ ($state.currentFaction)] || 0
 );
+
+export const deploymentState = derived(gameState, /** @param {GameState} $state */ $state =>
+  $state.deployment || null
+);
+
+export const isDeploymentPhase = derived(gameState, /** @param {GameState} $state */ $state =>
+  $state.gamePhase === 'deploymentRed' ||
+  $state.gamePhase === 'deploymentBlue' ||
+  $state.gamePhase === 'deploymentComplete'
+);
+
+export const deployingFaction = derived(gameState, /** @param {GameState} $state */ $state => {
+  if ($state.gamePhase === 'deploymentRed') return 'red';
+  if ($state.gamePhase === 'deploymentBlue') return 'blue';
+  return null;
+});

@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId, currentDrawHistory, currentPityCounter } from '$lib/stores/gameStore';
+  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId, currentDrawHistory, currentPityCounter, isDeploymentPhase } from '$lib/stores/gameStore';
   import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, CARD_RARITY_LABELS, CARD_RARITY_COLORS, CARD_RARITY_BG, CARD_RARITY_ICONS, cardRarityConfig, eventCards } from '$lib/config/eventCardConfig';
@@ -10,6 +10,7 @@
   import { saveRosterFromGame, getFactionRoster, clearRoster, loadRoster } from '$lib/utils/storageRoster';
   import { saveToSlot, loadFromSlot, deleteSlot, getAllSlotMetas, hasAutoSave, loadAutoSave, clearAutoSave, getManualSlots, getAutoSlot, autoSave } from '$lib/utils/storageSave';
   import TacticalHintPanel from './TacticalHintPanel.svelte';
+  import DeploymentPanel from './DeploymentPanel.svelte';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -72,9 +73,12 @@
   let replayRecord = null;
   /** @type {GameRecord[]} */
   let records = [];
+  let isDeploying = false;
 
   /** @type {(() => void) | undefined} */
   let unsubscribe;
+  /** @type {(() => void) | undefined} */
+  let unsubscribeDeploy;
   /** @type {(() => void) | undefined} */
   let unsubscribeSelected;
   /** @type {(() => void) | undefined} */
@@ -346,6 +350,9 @@
     unsubscribePreview = previewTarget.subscribe(/** @param {Unit | null} u */ u => {
       previewTargetData = u;
     });
+    unsubscribeDeploy = isDeploymentPhase.subscribe(/** @param {boolean} d */ d => {
+      isDeploying = d;
+    });
     records = /** @type {GameRecord[]} */ (getGameRecords());
 
     if (hasAutoSave()) {
@@ -380,6 +387,7 @@
     if (unsubscribeDrawHistory) unsubscribeDrawHistory();
     if (unsubscribePityCounter) unsubscribePityCounter();
     if (unsubscribePreview) unsubscribePreview();
+    if (unsubscribeDeploy) unsubscribeDeploy();
   });
 
   function initHands() {
@@ -1064,7 +1072,9 @@
 </script>
 
 <div class="game-ui">
-  <div class="top-bar">
+  <DeploymentPanel />
+
+  <div class="top-bar" class:top-bar-deploy={isDeploying}>
     <div class="turn-info">
       <span class="turn-label">回合</span>
       <span class="turn-number">{state?.turn || 1}</span>
@@ -2330,6 +2340,7 @@
     </div>
   {/if}
 
+  {#if !isDeploying}
   <div class="bottom-panel">
     <div class="hand-cards">
       <span class="hand-label">手牌 ({handCards?.length || 0}/{cardConfig.maxHandSize})</span>
@@ -2399,6 +2410,7 @@
       </button>
     </div>
   </div>
+  {/if}
 </div>
 
 <style>
@@ -2432,6 +2444,11 @@
     background: rgba(26, 26, 46, 0.95);
     border-bottom: 2px solid #3498db;
     color: white;
+  }
+
+  .top-bar-deploy {
+    opacity: 0.6;
+    pointer-events: none;
   }
 
   .turn-info {
