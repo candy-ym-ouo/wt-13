@@ -1,6 +1,8 @@
 <script>
 	import GameBoard from '$lib/components/GameBoard.svelte';
 	import GameUI from '$lib/components/GameUI.svelte';
+	import { seasonStore } from '$lib/stores/seasonStore.js';
+	import { RANK_TIERS, RANK_SUB_TIERS } from '$lib/config/seasonConfig.js';
 	
 	let showMainMenu = true;
 	
@@ -10,6 +12,17 @@
 	
 	function enterLegion() {
 		window.location.href = '/legion';
+	}
+
+	function enterSeason() {
+		window.location.href = '/season';
+	}
+
+	function getRankDisplay(rankId, subTierId) {
+		const r = RANK_TIERS.find(t => t.id === rankId) || RANK_TIERS[0];
+		const st = RANK_SUB_TIERS.find(t => t.id === subTierId) || RANK_SUB_TIERS[0];
+		if (rankId === 'grandmaster') return `${r.icon} ${r.name}`;
+		return `${r.icon} ${r.name} ${st.name}`;
 	}
 </script>
 
@@ -26,7 +39,20 @@
 				<button class="menu-btn secondary" on:click={enterLegion}>
 					🏰 军团养成
 				</button>
+				<button class="menu-btn season" on:click={enterSeason}>
+					🏅 赛季天梯
+				</button>
 			</div>
+
+			{#if $seasonStore}
+				<div class="season-badge" style="--rank-color: {RANK_TIERS.find(r => r.id === $seasonStore.rank)?.color || '#c0c0c0'}">
+					<span class="badge-rank">{getRankDisplay($seasonStore.rank, $seasonStore.subTier)}</span>
+					<span class="badge-points">{$seasonStore.points} 分</span>
+					{#if $seasonStore.winStreak >= 3}
+						<span class="badge-streak">🔥{$seasonStore.winStreak}连胜</span>
+					{/if}
+				</div>
+			{/if}
 			
 			<div class="menu-features">
 				<div class="feature">
@@ -45,9 +71,9 @@
 					<p>多种阵容自由组合，发挥协同作战威力</p>
 				</div>
 				<div class="feature">
-					<span class="feature-icon">🃏</span>
-					<h3>卡牌奖励</h3>
-					<p>战斗获取卡牌，强化你的战术选择</p>
+					<span class="feature-icon">�</span>
+					<h3>赛季天梯</h3>
+					<p>积分对决、段位晋升、赛季重置，攀登巅峰</p>
 				</div>
 			</div>
 		</div>
@@ -131,6 +157,45 @@
 	.menu-btn.secondary:hover {
 		transform: translateY(-3px);
 		box-shadow: 0 10px 30px rgba(52, 152, 219, 0.6);
+	}
+
+	.menu-btn.season {
+		background: linear-gradient(135deg, #ffd700, #ff9800);
+		color: #1a1a2e;
+		box-shadow: 0 6px 20px rgba(255, 215, 0, 0.4);
+	}
+
+	.menu-btn.season:hover {
+		transform: translateY(-3px);
+		box-shadow: 0 10px 30px rgba(255, 215, 0, 0.6);
+	}
+
+	.season-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 24px;
+		margin-bottom: 40px;
+		background: rgba(0, 0, 0, 0.3);
+		border: 1px solid var(--rank-color);
+		border-radius: 12px;
+	}
+
+	.badge-rank {
+		font-size: 16px;
+		font-weight: bold;
+		color: var(--rank-color);
+	}
+
+	.badge-points {
+		font-size: 14px;
+		color: #ccc;
+	}
+
+	.badge-streak {
+		font-size: 14px;
+		color: #ff5722;
+		font-weight: bold;
 	}
 	
 	.menu-features {

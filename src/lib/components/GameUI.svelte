@@ -7,6 +7,8 @@
   import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview } from '$lib/utils/gameLogic';
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
+  import { seasonStore } from '$lib/stores/seasonStore.js';
+  import { RANK_TIERS, RANK_SUB_TIERS } from '$lib/config/seasonConfig.js';
   import { saveRosterFromGame, getFactionRoster, clearRoster, loadRoster } from '$lib/utils/storageRoster';
   import { saveToSlot, loadFromSlot, deleteSlot, getAllSlotMetas, hasAutoSave, loadAutoSave, clearAutoSave, getManualSlots, getAutoSlot, autoSave } from '$lib/utils/storageSave';
   import TacticalHintPanel from './TacticalHintPanel.svelte';
@@ -438,6 +440,29 @@
       saveRosterFromGame(state.units, winner);
       rosterSaved = true;
     }
+
+    updateSeasonPoints(state);
+  }
+
+  function updateSeasonPoints(s) {
+    if (!s || !s.winner) return;
+    let result;
+    if (s.winner === 'draw') {
+      result = 'draw';
+    } else if (s.winner === 'red') {
+      result = 'win';
+    } else {
+      result = 'lose';
+    }
+    const scoreDiff = s.scoreSettlement ? s.scoreSettlement.scoreDiff : 0;
+    const details = {
+      turns: s.turn,
+      kills: s.killCounts?.red || 0,
+      baseCaptured: s.victoryCondition === 'captureBase',
+      winStreak: 0,
+      scoreDiff: scoreDiff
+    };
+    seasonStore.processMatchResult(result, details);
   }
 
   function handleEndTurn() {
@@ -1116,6 +1141,9 @@
       <button class="btn btn-secondary" on:click={() => window.location.href = '/legion'}>
         🏰 军团
       </button>
+      <button class="btn btn-secondary" on:click={() => window.location.href = '/season'}>
+        🏅 天梯
+      </button>
       <button class="btn btn-secondary" on:click={handleShowSaveLoad}>
         💾 存档
       </button>
@@ -1459,6 +1487,25 @@
           <button class="btn btn-secondary" on:click={() => { if (state) saveRosterFromGame(state.units, /** @type {'red' | 'blue'} */ (state.winner)); rosterSaved = true; }}>
             💾 保存阵容存档
           </button>
+        {/if}
+        {#if $seasonStore && state?.winner}
+          <div class="season-result-summary">
+            <div class="season-result-title">🏅 赛季积分</div>
+            <div class="season-result-detail">
+              <span class="season-result-rank" style="color: {RANK_TIERS.find(r => r.id === $seasonStore.rank)?.color || '#c0c0c0'}">
+                {RANK_TIERS.find(r => r.id === $seasonStore.rank)?.icon || ''} {RANK_TIERS.find(r => r.id === $seasonStore.rank)?.name || ''} {RANK_SUB_TIERS.find(t => t.id === $seasonStore.subTier)?.name || ''}
+              </span>
+              <span class="season-result-pts">{$seasonStore.points} 分</span>
+              {#if $seasonStore.lastPointChange !== undefined && $seasonStore.lastPointChange !== null}
+                <span class="season-result-change" style="color: {$seasonStore.lastPointChange >= 0 ? '#4caf50' : '#f44336'}">
+                  {$seasonStore.lastPointChange >= 0 ? '+' : ''}{$seasonStore.lastPointChange}
+                </span>
+              {/if}
+            </div>
+            {#if $seasonStore.winStreak >= 3}
+              <div class="season-streak">🔥 {$seasonStore.winStreak}连胜！</div>
+            {/if}
+          </div>
         {/if}
       </div>
     </div>
@@ -2756,6 +2803,49 @@
     color: #666;
     margin: 0 0 30px 0;
     font-size: 13px;
+  }
+
+  .season-result-summary {
+    margin-top: 20px;
+    padding: 16px 20px;
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 152, 0, 0.05));
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    border-radius: 12px;
+    text-align: center;
+  }
+
+  .season-result-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #ffd700;
+    margin-bottom: 10px;
+  }
+
+  .season-result-detail {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    font-size: 14px;
+  }
+
+  .season-result-rank {
+    font-weight: bold;
+  }
+
+  .season-result-pts {
+    color: #ccc;
+  }
+
+  .season-result-change {
+    font-weight: bold;
+  }
+
+  .season-streak {
+    margin-top: 6px;
+    font-size: 14px;
+    color: #ff5722;
+    font-weight: bold;
   }
 
   .records-overlay {
