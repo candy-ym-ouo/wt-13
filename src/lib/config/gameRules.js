@@ -48,7 +48,27 @@ export const gameRules = {
   movement: {
     canMoveThroughFriendly: true,
     canMoveThroughEnemy: false,
-    mustStopOnEnemy: false
+    mustStopOnEnemy: false,
+    moveSkills: {
+      charge: {
+        canPassThroughEnemy: true,
+        firstTileExtraCost: 1,
+        postMoveAttackBonus: 0.25,
+        postMoveAttackBuffDuration: 1
+      },
+      penetrate: {
+        canPassThroughFriendly: true,
+        terrainCostReduction: 1,
+        postPenetrateDefenseBonus: 0.15,
+        postPenetrateDefenseBuffDuration: 1
+      },
+      halt: {
+        terrainCostAdd: 1,
+        stationaryDefenseBonus: 0.3,
+        stationaryMoraleBonus: 5,
+        immuneToDisplacement: true
+      }
+    }
   },
   economy: {
     enabled: false,

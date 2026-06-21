@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import * as PIXI from 'pixi.js';
   import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
-  import { unitConfig } from '$lib/config/unitConfig';
+  import { unitConfig, MOVE_SKILL_TYPES, MOVE_SKILL_INFO } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTargetId } from '$lib/stores/gameStore';
   import {
@@ -28,7 +28,9 @@
     calculateCombatPreview,
     checkSummonFeasibility,
     findSummonPosition,
-    validateSummonTile
+    validateSummonTile,
+    getMoveSkillForUnit,
+    getHaltStationaryBonus
   } from '$lib/utils/gameLogic';
   import { canUseCard, applyCardEffect, canAffordCard, canUseSummonCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
@@ -968,6 +970,29 @@
       container.addChild(specRing);
     }
 
+    const moveSkill = getMoveSkillForUnit(unit, /** @type {UnitType} */ (unit.type));
+    const skillInfo = MOVE_SKILL_INFO[moveSkill];
+    if (skillInfo) {
+      const skillIcon = new PIXI.Text(skillInfo.icon, { fontSize: 11 });
+      skillIcon.anchor.set(0.5);
+      skillIcon.x = 18;
+      skillIcon.y = 10;
+      container.addChild(skillIcon);
+    }
+
+    const haltBuff = unit.buffs?.find(b => b.type === 'haltDefense');
+    if (haltBuff) {
+      const haltRing = new PIXI.Graphics();
+      haltRing.lineStyle(3, 0x7f8c8d, 0.9);
+      haltRing.drawCircle(0, 0, boardConfig.tileSize * 0.42);
+      container.addChild(haltRing);
+      const shieldBadge = new PIXI.Text('🏰', { fontSize: 12 });
+      shieldBadge.anchor.set(0.5);
+      shieldBadge.x = -18;
+      shieldBadge.y = 10;
+      container.addChild(shieldBadge);
+    }
+
     if ((unit.statPoints || 0) > 0) {
       const pointDot = new PIXI.Graphics();
       pointDot.beginFill(0xf1c40f);
@@ -1014,7 +1039,8 @@
       attackBoost: '⚔',
       defenseBoost: '🛡',
       moveBoost: '👟',
-      doubleAttack: '⚡'
+      doubleAttack: '⚡',
+      haltDefense: '🏰'
     };
     return emojis[type] || '✨';
   }
@@ -1060,6 +1086,12 @@
 
     if (!selectedUnitData.hasMoved && !ccLocked) {
       const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
+      const selMoveSkill = getMoveSkillForUnit(selectedUnitData, /** @type {UnitType} */ (selectedUnitData.type));
+      const selSkillInfo = MOVE_SKILL_INFO[selMoveSkill];
+      const moveHighlightColor = selMoveSkill === MOVE_SKILL_TYPES.CHARGE ? 0xff9900
+        : selMoveSkill === MOVE_SKILL_TYPES.HALT ? 0x7f8c8d
+        : 0x00ff00;
+
       for (const tile of moveRange) {
         const threatKey = `${tile.x},${tile.y}`;
         const threatData = threatMap.get(threatKey);
@@ -1079,7 +1111,7 @@
 
         const h = new PIXI.Graphics();
         if (effectiveThreat > 0 || hasCounter) {
-          h.beginFill(0x00ff00, 0.18);
+          h.beginFill(moveHighlightColor, 0.18);
           h.drawRect(
             tile.x * boardConfig.tileSize,
             tile.y * boardConfig.tileSize,
@@ -1095,7 +1127,7 @@
             boardConfig.tileSize - 2
           );
         } else {
-          h.beginFill(0x00ff00, 0.3);
+          h.beginFill(moveHighlightColor, 0.3);
           h.drawRect(
             tile.x * boardConfig.tileSize,
             tile.y * boardConfig.tileSize,
@@ -1193,6 +1225,21 @@
           moveHighlights.push(moraleTag);
           overlayLayer.addChild(moraleTag);
         }
+      }
+
+      if (selSkillInfo) {
+        const skillLabel = new PIXI.Text(selSkillInfo.name, {
+          fontSize: 9,
+          fill: parseInt(selSkillInfo.color.replace('#', ''), 16),
+          stroke: 0x000000,
+          strokeThickness: 2,
+          fontWeight: 'bold'
+        });
+        skillLabel.anchor.set(0.5);
+        skillLabel.x = selectedUnitData.x * boardConfig.tileSize + boardConfig.tileSize / 2;
+        skillLabel.y = selectedUnitData.y * boardConfig.tileSize - 6;
+        moveHighlights.push(skillLabel);
+        overlayLayer.addChild(skillLabel);
       }
     }
 

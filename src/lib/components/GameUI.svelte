@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId, currentDrawHistory, currentPityCounter } from '$lib/stores/gameStore';
-  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG } from '$lib/config/unitConfig';
+  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, CARD_RARITY_LABELS, CARD_RARITY_COLORS, CARD_RARITY_BG, CARD_RARITY_ICONS, cardRarityConfig, eventCards } from '$lib/config/eventCardConfig';
   import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview } from '$lib/utils/gameLogic';
@@ -1209,6 +1209,11 @@
                         <span class="mini-stat-badge">🛡️ {getEffectiveDefense(unit)}</span>
                         <span class="mini-stat-badge">👟 {getUnitMoveRange(unit.type)}</span>
                         <span class="mini-stat-badge">🎯 {getUnitAttackRange(unit.type)}</span>
+                      </div>
+                      <div class="mini-stat-row" style="margin-top:2px;">
+                        <span class="mini-stat-badge" style="background:{MOVE_SKILL_INFO[unitConfig[unit.type]?.moveSkill]?.color || '#555'}33;color:{MOVE_SKILL_INFO[unitConfig[unit.type]?.moveSkill]?.color || '#fff'}">
+                          {MOVE_SKILL_INFO[unitConfig[unit.type]?.moveSkill]?.icon || ''} {MOVE_SKILL_INFO[unitConfig[unit.type]?.moveSkill]?.name || ''}
+                        </span>
                       </div>
                     </div>
                   {/if}

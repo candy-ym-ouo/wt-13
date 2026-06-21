@@ -1,3 +1,42 @@
+export const MOVE_SKILL_TYPES = {
+  CHARGE: 'charge',
+  PENETRATE: 'penetrate',
+  HALT: 'halt'
+};
+
+export const MOVE_SKILL_INFO = {
+  [MOVE_SKILL_TYPES.CHARGE]: {
+    name: '冲锋',
+    icon: '💨',
+    color: '#f39c12',
+    description: '可穿越敌方单位，移动后下次攻击伤害提升，但首格消耗+1',
+    canPassThroughEnemy: true,
+    firstTileExtraCost: 1,
+    postMoveAttackBonus: 0.25,
+    postMoveAttackBuffDuration: 1
+  },
+  [MOVE_SKILL_TYPES.PENETRATE]: {
+    name: '穿插',
+    icon: '⚔',
+    color: '#2ecc71',
+    description: '可穿越友方单位不停留，复杂地形消耗-1，穿越后防御提升',
+    canPassThroughFriendly: true,
+    terrainCostReduction: 1,
+    postPenetrateDefenseBonus: 0.15,
+    postPenetrateDefenseBuffDuration: 1
+  },
+  [MOVE_SKILL_TYPES.HALT]: {
+    name: '停驻',
+    icon: '🏰',
+    color: '#7f8c8d',
+    description: '未移动时防御大幅提升且免疫位移，但所有地形消耗+1',
+    terrainCostAdd: 1,
+    stationaryDefenseBonus: 0.3,
+    stationaryMoraleBonus: 5,
+    immuneToDisplacement: true
+  }
+};
+
 export const STATUS_EFFECT_TYPES = {
   STUN: 'stun',
   SLOW: 'slow',
@@ -273,6 +312,7 @@ export const unitConfig = {
     cost: 100,
     color: 0xe74c3c,
     description: '攻守平衡，克制骑兵',
+    moveSkill: MOVE_SKILL_TYPES.PENETRATE,
     statusResistance: {
       [STATUS_EFFECT_TYPES.STUN]: 0.1,
       [STATUS_EFFECT_TYPES.SLOW]: 0.2,
@@ -291,6 +331,7 @@ export const unitConfig = {
     cost: 150,
     color: 0xf39c12,
     description: '高机动高攻击，克制弓兵',
+    moveSkill: MOVE_SKILL_TYPES.CHARGE,
     statusResistance: {
       [STATUS_EFFECT_TYPES.SLOW]: 0.3,
       [STATUS_EFFECT_TYPES.STUN]: 0.15
@@ -307,6 +348,7 @@ export const unitConfig = {
     cost: 120,
     color: 0x9b59b6,
     description: '远程攻击，克制法师',
+    moveSkill: MOVE_SKILL_TYPES.PENETRATE,
     statusResistance: {
       [STATUS_EFFECT_TYPES.BURN]: 0.1,
       [STATUS_EFFECT_TYPES.POISON]: 0.1
@@ -323,6 +365,7 @@ export const unitConfig = {
     cost: 200,
     color: 0x1abc9c,
     description: '高伤害法术，克制步兵',
+    moveSkill: MOVE_SKILL_TYPES.PENETRATE,
     statusResistance: {
       [STATUS_EFFECT_TYPES.SILENCE]: 0.25,
       [STATUS_EFFECT_TYPES.FREEZE]: 0.2,
@@ -340,6 +383,7 @@ export const unitConfig = {
     cost: 180,
     color: 0x7f8c8d,
     description: '高生命高防御，移动缓慢',
+    moveSkill: MOVE_SKILL_TYPES.HALT,
     statusResistance: {
       [STATUS_EFFECT_TYPES.STUN]: 0.35,
       [STATUS_EFFECT_TYPES.FREEZE]: 0.3,

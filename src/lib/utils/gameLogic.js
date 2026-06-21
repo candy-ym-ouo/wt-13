@@ -1,5 +1,5 @@
 import { boardConfig, tileEffectConfig, TILE_EFFECT_TYPES } from '$lib/config/boardConfig';
-import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG } from '$lib/config/unitConfig';
+import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 
 /**
@@ -282,6 +282,116 @@ export function getEffectiveMoveCost(x, y, tileEffects, boardLayout) {
 }
 
 /**
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @returns {string}
+ */
+export function getMoveSkillForUnit(unit, unitType) {
+  const config = unitConfig[unitType];
+  return config.moveSkill || MOVE_SKILL_TYPES.PENETRATE;
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {Record<string, TileEffect> | null} tileEffects
+ * @param {string[][] | null} [boardLayout]
+ * @param {string} [moveSkill]
+ * @param {number} [pathStep]
+ * @returns {number}
+ */
+export function getEffectiveMoveCostWithSkill(x, y, tileEffects, boardLayout, moveSkill, pathStep) {
+  let cost = getEffectiveMoveCost(x, y, tileEffects, boardLayout);
+  if (!moveSkill) return cost;
+
+  const skillInfo = MOVE_SKILL_INFO[moveSkill];
+  if (!skillInfo) return cost;
+
+  if (moveSkill === MOVE_SKILL_TYPES.CHARGE) {
+    if (pathStep === 0 && skillInfo.firstTileExtraCost) {
+      cost += skillInfo.firstTileExtraCost;
+    }
+  }
+
+  if (moveSkill === MOVE_SKILL_TYPES.PENETRATE) {
+    if (skillInfo.terrainCostReduction && cost > 1) {
+      cost = Math.max(1, cost - skillInfo.terrainCostReduction);
+    }
+  }
+
+  if (moveSkill === MOVE_SKILL_TYPES.HALT) {
+    if (skillInfo.terrainCostAdd) {
+      cost += skillInfo.terrainCostAdd;
+    }
+  }
+
+  return cost;
+}
+
+/**
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @returns {boolean}
+ */
+export function isUnitImmuneToDisplacement(unit, unitType) {
+  const moveSkill = getMoveSkillForUnit(unit, unitType);
+  if (moveSkill === MOVE_SKILL_TYPES.HALT) {
+    return MOVE_SKILL_INFO[MOVE_SKILL_TYPES.HALT].immuneToDisplacement || false;
+  }
+  return false;
+}
+
+/**
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @returns {{ defenseBonus: number, moraleBonus: number }}
+ */
+export function getHaltStationaryBonus(unit, unitType) {
+  const moveSkill = getMoveSkillForUnit(unit, unitType);
+  if (moveSkill !== MOVE_SKILL_TYPES.HALT) return { defenseBonus: 0, moraleBonus: 0 };
+  if (unit.hasMoved) return { defenseBonus: 0, moraleBonus: 0 };
+  const skillInfo = MOVE_SKILL_INFO[MOVE_SKILL_TYPES.HALT];
+  return {
+    defenseBonus: skillInfo.stationaryDefenseBonus || 0,
+    moraleBonus: skillInfo.stationaryMoraleBonus || 0
+  };
+}
+
+/**
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @returns {{ attackBonus: number, duration: number }}
+ */
+export function getChargePostMoveBonus(unit, unitType) {
+  const moveSkill = getMoveSkillForUnit(unit, unitType);
+  if (moveSkill !== MOVE_SKILL_TYPES.CHARGE) return { attackBonus: 0, duration: 0 };
+  if (!unit.hasMoved) return { attackBonus: 0, duration: 0 };
+  const skillInfo = MOVE_SKILL_INFO[MOVE_SKILL_TYPES.CHARGE];
+  return {
+    attackBonus: skillInfo.postMoveAttackBonus || 0,
+    duration: skillInfo.postMoveAttackBuffDuration || 1
+  };
+}
+
+/**
+ * @param {{x: number, y: number}[]} path
+ * @param {Unit[]} units
+ * @param {string} faction
+ * @param {string} moveSkill
+ * @returns {boolean}
+ */
+export function didPathPassThroughFriendly(path, units, faction, moveSkill) {
+  if (moveSkill !== MOVE_SKILL_TYPES.PENETRATE) return false;
+  for (const pos of path) {
+    const unitAtPos = units.find(u => u.x === pos.x && u.y === pos.y);
+    if (unitAtPos && unitAtPos.faction === faction) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * @param {Unit[]} units
  * @param {Record<string, TileEffect>} tileEffects
  * @returns {TileEffectResult[]}
@@ -385,11 +495,14 @@ export function isPassable(x, y, boardLayout) {
  */
 export function getMoveRange(unit, units, boardLayout, tileEffects) {
   const moveRange = getEffectiveMoveRange(unit, /** @type {UnitType} */ (unit.type));
+  const moveSkill = getMoveSkillForUnit(unit, /** @type {UnitType} */ (unit.type));
+  const isCharge = moveSkill === MOVE_SKILL_TYPES.CHARGE;
+  const isPenetrate = moveSkill === MOVE_SKILL_TYPES.PENETRATE;
 
   /** @type {Map<string, number>} */
   const visited = new Map();
-  /** @type {{x: number, y: number, cost: number}[]} */
-  const queue = [{ x: unit.x, y: unit.y, cost: 0 }];
+  /** @type {{x: number, y: number, cost: number, step: number}[]} */
+  const queue = [{ x: unit.x, y: unit.y, cost: 0, step: 0 }];
   visited.set(`${unit.x},${unit.y}`, 0);
 
   while (queue.length > 0) {
@@ -409,7 +522,7 @@ export function getMoveRange(unit, units, boardLayout, tileEffects) {
     for (const neighbor of neighbors) {
       if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
 
-      const newCost = current.cost + getEffectiveMoveCost(neighbor.x, neighbor.y, tileEffects || null, boardLayout);
+      const newCost = current.cost + getEffectiveMoveCostWithSkill(neighbor.x, neighbor.y, tileEffects || null, boardLayout, moveSkill, current.step);
 
       if (newCost > moveRange) continue;
 
@@ -417,10 +530,16 @@ export function getMoveRange(unit, units, boardLayout, tileEffects) {
       if (visited.has(key) && /** @type {number} */ (visited.get(key)) <= newCost) continue;
 
       const unitAtPos = units.find(/** @param {Unit} u */ u => u.x === neighbor.x && u.y === neighbor.y);
-      if (unitAtPos && unitAtPos.faction !== unit.faction) continue;
+      if (unitAtPos) {
+        if (unitAtPos.faction !== unit.faction) {
+          if (!isCharge) continue;
+        } else {
+          if (!isPenetrate && unitAtPos.id !== unit.id) continue;
+        }
+      }
 
       visited.set(key, newCost);
-      queue.push({ x: neighbor.x, y: neighbor.y, cost: newCost });
+      queue.push({ x: neighbor.x, y: neighbor.y, cost: newCost, step: current.step + 1 });
     }
   }
 
@@ -532,6 +651,9 @@ export function getEnemyMoveAttackCoverage(enemy, allUnits, boardLayout, tileEff
   const enemyType = /** @type {UnitType} */ (enemy.type);
   const attackRange = getEffectiveAttackRange(enemy, enemyType);
   const moveRange = getEffectiveMoveRange(enemy, enemyType);
+  const moveSkill = getMoveSkillForUnit(enemy, enemyType);
+  const isCharge = moveSkill === MOVE_SKILL_TYPES.CHARGE;
+  const isPenetrate = moveSkill === MOVE_SKILL_TYPES.PENETRATE;
 
   /** @type {Set<string>} */
   const covered = new Set();
@@ -555,7 +677,7 @@ export function getEnemyMoveAttackCoverage(enemy, allUnits, boardLayout, tileEff
 
   /** @type {Map<string, number>} */
   const visited = new Map();
-  const queue = [{ x: enemy.x, y: enemy.y, cost: 0 }];
+  const queue = [{ x: enemy.x, y: enemy.y, cost: 0, step: 0 }];
   visited.set(`${enemy.x},${enemy.y}`, 0);
 
   while (queue.length > 0) {
@@ -584,14 +706,20 @@ export function getEnemyMoveAttackCoverage(enemy, allUnits, boardLayout, tileEff
 
     for (const neighbor of neighbors) {
       if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
-      const newCost = current.cost + getEffectiveMoveCost(neighbor.x, neighbor.y, tileEffects || null, boardLayout);
+      const newCost = current.cost + getEffectiveMoveCostWithSkill(neighbor.x, neighbor.y, tileEffects || null, boardLayout, moveSkill, current.step);
       if (newCost > moveRange) continue;
       const key = `${neighbor.x},${neighbor.y}`;
       if (visited.has(key) && /** @type {number} */ (visited.get(key)) <= newCost) continue;
       const unitAtPos = allUnits.find(u => u.x === neighbor.x && u.y === neighbor.y);
-      if (unitAtPos && unitAtPos.faction !== enemy.faction) continue;
+      if (unitAtPos) {
+        if (unitAtPos.faction !== enemy.faction) {
+          if (!isCharge) continue;
+        } else {
+          if (!isPenetrate && unitAtPos.id !== enemy.id) continue;
+        }
+      }
       visited.set(key, newCost);
-      queue.push({ x: neighbor.x, y: neighbor.y, cost: newCost });
+      queue.push({ x: neighbor.x, y: neighbor.y, cost: newCost, step: current.step + 1 });
     }
   }
 
@@ -825,6 +953,9 @@ export function calculateDamage(attacker, defender, terrain) {
       if (buff.type === 'defenseBoost') {
         defense *= (1 + /** @type {number} */ (buff.value));
       }
+      if (buff.type === 'haltDefense') {
+        defense *= (1 + /** @type {number} */ (buff.value));
+      }
     }
   }
 
@@ -884,6 +1015,9 @@ export function calculateDamage(attacker, defender, terrain) {
  */
 export function findPath(start, end, units, unit, boardLayout, tileEffects) {
   const moveRange = getEffectiveMoveRange(unit, /** @type {UnitType} */ (unit.type));
+  const moveSkill = getMoveSkillForUnit(unit, /** @type {UnitType} */ (unit.type));
+  const isCharge = moveSkill === MOVE_SKILL_TYPES.CHARGE;
+  const isPenetrate = moveSkill === MOVE_SKILL_TYPES.PENETRATE;
 
   /** @type {Map<string, {x: number, y: number}>} */
   const openSet = new Map();
@@ -893,6 +1027,8 @@ export function findPath(start, end, units, unit, boardLayout, tileEffects) {
   const gScore = new Map();
   /** @type {Map<string, number>} */
   const fScore = new Map();
+  /** @type {Map<string, number>} */
+  const stepMap = new Map();
 
   const startKey = `${start.x},${start.y}`;
   const endKey = `${end.x},${end.y}`;
@@ -900,6 +1036,7 @@ export function findPath(start, end, units, unit, boardLayout, tileEffects) {
   openSet.set(startKey, start);
   gScore.set(startKey, 0);
   fScore.set(startKey, heuristic(start, end));
+  stepMap.set(startKey, 0);
 
   while (openSet.size > 0) {
     /** @type {string | null} */
@@ -932,6 +1069,8 @@ export function findPath(start, end, units, unit, boardLayout, tileEffects) {
     if (!current) break;
     openSet.delete(currentKey);
 
+    const currentStep = stepMap.get(currentKey) ?? 0;
+
     const neighbors = [
       { x: current.x - 1, y: current.y },
       { x: current.x + 1, y: current.y },
@@ -942,19 +1081,25 @@ export function findPath(start, end, units, unit, boardLayout, tileEffects) {
     for (const neighbor of neighbors) {
       if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
 
-      const tentativeG = (gScore.get(currentKey) ?? Infinity) + getEffectiveMoveCost(neighbor.x, neighbor.y, tileEffects || null, boardLayout);
+      const tentativeG = (gScore.get(currentKey) ?? Infinity) + getEffectiveMoveCostWithSkill(neighbor.x, neighbor.y, tileEffects || null, boardLayout, moveSkill, currentStep);
 
       if (tentativeG > moveRange) continue;
 
       const unitAtPos = units.find(/** @param {Unit} u */ u => u.x === neighbor.x && u.y === neighbor.y);
-      if (unitAtPos && unitAtPos.faction !== unit.faction) continue;
-      if (unitAtPos && unitAtPos.faction === unit.faction && unitAtPos.id !== unit.id) continue;
+      if (unitAtPos) {
+        if (unitAtPos.faction !== unit.faction) {
+          if (!isCharge) continue;
+        } else {
+          if (unitAtPos.id !== unit.id && !isPenetrate) continue;
+        }
+      }
 
       const neighborKey = `${neighbor.x},${neighbor.y}`;
       if (tentativeG < (gScore.get(neighborKey) ?? Infinity)) {
         cameFrom.set(neighborKey, currentKey);
         gScore.set(neighborKey, tentativeG);
         fScore.set(neighborKey, tentativeG + heuristic(neighbor, end));
+        stepMap.set(neighborKey, currentStep + 1);
 
         if (!openSet.has(neighborKey)) {
           openSet.set(neighborKey, neighbor);

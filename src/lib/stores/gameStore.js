@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
-import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG } from '$lib/config/unitConfig';
+import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
 import { debouncedAutoSave, cancelPendingAutoSave } from '$lib/utils/storageSave';
@@ -26,7 +26,11 @@ import {
   calculateCombatPreview,
   getTerrain,
   checkTimeoutVictory,
-  calculateScoreSettlement
+  calculateScoreSettlement,
+  getMoveSkillForUnit,
+  getHaltStationaryBonus,
+  getChargePostMoveBonus,
+  didPathPassThroughFriendly
 } from '$lib/utils/gameLogic';
 
 /**
@@ -484,6 +488,36 @@ function createGameState() {
       const fromY = unit?.y ?? 0;
       const unitName = unit ? unitConfig[/** @type {UnitType} */ (unit.type)].name : '';
       const unitFaction = unit?.faction || state.currentFaction;
+      const unitType = unit ? /** @type {UnitType} */ (unit.type) : 'infantry';
+      const moveSkill = unit ? getMoveSkillForUnit(unit, unitType) : MOVE_SKILL_TYPES.PENETRATE;
+      const skillInfo = MOVE_SKILL_INFO[moveSkill];
+
+      const passedThroughFriendly = unit
+        ? didPathPassThroughFriendly(path || [], state.units, unit.faction, moveSkill)
+        : false;
+
+      /** @type {{type: string, duration: number, value: number}[]} */
+      const moveSkillBuffs = [];
+
+      if (unit && moveSkill === MOVE_SKILL_TYPES.CHARGE) {
+        const chargeBonus = getChargePostMoveBonus({ ...unit, hasMoved: true }, unitType);
+        if (chargeBonus.attackBonus > 0) {
+          moveSkillBuffs.push({
+            type: 'attackBoost',
+            duration: chargeBonus.duration,
+            value: chargeBonus.attackBonus
+          });
+        }
+      }
+
+      if (passedThroughFriendly && moveSkill === MOVE_SKILL_TYPES.PENETRATE) {
+        const penetrateInfo = MOVE_SKILL_INFO[MOVE_SKILL_TYPES.PENETRATE];
+        moveSkillBuffs.push({
+          type: 'defenseBoost',
+          duration: penetrateInfo.postPenetrateDefenseBuffDuration || 1,
+          value: penetrateInfo.postPenetrateDefenseBonus || 0
+        });
+      }
 
       const units = state.units.map(/** @param {Unit} u */ u => {
         if (u.id === unitId) {
@@ -491,7 +525,12 @@ function createGameState() {
           if (bleedDmg > 0) {
             newHp = Math.max(0, u.currentHp - bleedDmg);
           }
-          return { ...u, x, y, hasMoved: true, path, currentHp: newHp };
+          let newBuffs = [...(u.buffs || [])];
+          for (const buff of moveSkillBuffs) {
+            newBuffs = newBuffs.filter(b => b.type !== buff.type);
+            newBuffs.push(buff);
+          }
+          return { ...u, x, y, hasMoved: true, path, currentHp: newHp, buffs: newBuffs };
         }
         return u;
       });
@@ -504,11 +543,22 @@ function createGameState() {
         statusMsgs.push(`${fName}${uName} 移动流血损失 ${bleedDmg} 生命`);
       }
 
+      if (moveSkillBuffs.length > 0 && unit) {
+        const fName = unit.faction === 'red' ? '红方' : '蓝方';
+        for (const buff of moveSkillBuffs) {
+          if (buff.type === 'attackBoost') {
+            statusMsgs.push(`${fName}${unitName}【冲锋】攻击+${Math.round(buff.value * 100)}%，持续${buff.duration}回合`);
+          } else if (buff.type === 'defenseBoost') {
+            statusMsgs.push(`${fName}${unitName}【穿插】防御+${Math.round(buff.value * 100)}%，持续${buff.duration}回合`);
+          }
+        }
+      }
+
       const filteredUnits = units.filter(u => u.currentHp > 0);
-      const died = units.length > filteredUnits.length;
 
       const factionName = unitFaction === 'red' ? '红方' : '蓝方';
-      const moveDesc = `${factionName}${unitName} 从 (${fromX},${fromY}) 移动到 (${x},${y})` +
+      const skillTag = skillInfo ? `【${skillInfo.name}】` : '';
+      const moveDesc = `${factionName}${unitName}${skillTag} 从 (${fromX},${fromY}) 移动到 (${x},${y})` +
         (bleedDmg > 0 ? `，流血损失 ${bleedDmg} 生命` : '');
 
       const moveLog = {
@@ -525,7 +575,9 @@ function createGameState() {
           to: { x, y },
           path: path || [],
           pathLength,
-          bleedDamage: bleedDmg
+          bleedDamage: bleedDmg,
+          moveSkill,
+          passedThroughFriendly
         },
         timestamp: Date.now()
       };
@@ -953,12 +1005,23 @@ function createGameState() {
 
         const newHp = Math.max(0, u.currentHp - dotResult.damage);
 
+        const isHaltUnit = getMoveSkillForUnit(u, unitType) === MOVE_SKILL_TYPES.HALT;
+        const willBeStationary = u.faction === nextFaction && !isCC;
+        let finalBuffs = newBuffs;
+        if (isHaltUnit && willBeStationary) {
+          const haltBonus = getHaltStationaryBonus({ ...u, hasMoved: false }, unitType);
+          if (haltBonus.defenseBonus > 0) {
+            finalBuffs = finalBuffs.filter(b => b.type !== 'haltDefense');
+            finalBuffs.push({ type: 'haltDefense', duration: 1, value: haltBonus.defenseBonus });
+          }
+        }
+
         return {
           ...u,
           hasMoved: isCC ? true : false,
           hasAttacked: isCC ? true : false,
           attackCount: 0,
-          buffs: newBuffs,
+          buffs: finalBuffs,
           stunned: flags.stunned > 0 && flags.stunned < 900 ? flags.stunned - 1 : 0,
           statusEffects: newStatusEffects,
           currentHp: newHp
