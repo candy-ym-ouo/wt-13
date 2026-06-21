@@ -251,6 +251,13 @@
       const bonuses = spec?.bonuses;
       if (bonuses?.atk) atk += bonuses.atk;
     }
+    if (unit.buffs) {
+      for (const buff of unit.buffs) {
+        if (buff.type === 'attackBoost') {
+          atk *= (1 + /** @type {number} */ (buff.value));
+        }
+      }
+    }
     return atk;
   }
 
@@ -268,6 +275,16 @@
       /** @type {any} */
       const bonuses = spec?.bonuses;
       if (bonuses?.def) def += bonuses.def;
+    }
+    if (unit.buffs) {
+      for (const buff of unit.buffs) {
+        if (buff.type === 'defenseBoost') {
+          def *= (1 + /** @type {number} */ (buff.value));
+        }
+        if (buff.type === 'haltDefense' && !unit.hasMoved) {
+          def *= (1 + /** @type {number} */ (buff.value));
+        }
+      }
     }
     return def;
   }

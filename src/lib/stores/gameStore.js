@@ -526,6 +526,7 @@ function createGameState() {
             newHp = Math.max(0, u.currentHp - bleedDmg);
           }
           let newBuffs = [...(u.buffs || [])];
+          newBuffs = newBuffs.filter(b => b.type !== 'haltDefense');
           for (const buff of moveSkillBuffs) {
             newBuffs = newBuffs.filter(b => b.type !== buff.type);
             newBuffs.push(buff);

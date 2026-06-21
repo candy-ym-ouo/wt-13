@@ -953,7 +953,7 @@ export function calculateDamage(attacker, defender, terrain) {
       if (buff.type === 'defenseBoost') {
         defense *= (1 + /** @type {number} */ (buff.value));
       }
-      if (buff.type === 'haltDefense') {
+      if (buff.type === 'haltDefense' && !defender.hasMoved) {
         defense *= (1 + /** @type {number} */ (buff.value));
       }
     }
