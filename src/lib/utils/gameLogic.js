@@ -2836,8 +2836,6 @@ export function updateEnemyMarkers(units, observerFaction, visibleTiles, existin
     } else if (existingMarker) {
       newMarkers.push({
         ...existingMarker,
-        x: enemy.x,
-        y: enemy.y,
         remainingTurns: existingMarker.remainingTurns - 1,
         detailedInfo: false
       });
