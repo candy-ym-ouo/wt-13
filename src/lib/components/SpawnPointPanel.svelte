@@ -11,8 +11,8 @@
   $: spawnPoints = campaign.spawnPoints;
   $: initialUnits = campaign.initialUnits;
   $: selectedSpawn = selectedSpawnId
-    ? [...spawnPoints.red.find(s => s.id === selectedSpawnId) ||
-      [...spawnPoints.blue.find(s => s.id === selectedSpawnId)]
+    ? spawnPoints.red.find(s => s.id === selectedSpawnId) ||
+      spawnPoints.blue.find(s => s.id === selectedSpawnId)
     : null;
 
   function selectSpawn(spawn, faction) {

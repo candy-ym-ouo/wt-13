@@ -1113,6 +1113,9 @@
       <button class="btn btn-secondary" on:click={handleShowRoster}>
         🏋️ 阵容
       </button>
+      <button class="btn btn-secondary" on:click={() => window.location.href = '/legion'}>
+        🏰 军团
+      </button>
       <button class="btn btn-secondary" on:click={handleShowSaveLoad}>
         💾 存档
       </button>
