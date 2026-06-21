@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
-import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
+import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
 import {
@@ -122,6 +122,76 @@ import {
  */
 
 /**
+ * @param {number} currentExp
+ * @param {number} currentLevel
+ * @returns {{ newLevel: number; newExp: number; gainedPoints: number }}
+ */
+function checkLevelUp(currentExp, currentLevel) {
+  const thresholds = gameRules.experience.levelThresholds;
+  const maxLevel = gameRules.experience.maxLevel;
+  let newLevel = currentLevel;
+  let gainedPoints = 0;
+
+  for (let i = thresholds.length - 1; i >= 0; i--) {
+    if (currentExp >= thresholds[i] && (i + 1) > currentLevel) {
+      const levelsGained = (i + 1) - currentLevel;
+      newLevel = i + 1;
+      gainedPoints = levelsGained * gameRules.experience.statPointsPerLevel;
+      break;
+    }
+  }
+
+  if (newLevel > maxLevel) {
+    newLevel = maxLevel;
+  }
+
+  return { newLevel, newExp: currentExp, gainedPoints };
+}
+
+/**
+ * @param {Unit} unit
+ * @param {number} xpAmount
+ * @param {string} reason
+ * @returns {{ unit: Unit; leveledUp: boolean; oldLevel: number; newLevel: number; gainedPoints: number }}
+ */
+function grantXPToUnit(unit, xpAmount, reason) {
+  if (!xpAmount || xpAmount <= 0) return { unit, leveledUp: false, oldLevel: unit.level || 1, newLevel: unit.level || 1, gainedPoints: 0 };
+
+  const oldLevel = unit.level || 1;
+  const newExp = (unit.exp || 0) + xpAmount;
+  const result = checkLevelUp(newExp, oldLevel);
+
+  const allocatedStats = unit.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 };
+  const growth = gameRules.experience.statGrowth;
+  const hpBonus = allocatedStats.hp * growth.hp;
+  const specConfig = unit.specialization ? SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization) : null;
+  const specHpBonus = specConfig?.bonuses?.hp || 0;
+
+  let updatedMaxHp = unitConfig[/** @type {UnitType} */ (unit.type)].hp + hpBonus + specHpBonus;
+  let updatedCurrentHp = unit.currentHp;
+
+  if (result.newLevel > oldLevel) {
+    const levelDiff = result.newLevel - oldLevel;
+    updatedCurrentHp = Math.min(updatedCurrentHp + levelDiff * 5, updatedMaxHp);
+  }
+
+  return {
+    unit: {
+      ...unit,
+      exp: newExp,
+      level: result.newLevel,
+      statPoints: (unit.statPoints || 0) + result.gainedPoints,
+      maxHp: updatedMaxHp,
+      currentHp: updatedCurrentHp
+    },
+    leveledUp: result.newLevel > oldLevel,
+    oldLevel,
+    newLevel: result.newLevel,
+    gainedPoints: result.gainedPoints
+  };
+}
+
+/**
  * @returns {BaseState[]}
  */
 function createInitialBases() {
@@ -162,14 +232,15 @@ function createInitialState() {
   for (const faction of factions) {
     for (const unitDef of initialUnits[faction]) {
       const config = unitConfig[unitDef.type];
+      const baseHp = config.hp;
       units.push({
         id: `unit_${unitId++}`,
         type: unitDef.type,
         faction,
         x: unitDef.x,
         y: unitDef.y,
-        currentHp: config.hp,
-        maxHp: config.hp,
+        currentHp: baseHp,
+        maxHp: baseHp,
         hasMoved: false,
         hasAttacked: false,
         attackCount: 0,
@@ -177,7 +248,13 @@ function createInitialState() {
         stunned: 0,
         morale: gameRules.morale.initial,
         winStreak: 0,
-        statusEffects: []
+        statusEffects: [],
+        persistentId: `${faction}_${unitDef.type}_${unitDef.x}_${unitDef.y}`,
+        exp: 0,
+        level: 1,
+        statPoints: 0,
+        allocatedStats: { atk: 0, def: 0, hp: 0, move: 0 },
+        specialization: null
       });
     }
   }
@@ -665,6 +742,52 @@ function createGameState() {
         }
       }
 
+      /** @type {string[]} */
+      const xpMsgs = [];
+      if (attacker && !attackerDeadFromCounter) {
+        const atkXp = gameRules.experience.onAttack + (defenderDead ? gameRules.experience.onKill : 0);
+        const atkResult = grantXPToUnit(updatedUnits.find(u => u.id === attackerId) || updatedUnits[0], atkXp, defenderDead ? '攻击+击杀' : '攻击');
+        updatedUnits = updatedUnits.map(u => u.id === attackerId ? atkResult.unit : u);
+        if (atkResult.leveledUp) {
+          const fName = attackerFaction === 'red' ? '红方' : '蓝方';
+          xpMsgs.push(`${fName}${attackerName} 升级！Lv.${atkResult.oldLevel}→Lv.${atkResult.newLevel}，获得${atkResult.gainedPoints}属性点`);
+        }
+      }
+      if (defender && !defenderDead && attackerDeadFromCounter) {
+        const defXp = gameRules.experience.onAttack + gameRules.experience.onKill;
+        const defResult = grantXPToUnit(updatedUnits.find(u => u.id === defenderId) || updatedUnits[0], defXp, '反击击杀');
+        updatedUnits = updatedUnits.map(u => u.id === defenderId ? defResult.unit : u);
+        if (defResult.leveledUp) {
+          const fName = defenderFaction === 'red' ? '红方' : '蓝方';
+          xpMsgs.push(`${fName}${defenderName} 升级！Lv.${defResult.oldLevel}→Lv.${defResult.newLevel}，获得${defResult.gainedPoints}属性点`);
+        }
+      }
+
+      if (xpMsgs.length > 0) {
+        const xpLog = {
+          id: `log_${Date.now()}_xp_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction: state.currentFaction,
+          type: /** @type {ActionLogType} */ ('status'),
+          description: xpMsgs.join('；'),
+          details: { xpMessages: xpMsgs },
+          timestamp: Date.now()
+        };
+        const lastLog = newActionLogs[newActionLogs.length - 1];
+        if (lastLog && lastLog.turn === state.turn && lastLog.faction === state.currentFaction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastLog,
+            actions: [...lastLog.actions, xpLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: state.currentFaction,
+            actions: [xpLog]
+          });
+        }
+      }
+
       return {
         ...state,
         units: updatedUnits,
@@ -949,6 +1072,48 @@ function createGameState() {
         actions: [turnEndLog]
       });
 
+      const surviveXp = gameRules.experience.onSurviveTurn;
+      if (surviveXp > 0) {
+        /** @type {string[]} */
+        const surviveXpMsgs = [];
+        units = units.map(u => {
+          if (u.faction === state.currentFaction) {
+            const result = grantXPToUnit(u, surviveXp, '存活');
+            if (result.leveledUp) {
+              const uName = unitConfig[/** @type {UnitType} */ (u.type)].name;
+              const fName = u.faction === 'red' ? '红方' : '蓝方';
+              surviveXpMsgs.push(`${fName}${uName} 升级！Lv.${result.oldLevel}→Lv.${result.newLevel}，获得${result.gainedPoints}属性点`);
+            }
+            return result.unit;
+          }
+          return u;
+        });
+        if (surviveXpMsgs.length > 0) {
+          const xpLog = {
+            id: `log_${Date.now()}_xp_${Math.random().toString(36).slice(2, 6)}`,
+            turn: state.turn,
+            faction: state.currentFaction,
+            type: /** @type {ActionLogType} */ ('status'),
+            description: surviveXpMsgs.join('；'),
+            details: { xpMessages: surviveXpMsgs },
+            timestamp: Date.now()
+          };
+          const lastLog = newActionLogs[newActionLogs.length - 1];
+          if (lastLog && lastLog.turn === state.turn && lastLog.faction === state.currentFaction) {
+            newActionLogs[newActionLogs.length - 1] = {
+              ...lastLog,
+              actions: [...lastLog.actions, xpLog]
+            };
+          } else {
+            newActionLogs.push({
+              turn: state.turn,
+              faction: state.currentFaction,
+              actions: [xpLog]
+            });
+          }
+        }
+      }
+
       return {
         ...state,
         currentFaction: nextFaction,
@@ -1002,8 +1167,52 @@ function createGameState() {
         });
       }
 
+      const winXp = gameRules.experience.onWin;
+      let units = state.units;
+      /** @type {string[]} */
+      const winXpMsgs = [];
+      if (winXp > 0) {
+        units = units.map(u => {
+          if (u.faction === winner) {
+            const result = grantXPToUnit(u, winXp, '胜利');
+            if (result.leveledUp) {
+              const uName = unitConfig[/** @type {UnitType} */ (u.type)].name;
+              const fName = u.faction === 'red' ? '红方' : '蓝方';
+              winXpMsgs.push(`${fName}${uName} 升级！Lv.${result.oldLevel}→Lv.${result.newLevel}，获得${result.gainedPoints}属性点`);
+            }
+            return result.unit;
+          }
+          return u;
+        });
+        if (winXpMsgs.length > 0) {
+          const xpLog = {
+            id: `log_${Date.now()}_xp_${Math.random().toString(36).slice(2, 6)}`,
+            turn: state.turn,
+            faction: winner,
+            type: /** @type {ActionLogType} */ ('status'),
+            description: winXpMsgs.join('；'),
+            details: { xpMessages: winXpMsgs },
+            timestamp: Date.now()
+          };
+          const lastLog = newActionLogs[newActionLogs.length - 1];
+          if (lastLog && lastLog.turn === state.turn && lastLog.faction === winner) {
+            newActionLogs[newActionLogs.length - 1] = {
+              ...lastLog,
+              actions: [...lastLog.actions, xpLog]
+            };
+          } else {
+            newActionLogs.push({
+              turn: state.turn,
+              faction: winner,
+              actions: [xpLog]
+            });
+          }
+        }
+      }
+
       return {
         ...state,
+        units,
         gameOver: true,
         winner,
         victoryCondition: condition,
@@ -1187,7 +1396,7 @@ function createGameState() {
             statusMsgs.push(`${uName} 被禁疗，治疗无效！`);
             return u;
           }
-          const maxHp = unitConfig[/** @type {UnitType} */ (u.type)].hp;
+          const maxHp = u.maxHp || unitConfig[/** @type {UnitType} */ (u.type)].hp;
           return { ...u, currentHp: Math.min(maxHp, u.currentHp + amount) };
         }
         return u;
@@ -1942,7 +2151,159 @@ function createGameState() {
     /**
      * @param {BaseState[]} newBases
      */
-    setBases: (newBases) => update(state => ({ ...state, bases: newBases }))
+    setBases: (newBases) => update(state => ({ ...state, bases: newBases })),
+    /**
+     * @param {string} unitId
+     * @param {'atk' | 'def' | 'hp' | 'move'} stat
+     */
+    allocateStatPoint: (unitId, stat) => update(state => {
+      const unit = state.units.find(u => u.id === unitId);
+      if (!unit) return state;
+      if ((unit.statPoints || 0) <= 0) return state;
+
+      const allocatedStats = { ...(unit.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 }) };
+      allocatedStats[stat] = (allocatedStats[stat] || 0) + 1;
+
+      const growth = gameRules.experience.statGrowth;
+      let maxHp = unit.maxHp;
+      let currentHp = unit.currentHp;
+      if (stat === 'hp') {
+        maxHp += growth.hp;
+        currentHp += growth.hp;
+      }
+
+      const specConfig = unit.specialization ? SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization) : null;
+      const specHpBonus = specConfig?.bonuses?.hp || 0;
+      const baseMaxHp = unitConfig[/** @type {UnitType} */ (unit.type)].hp + allocatedStats.hp * growth.hp + specHpBonus;
+      maxHp = baseMaxHp;
+
+      const units = state.units.map(u => {
+        if (u.id === unitId) {
+          return {
+            ...u,
+            statPoints: (u.statPoints || 0) - 1,
+            allocatedStats,
+            maxHp,
+            currentHp: stat === 'hp' ? Math.min(currentHp, maxHp) : u.currentHp
+          };
+        }
+        return u;
+      });
+
+      const uName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+      const statNames = { atk: '攻击', def: '防御', hp: '生命', move: '移动' };
+      const desc = `${uName} 分配1点至${statNames[stat]}（剩余${(unit.statPoints || 0) - 1}点）`;
+      const log = {
+        id: `log_${Date.now()}_alloc_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: unit.faction,
+        type: /** @type {ActionLogType} */ ('status'),
+        description: desc,
+        details: { unitId, stat, allocatedStats },
+        timestamp: Date.now()
+      };
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === unit.faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, log]
+        };
+      } else {
+        newActionLogs.push({ turn: state.turn, faction: unit.faction, actions: [log] });
+      }
+
+      return { ...state, units, actionLogs: newActionLogs, lastActionLog: log };
+    }),
+    /**
+     * @param {string} unitId
+     * @param {string} specId
+     */
+    chooseSpecialization: (unitId, specId) => update(state => {
+      const unit = state.units.find(u => u.id === unitId);
+      if (!unit) return state;
+      if ((unit.level || 1) < gameRules.experience.specializationLevel) return state;
+      if (unit.specialization) return state;
+
+      const specOptions = SPECIALIZATION_CONFIG[unit.type];
+      if (!specOptions || !specOptions.find(s => s.id === specId)) return state;
+
+      const spec = specOptions.find(s => s.id === specId);
+      const growth = gameRules.experience.statGrowth;
+      const allocatedStats = unit.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 };
+      const specHpBonus = spec?.bonuses?.hp || 0;
+      const newMaxHp = unitConfig[/** @type {UnitType} */ (unit.type)].hp + allocatedStats.hp * growth.hp + specHpBonus;
+
+      const units = state.units.map(u => {
+        if (u.id === unitId) {
+          return {
+            ...u,
+            specialization: specId,
+            maxHp: newMaxHp,
+            currentHp: Math.min(u.currentHp + (specHpBonus || 0), newMaxHp)
+          };
+        }
+        return u;
+      });
+
+      const uName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+      const specName = spec?.name || specId;
+      const desc = `${uName} 选择能力分化：【${specName}】${spec?.description || ''}`;
+      const log = {
+        id: `log_${Date.now()}_spec_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: unit.faction,
+        type: /** @type {ActionLogType} */ ('status'),
+        description: desc,
+        details: { unitId, specId, specName },
+        timestamp: Date.now()
+      };
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === unit.faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, log]
+        };
+      } else {
+        newActionLogs.push({ turn: state.turn, faction: unit.faction, actions: [log] });
+      }
+
+      return { ...state, units, actionLogs: newActionLogs, lastActionLog: log };
+    }),
+    /**
+     * @param {import('../utils/storageRoster').RosterUnit[]} rosterUnits
+     * @param {string} faction
+     */
+    loadRosterIntoGame: (rosterUnits, faction) => update(state => {
+      if (!rosterUnits || rosterUnits.length === 0) return state;
+
+      const growth = gameRules.experience.statGrowth;
+      const units = state.units.map(u => {
+        if (u.faction !== faction) return u;
+        const rosterMatch = rosterUnits.find(r => r.type === u.type);
+        if (!rosterMatch) return u;
+
+        const allocatedStats = rosterMatch.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 };
+        const specConfig = rosterMatch.specialization ? SPECIALIZATION_CONFIG[u.type]?.find(s => s.id === rosterMatch.specialization) : null;
+        const specHpBonus = specConfig?.bonuses?.hp || 0;
+        const newMaxHp = unitConfig[/** @type {UnitType} */ (u.type)].hp + allocatedStats.hp * growth.hp + specHpBonus;
+
+        return {
+          ...u,
+          persistentId: rosterMatch.persistentId,
+          exp: rosterMatch.exp || 0,
+          level: rosterMatch.level || 1,
+          statPoints: rosterMatch.statPoints || 0,
+          allocatedStats,
+          specialization: rosterMatch.specialization || null,
+          maxHp: newMaxHp,
+          currentHp: newMaxHp
+        };
+      });
+
+      return { ...state, units };
+    })
   };
 }
 

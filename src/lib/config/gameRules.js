@@ -78,6 +78,22 @@ export const gameRules = {
       minDurationOnResist: 1
     }
   },
+  experience: {
+    onAttack: 10,
+    onKill: 30,
+    onSurviveTurn: 5,
+    onWin: 20,
+    maxLevel: 5,
+    levelThresholds: [0, 100, 250, 450, 700],
+    statPointsPerLevel: 2,
+    specializationLevel: 3,
+    statGrowth: {
+      atk: 3,
+      def: 3,
+      hp: 15,
+      move: 1
+    }
+  },
   summon: {
     maxUnitsPerFaction: 12,
     adjacentSearchRadius: 2,

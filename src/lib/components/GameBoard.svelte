@@ -460,6 +460,48 @@
       container.addChild(stunIcon);
     }
 
+    const level = unit.level || 1;
+    if (level > 1) {
+      const levelBadge = new PIXI.Graphics();
+      levelBadge.beginFill(0xe67e22);
+      levelBadge.drawCircle(-18, -22, 8);
+      levelBadge.endFill();
+      container.addChild(levelBadge);
+      const levelText = new PIXI.Text(`${level}`, {
+        fontSize: 9,
+        fill: 0xffffff,
+        fontWeight: 'bold'
+      });
+      levelText.anchor.set(0.5);
+      levelText.x = -18;
+      levelText.y = -22;
+      container.addChild(levelText);
+    }
+
+    if (unit.specialization) {
+      const specRing = new PIXI.Graphics();
+      specRing.lineStyle(2, 0x9b59b6, 0.8);
+      specRing.drawCircle(0, 0, boardConfig.tileSize * 0.38);
+      container.addChild(specRing);
+    }
+
+    if ((unit.statPoints || 0) > 0) {
+      const pointDot = new PIXI.Graphics();
+      pointDot.beginFill(0xf1c40f);
+      pointDot.drawCircle(18, -22, 5);
+      pointDot.endFill();
+      container.addChild(pointDot);
+      const pointText = new PIXI.Text('!', {
+        fontSize: 8,
+        fill: 0x000000,
+        fontWeight: 'bold'
+      });
+      pointText.anchor.set(0.5);
+      pointText.x = 18;
+      pointText.y = -22;
+      container.addChild(pointText);
+    }
+
     return container;
   }
 
@@ -999,7 +1041,13 @@
       stunned: 0,
       morale: gameRules.morale.initial,
       winStreak: 0,
-      statusEffects: []
+      statusEffects: [],
+      persistentId: `${faction}_${unitType}_summon_${Date.now()}`,
+      exp: 0,
+      level: 1,
+      statPoints: 0,
+      allocatedStats: { atk: 0, def: 0, hp: 0, move: 0 },
+      specialization: null
     };
     gameState.addUnit(newUnit);
 
@@ -1100,6 +1148,18 @@
     const attackerKilledByCounter = actualCounterDmg > 0 && attacker.currentHp - actualCounterDmg <= 0;
 
     gameState.attack(attacker.id, defender.id, damage);
+
+    gameState.grantXPToUnit(attacker.id, gameRules.experience.onAttack);
+    if (killOccurred) {
+      gameState.grantXPToUnit(attacker.id, gameRules.experience.onKill);
+    }
+
+    if (willCounter && !counterShielded && actualCounterDmg > 0) {
+      gameState.grantXPToUnit(defender.id, gameRules.experience.onAttack);
+      if (attackerKilledByCounter) {
+        gameState.grantXPToUnit(defender.id, gameRules.experience.onKill);
+      }
+    }
     
     const hasDoubleAttack = attacker.buffs?.some(
       /** @param {any} b */

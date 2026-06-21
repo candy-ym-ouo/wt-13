@@ -1,12 +1,13 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId, currentDrawHistory, currentPityCounter } from '$lib/stores/gameStore';
-  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
+  import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, CARD_RARITY_LABELS, CARD_RARITY_COLORS, CARD_RARITY_BG, CARD_RARITY_ICONS, cardRarityConfig, eventCards } from '$lib/config/eventCardConfig';
   import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview } from '$lib/utils/gameLogic';
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
+  import { saveRosterFromGame, getFactionRoster, clearRoster, loadRoster } from '$lib/utils/storageRoster';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -77,6 +78,101 @@
   $: combatPreview = getCombatPreview();
 
   let recordSaved = false;
+  let showRoster = false;
+  let rosterSaved = false;
+
+  /**
+   * @param {Unit} unit
+   * @returns {number}
+   */
+  function getXpForNextLevel(unit) {
+    const level = unit.level || 1;
+    const thresholds = gameRules.experience.levelThresholds;
+    if (level >= thresholds.length) return thresholds[thresholds.length - 1];
+    return thresholds[level] || 999;
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {number}
+   */
+  function getXpProgress(unit) {
+    const level = unit.level || 1;
+    const exp = unit.exp || 0;
+    const thresholds = gameRules.experience.levelThresholds;
+    const currentThreshold = level >= 2 ? thresholds[level - 1] : 0;
+    const nextThreshold = level < thresholds.length ? thresholds[level] : thresholds[thresholds.length - 1];
+    if (nextThreshold === currentThreshold) return 100;
+    return Math.min(100, Math.floor(((exp - currentThreshold) / (nextThreshold - currentThreshold)) * 100));
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {{ id: string; name: string; description: string }[]}
+   */
+  function getSpecOptions(unit) {
+    return SPECIALIZATION_CONFIG[unit.type] || [];
+  }
+
+  /**
+   * @param {string} specId
+   * @param {string} unitType
+   * @returns {string}
+   */
+  function getSpecName(specId, unitType) {
+    const spec = SPECIALIZATION_CONFIG[unitType]?.find(s => s.id === specId);
+    return spec?.name || specId || '';
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {number}
+   */
+  function getEffectiveAttack(unit) {
+    const config = unitConfig[unit.type];
+    const allocated = unit.allocatedStats || { atk: 0 };
+    const growth = gameRules.experience.statGrowth;
+    let atk = config.attack + (allocated.atk || 0) * growth.atk;
+    if (unit.specialization) {
+      const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
+      if (spec?.bonuses?.atk) atk += spec.bonuses.atk;
+    }
+    return atk;
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {number}
+   */
+  function getEffectiveDefense(unit) {
+    const config = unitConfig[unit.type];
+    const allocated = unit.allocatedStats || { def: 0 };
+    const growth = gameRules.experience.statGrowth;
+    let def = config.defense + (allocated.def || 0) * growth.def;
+    if (unit.specialization) {
+      const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
+      if (spec?.bonuses?.def) def += spec.bonuses.def;
+    }
+    return def;
+  }
+
+  function handleAllocateStat(unitId, stat) {
+    gameState.allocateStatPoint(unitId, stat);
+  }
+
+  function handleChooseSpec(unitId, specId) {
+    gameState.chooseSpecialization(unitId, specId);
+  }
+
+  function handleShowRoster() {
+    showRoster = !showRoster;
+  }
+
+  function handleClearRoster() {
+    if (confirm('确定要清除所有阵容存档吗？这将重置所有单位的等级和加点！')) {
+      clearRoster();
+    }
+  }
 
   onMount(() => {
     unsubscribe = gameState.subscribe(/** @param {GameState} s */ s => {
@@ -160,6 +256,11 @@
     };
     saveGameRecord(record);
     records = /** @type {GameRecord[]} */ (getGameRecords());
+
+    if (!rosterSaved) {
+      saveRosterFromGame(state.units, winner);
+      rosterSaved = true;
+    }
   }
 
   function handleEndTurn() {
@@ -173,6 +274,11 @@
     gameState.setBases(baseResult.bases);
 
     gameState.endTurn();
+
+    const survivingFactionUnits = state.units.filter(u => u.faction === state.currentFaction && u.currentHp > 0);
+    for (const unit of survivingFactionUnits) {
+      gameState.grantXPToUnit(unit.id, gameRules.experience.onSurviveTurn);
+    }
 
     const nextTurn = nextFaction === 'red' ? state.turn + 1 : state.turn;
     const nextDrawHistory = state.drawHistory[nextFaction] || {};
@@ -193,13 +299,25 @@
     gameState.selectCard(null);
 
     if (baseResult.victory) {
+      const winnerUnits = state.units.filter(u => u.faction === baseResult.victory.winner && u.currentHp > 0);
+      for (const unit of winnerUnits) {
+        gameState.grantXPToUnit(unit.id, gameRules.experience.onWin);
+      }
       gameState.setVictory(baseResult.victory.winner, baseResult.victory.condition);
     }
   }
 
   function handleRestart() {
     recordSaved = false;
+    rosterSaved = false;
     gameState.reset();
+    const roster = loadRoster();
+    for (const faction of ['red', 'blue']) {
+      const factionUnits = roster[faction]?.units || [];
+      if (factionUnits.length > 0) {
+        gameState.loadRosterIntoGame(factionUnits, faction);
+      }
+    }
     initHands();
     gameState.setMessage('游戏开始！红方先行动');
   }
@@ -675,6 +793,9 @@
       <button class="btn btn-secondary" on:click={handleShowRecords}>
         📊 记录
       </button>
+      <button class="btn btn-secondary" on:click={handleShowRoster}>
+        🏋️ 阵容
+      </button>
       <button class="btn btn-secondary" on:click={handleRestart}>
         🔄 重开
       </button>
@@ -753,6 +874,11 @@
           </div>
         {/if}
         <button class="btn btn-primary" on:click={handleRestart}>再来一局</button>
+        {#if !rosterSaved && state.winner}
+          <button class="btn btn-secondary" on:click={() => { saveRosterFromGame(state.units, state.winner); rosterSaved = true; }}>
+            💾 保存阵容存档
+          </button>
+        {/if}
       </div>
     </div>
   {/if}
@@ -990,11 +1116,70 @@
     </div>
   {/if}
 
+  {#if showRoster}
+    <div
+      class="records-overlay"
+      on:click|self={handleShowRoster}
+      role="dialog"
+      aria-label="阵容存档"
+      tabindex="0"
+      on:keydown={(e) => e.key === 'Escape' && handleShowRoster()}
+    >
+      <div class="records-panel">
+        <div class="records-header">
+          <h3>🏋️ 阵容存档</h3>
+          <button class="btn-close" on:click={handleShowRoster} aria-label="关闭">×</button>
+        </div>
+        <div class="roster-info">战后存活的单位将保留等级、加点和能力分化，下一局自动继承</div>
+        {#each ['red', 'blue'] as faction}
+          {@const factionRoster = getFactionRoster(faction)}
+          <div class="roster-faction-section">
+            <div class="roster-faction-header" style="color: {getFactionColor(faction)}">
+              {getFactionName(faction)}阵容（{factionRoster.length}名老兵）
+            </div>
+            {#if factionRoster.length === 0}
+              <div class="roster-empty">尚无存档单位</div>
+            {:else}
+              {#each factionRoster as rosterUnit (rosterUnit.persistentId)}
+                <div class="roster-unit-item">
+                  <span class="roster-unit-icon">{getUnitIcon(rosterUnit.type)}</span>
+                  <span class="roster-unit-name">{unitConfig[rosterUnit.type]?.name || rosterUnit.type}</span>
+                  <span class="roster-unit-level">Lv.{rosterUnit.level || 1}</span>
+                  {#if rosterUnit.specialization}
+                    <span class="roster-spec-badge">{getSpecName(rosterUnit.specialization, rosterUnit.type)}</span>
+                  {/if}
+                  <span class="roster-xp">XP {rosterUnit.exp || 0}</span>
+                  <span class="roster-battles">参战{rosterUnit.battlesSurvived || 0}局</span>
+                  <div class="roster-alloc">
+                    {#if (rosterUnit.allocatedStats?.atk || 0) > 0}<span class="alloc-tag atk">⚔+{(rosterUnit.allocatedStats.atk || 0) * gameRules.experience.statGrowth.atk}</span>{/if}
+                    {#if (rosterUnit.allocatedStats?.def || 0) > 0}<span class="alloc-tag def">🛡+{(rosterUnit.allocatedStats.def || 0) * gameRules.experience.statGrowth.def}</span>{/if}
+                    {#if (rosterUnit.allocatedStats?.hp || 0) > 0}<span class="alloc-tag hp">❤+{(rosterUnit.allocatedStats.hp || 0) * gameRules.experience.statGrowth.hp}</span>{/if}
+                    {#if (rosterUnit.allocatedStats?.move || 0) > 0}<span class="alloc-tag move">👟+{(rosterUnit.allocatedStats.move || 0) * gameRules.experience.statGrowth.move}</span>{/if}
+                    {#if (rosterUnit.statPoints || 0) > 0}<span class="alloc-tag points">🎯{rosterUnit.statPoints}点待分配</span>{/if}
+                  </div>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        {/each}
+        {#if getFactionRoster('red').length > 0 || getFactionRoster('blue').length > 0}
+          <button class="btn btn-danger btn-small" on:click={handleClearRoster}>
+            清除阵容存档
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   {#if selectedUnitData}
     <div class="unit-panel">
       <div class="unit-header">
         <span class="unit-icon">{getUnitIcon(selectedUnitData.type)}</span>
         <span class="unit-name">{getUnitName(selectedUnitData.type)}</span>
+        {#if selectedUnitData.specialization}
+          <span class="spec-badge">{getSpecName(selectedUnitData.specialization, selectedUnitData.type)}</span>
+        {/if}
+        <span class="unit-level-badge">Lv.{selectedUnitData.level || 1}</span>
         <span
           class="unit-faction"
           style="color: {getFactionColor(selectedUnitData.faction)}"
@@ -1012,6 +1197,16 @@
             ></div>
           </div>
           <span class="stat-value">{selectedUnitData.currentHp}/{selectedUnitData.maxHp}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">经验</span>
+          <div class="stat-bar">
+            <div
+              class="stat-fill xp"
+              style="width: {getXpProgress(selectedUnitData)}%"
+            ></div>
+          </div>
+          <span class="stat-value">{selectedUnitData.exp || 0}/{getXpForNextLevel(selectedUnitData)}</span>
         </div>
         <div class="stat">
           <span class="stat-label">士气</span>
@@ -1032,24 +1227,69 @@
         <div class="stat-row">
           <div class="stat-item">
             <span class="stat-label">攻击</span>
-            <span class="stat-value">{getUnitAttack(selectedUnitData.type)}</span>
+            <span class="stat-value">{getEffectiveAttack(selectedUnitData)}</span>
+            {#if (selectedUnitData.allocatedStats?.atk || 0) > 0}
+              <span class="stat-bonus">+{(selectedUnitData.allocatedStats?.atk || 0) * gameRules.experience.statGrowth.atk}</span>
+            {/if}
           </div>
           <div class="stat-item">
             <span class="stat-label">防御</span>
-            <span class="stat-value">{getUnitDefense(selectedUnitData.type)}</span>
+            <span class="stat-value">{getEffectiveDefense(selectedUnitData)}</span>
+            {#if (selectedUnitData.allocatedStats?.def || 0) > 0}
+              <span class="stat-bonus">+{(selectedUnitData.allocatedStats?.def || 0) * gameRules.experience.statGrowth.def}</span>
+            {/if}
           </div>
         </div>
         <div class="stat-row">
           <div class="stat-item">
             <span class="stat-label">移动</span>
-            <span class="stat-value">{getUnitMoveRange(selectedUnitData.type)}</span>
+            <span class="stat-value">{getUnitMoveRange(selectedUnitData.type) + (selectedUnitData.allocatedStats?.move || 0) * gameRules.experience.statGrowth.move + (selectedUnitData.specialization && SPECIALIZATION_CONFIG[selectedUnitData.type]?.find(s => s.id === selectedUnitData.specialization)?.bonuses?.move || 0)}</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">射程</span>
-            <span class="stat-value">{getUnitAttackRange(selectedUnitData.type)}</span>
+            <span class="stat-value">{getUnitAttackRange(selectedUnitData.type) + (selectedUnitData.specialization && SPECIALIZATION_CONFIG[selectedUnitData.type]?.find(s => s.id === selectedUnitData.specialization)?.bonuses?.attackRange || 0)}</span>
           </div>
         </div>
       </div>
+      {#if (selectedUnitData.statPoints || 0) > 0}
+        <div class="stat-allocation-panel">
+          <div class="info-label">🎯 可分配属性点：{selectedUnitData.statPoints}</div>
+          <div class="stat-alloc-buttons">
+            <button class="btn btn-alloc" on:click={() => handleAllocateStat(selectedUnitData.id, 'atk')} disabled={(selectedUnitData.statPoints || 0) <= 0}>
+              ⚔️ 攻击+3
+            </button>
+            <button class="btn btn-alloc" on:click={() => handleAllocateStat(selectedUnitData.id, 'def')} disabled={(selectedUnitData.statPoints || 0) <= 0}>
+              🛡️ 防御+3
+            </button>
+            <button class="btn btn-alloc" on:click={() => handleAllocateStat(selectedUnitData.id, 'hp')} disabled={(selectedUnitData.statPoints || 0) <= 0}>
+              ❤️ 生命+15
+            </button>
+            <button class="btn btn-alloc" on:click={() => handleAllocateStat(selectedUnitData.id, 'move')} disabled={(selectedUnitData.statPoints || 0) <= 0}>
+              👟 移动+1
+            </button>
+          </div>
+        </div>
+      {/if}
+      {#if (selectedUnitData.level || 1) >= gameRules.experience.specializationLevel && !selectedUnitData.specialization}
+        <div class="specialization-panel">
+          <div class="info-label">⚡ 能力分化（Lv.{gameRules.experience.specializationLevel}解锁）</div>
+          <div class="spec-options">
+            {#each getSpecOptions(selectedUnitData) as spec (spec.id)}
+              <button class="btn btn-spec" on:click={() => handleChooseSpec(selectedUnitData.id, spec.id)}>
+                <span class="spec-name">{spec.name}</span>
+                <span class="spec-desc">{spec.description}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+      {#if selectedUnitData.specialization}
+        <div class="specialization-active">
+          <div class="info-label">⚡ 能力分化</div>
+          <span class="spec-active-tag">{getSpecName(selectedUnitData.specialization, selectedUnitData.type)}</span>
+          <span class="spec-active-desc">{SPECIALIZATION_CONFIG[selectedUnitData.type]?.find(s => s.id === selectedUnitData.specialization)?.description || ''}</span>
+        </div>
+      {/if}
       {#if getUnitTerrain(selectedUnitData)}
         <div class="terrain-info">
           地形: {getUnitTerrain(selectedUnitData)?.name}
@@ -2547,4 +2787,231 @@
     flex-direction: column;
     gap: 10px;
   }
+
+  .unit-level-badge {
+    background: linear-gradient(135deg, #f39c12, #e67e22);
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-left: 4px;
+  }
+
+  .spec-badge {
+    background: linear-gradient(135deg, #9b59b6, #8e44ad);
+    color: #fff;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-left: 2px;
+  }
+
+  .stat-fill.xp {
+    background: linear-gradient(90deg, #3498db, #2ecc71);
+  }
+
+  .stat-bonus {
+    color: #2ecc71;
+    font-size: 10px;
+    font-weight: bold;
+    margin-left: 2px;
+  }
+
+  .stat-allocation-panel {
+    background: rgba(241, 196, 15, 0.1);
+    border: 1px solid rgba(241, 196, 15, 0.3);
+    border-radius: 6px;
+    padding: 8px;
+    margin-top: 6px;
+  }
+
+  .stat-alloc-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .btn-alloc {
+    background: rgba(52, 152, 219, 0.2);
+    border: 1px solid rgba(52, 152, 219, 0.4);
+    color: #3498db;
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-alloc:hover:not(:disabled) {
+    background: rgba(52, 152, 219, 0.4);
+    border-color: #3498db;
+  }
+
+  .btn-alloc:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .specialization-panel {
+    background: rgba(155, 89, 182, 0.1);
+    border: 1px solid rgba(155, 89, 182, 0.3);
+    border-radius: 6px;
+    padding: 8px;
+    margin-top: 6px;
+  }
+
+  .spec-options {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .btn-spec {
+    background: rgba(155, 89, 182, 0.15);
+    border: 1px solid rgba(155, 89, 182, 0.4);
+    color: #ddd;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .btn-spec:hover {
+    background: rgba(155, 89, 182, 0.35);
+    border-color: #9b59b6;
+  }
+
+  .spec-name {
+    font-weight: bold;
+    color: #bb77dd;
+  }
+
+  .spec-desc {
+    font-size: 10px;
+    color: #aaa;
+  }
+
+  .specialization-active {
+    background: rgba(155, 89, 182, 0.1);
+    border: 1px solid rgba(155, 89, 182, 0.3);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-top: 6px;
+  }
+
+  .spec-active-tag {
+    background: linear-gradient(135deg, #9b59b6, #8e44ad);
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 8px;
+    display: inline-block;
+    margin-right: 6px;
+  }
+
+  .spec-active-desc {
+    color: #aaa;
+    font-size: 10px;
+  }
+
+  .roster-info {
+    color: #aaa;
+    font-size: 11px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    margin-bottom: 8px;
+  }
+
+  .roster-faction-section {
+    margin-bottom: 12px;
+  }
+
+  .roster-faction-header {
+    font-weight: bold;
+    font-size: 13px;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .roster-empty {
+    color: #666;
+    font-size: 11px;
+    padding: 4px 0;
+  }
+
+  .roster-unit-item {
+    background: rgba(255,255,255,0.04);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .roster-unit-icon {
+    font-size: 14px;
+  }
+
+  .roster-unit-name {
+    color: #ddd;
+    font-size: 12px;
+    font-weight: bold;
+  }
+
+  .roster-unit-level {
+    background: linear-gradient(135deg, #f39c12, #e67e22);
+    color: #fff;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 1px 5px;
+    border-radius: 6px;
+  }
+
+  .roster-spec-badge {
+    background: linear-gradient(135deg, #9b59b6, #8e44ad);
+    color: #fff;
+    font-size: 9px;
+    font-weight: bold;
+    padding: 1px 5px;
+    border-radius: 6px;
+  }
+
+  .roster-xp, .roster-battles {
+    color: #aaa;
+    font-size: 10px;
+  }
+
+  .roster-alloc {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 2px;
+  }
+
+  .alloc-tag {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-weight: bold;
+  }
+
+  .alloc-tag.atk { background: rgba(231,76,60,0.2); color: #e74c3c; }
+  .alloc-tag.def { background: rgba(52,152,219,0.2); color: #3498db; }
+  .alloc-tag.hp { background: rgba(46,204,113,0.2); color: #2ecc71; }
+  .alloc-tag.move { background: rgba(241,196,15,0.2); color: #f1c40f; }
+  .alloc-tag.points { background: rgba(243,156,18,0.2); color: #f39c12; }
 </style>

@@ -69,6 +69,12 @@ import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
  * @property {number} winStreak
  * @property {StatusEffect[]} statusEffects
  * @property {Record<string, number>} [tempResistBoost]
+ * @property {string} [persistentId]
+ * @property {number} [exp]
+ * @property {number} [level]
+ * @property {number} [statPoints]
+ * @property {{atk: number, def: number, hp: number, move: number}} [allocatedStats]
+ * @property {string | null} [specialization]
  */
 
 /**

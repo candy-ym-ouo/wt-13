@@ -189,6 +189,79 @@ export const SYNERGY_CONFIG = {
   }
 };
 
+export const SPECIALIZATION_CONFIG = {
+  infantry: [
+    {
+      id: 'shield_guard',
+      name: '盾卫',
+      description: '防御+8，最大生命+30，状态抗性+15%',
+      bonuses: { def: 8, hp: 30, statusResistBoost: 0.15 }
+    },
+    {
+      id: 'assault',
+      name: '突击',
+      description: '攻击+8，击杀后额外+5士气',
+      bonuses: { atk: 8, moraleOnKill: 5 }
+    }
+  ],
+  cavalry: [
+    {
+      id: 'iron_cavalry',
+      name: '铁骑',
+      description: '最大生命+25，防御+5，反击伤害+20%',
+      bonuses: { hp: 25, def: 5, counterBoost: 0.2 }
+    },
+    {
+      id: 'scout',
+      name: '游骑',
+      description: '移动力+1，攻击+5，击杀回复10生命',
+      bonuses: { move: 1, atk: 5, healOnKill: 10 }
+    }
+  ],
+  archer: [
+    {
+      id: 'sniper',
+      name: '狙击',
+      description: '射程+1，攻击+6，对高血量目标伤害+15%',
+      bonuses: { attackRange: 1, atk: 6, highHpBonus: 0.15 }
+    },
+    {
+      id: 'rapid_fire',
+      name: '连射',
+      description: '攻击+4，攻击后15%概率再攻击一次',
+      bonuses: { atk: 4, doubleAttackChance: 0.15 }
+    }
+  ],
+  mage: [
+    {
+      id: 'elementalist',
+      name: '元素',
+      description: '攻击+10，燃烧/冰冻效果持续时间+1',
+      bonuses: { atk: 10, dotDurationBonus: 1 }
+    },
+    {
+      id: 'illusionist',
+      name: '幻术',
+      description: '攻击+4，施加状态时抗性穿透+25%',
+      bonuses: { atk: 4, statusPenetrate: 0.25 }
+    }
+  ],
+  tank: [
+    {
+      id: 'fortress',
+      name: '堡垒',
+      description: '防御+12，最大生命+40，护盾效果+50%',
+      bonuses: { def: 12, hp: 40, shieldBoost: 0.5 }
+    },
+    {
+      id: 'guardian',
+      name: '守护',
+      description: '防御+6，周围2格友军受到伤害-10%',
+      bonuses: { def: 6, allyDamageReduction: 0.1, allyDamageReductionRange: 2 }
+    }
+  ]
+};
+
 export const unitConfig = {
   infantry: {
     name: '步兵',

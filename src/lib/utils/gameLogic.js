@@ -1,5 +1,5 @@
 import { boardConfig, tileEffectConfig, TILE_EFFECT_TYPES } from '$lib/config/boardConfig';
-import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
+import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 
 /**
@@ -131,6 +131,15 @@ export function isHardCC(unit) {
 export function getEffectiveMoveRange(unit, unitType) {
   const config = unitConfig[unitType];
   let moveRange = config.moveRange;
+
+  const allocatedStats = unit.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 };
+  const growth = gameRules.experience.statGrowth;
+  moveRange += (allocatedStats.move || 0) * growth.move;
+
+  if (unit.specialization) {
+    const spec = SPECIALIZATION_CONFIG[unitType]?.find(s => s.id === unit.specialization);
+    if (spec?.bonuses?.move) moveRange += spec.bonuses.move;
+  }
 
   if (unit.buffs) {
     for (const buff of unit.buffs) {
@@ -416,7 +425,13 @@ export function getMoveRange(unit, units, boardLayout, tileEffects) {
  */
 export function getAttackRange(unit, units) {
   const config = unitConfig[/** @type {UnitType} */ (unit.type)];
-  const attackRange = config.attackRange;
+  let attackRange = config.attackRange;
+
+  if (unit.specialization) {
+    const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
+    if (spec?.bonuses?.attackRange) attackRange += spec.bonuses.attackRange;
+  }
+
   /** @type {AttackTile[]} */
   const result = [];
 
@@ -556,6 +571,22 @@ export function calculateDamage(attacker, defender, terrain) {
   let attack = attackerConfig.attack;
   let defense = defenderConfig.defense;
 
+  const growth = gameRules.experience.statGrowth;
+  const atkAllocated = attacker.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 };
+  const defAllocated = defender.allocatedStats || { def: 0, hp: 0 };
+
+  attack += atkAllocated.atk * growth.atk;
+  defense += (defAllocated.def || 0) * growth.def;
+
+  if (attacker.specialization) {
+    const spec = SPECIALIZATION_CONFIG[attacker.type]?.find(s => s.id === attacker.specialization);
+    if (spec?.bonuses?.atk) attack += spec.bonuses.atk;
+  }
+  if (defender.specialization) {
+    const spec = SPECIALIZATION_CONFIG[defender.type]?.find(s => s.id === defender.specialization);
+    if (spec?.bonuses?.def) defense += spec.bonuses.def;
+  }
+
   if (attacker.buffs) {
     for (const buff of attacker.buffs) {
       if (buff.type === 'attackBoost') {
@@ -576,7 +607,8 @@ export function calculateDamage(attacker, defender, terrain) {
     defense += terrain.defenseBonus;
   }
 
-  const hpRatio = attacker.currentHp / attackerConfig.hp;
+  const effectiveMaxHp = attacker.maxHp || attackerConfig.hp;
+  const hpRatio = attacker.currentHp / effectiveMaxHp;
   attack *= hpRatio;
 
   const moraleMul = getMoraleDamageMultiplier(attacker.morale ?? gameRules.morale.initial);
@@ -584,6 +616,24 @@ export function calculateDamage(attacker, defender, terrain) {
 
   const counterMul = getCounterMultiplier(attacker.type, defender.type);
   attack *= counterMul;
+
+  if (attacker.specialization) {
+    const spec = SPECIALIZATION_CONFIG[attacker.type]?.find(s => s.id === attacker.specialization);
+    if (spec?.bonuses?.highHpBonus && (defender.currentHp / (defender.maxHp || defenderConfig.hp)) > 0.7) {
+      attack *= (1 + spec.bonuses.highHpBonus);
+    }
+  }
+
+  if (defender.specialization) {
+    const spec = SPECIALIZATION_CONFIG[defender.type]?.find(s => s.id === defender.specialization);
+    if (spec?.bonuses?.allyDamageReduction) {
+      const range = spec.bonuses.allyDamageReductionRange || 2;
+      const hasAlly = false;
+      if (hasAlly) {
+        attack *= (1 - (spec.bonuses.allyDamageReduction || 0));
+      }
+    }
+  }
 
   let damage = Math.floor(attack * (100 / (100 + defense)));
 
