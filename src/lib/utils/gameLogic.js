@@ -2325,3 +2325,296 @@ export function canMulligan(used) {
   const maxMulligan = gameRules.deployment.maxMulligan || 0;
   return used < maxMulligan;
 }
+
+/**
+ * @typedef {object} CapturePointState
+ * @property {number} x
+ * @property {number} y
+ * @property {string} type
+ * @property {string} name
+ * @property {string} ownerFaction
+ * @property {number} goldPerTurn
+ * @property {string} icon
+ */
+
+/**
+ * @typedef {object} EconomySettlementResult
+ * @property {number} baseIncome
+ * @property {number} baseGold
+ * @property {number} capturePointGold
+ * @property {number} killGold
+ * @property {number} maintenanceCost
+ * @property {number} netIncome
+ * @property {string[]} messages
+ * @property {CapturePointState[]} capturePoints
+ * @property {{ red: number, blue: number }} moraleChanges
+ */
+
+/**
+ * @param {string[][] | null} [boardLayout]
+ * @returns {CapturePointState[]}
+ */
+export function createInitialCapturePoints(boardLayout) {
+  /** @type {CapturePointState[]} */
+  const points = [];
+  const layout = boardLayout || boardConfig.layout;
+
+  for (let y = 0; y < boardConfig.height; y++) {
+    for (let x = 0; x < boardConfig.width; x++) {
+      const terrainType = /** @type {keyof typeof boardConfig.terrain} */ (layout[y][x]);
+      /** @type {any} */
+      const terrain = boardConfig.terrain[terrainType];
+      if (terrain && terrain.isCapturePoint) {
+        points.push({
+          x,
+          y,
+          type: terrainType,
+          name: terrain.name || '据点',
+          ownerFaction: 'neutral',
+          goldPerTurn: terrain.captureGoldPerTurn || gameRules.economy.capturePointGoldPerTurn || 25,
+          icon: terrain.icon || '🏴'
+        });
+      }
+    }
+  }
+
+  return points;
+}
+
+/**
+ * @param {CapturePointState[]} capturePoints
+ * @param {Unit[]} units
+ * @param {string[][] | null} [boardLayout]
+ * @returns {{ capturePoints: CapturePointState[]; messages: string[]; goldGained: { red: number, blue: number } }}
+ */
+export function settleCapturePoints(capturePoints, units, boardLayout) {
+  /** @type {string[]} */
+  const messages = [];
+  /** @type {{ red: number, blue: number }} */
+  const goldGained = { red: 0, blue: 0 };
+
+  const newPoints = capturePoints.map(point => {
+    const unitsOnPoint = units.filter(u => u.x === point.x && u.y === point.y);
+    const redUnits = unitsOnPoint.filter(u => u.faction === 'red');
+    const blueUnits = unitsOnPoint.filter(u => u.faction === 'blue');
+
+    let newOwner = point.ownerFaction;
+
+    if (redUnits.length > 0 && blueUnits.length === 0) {
+      if (point.ownerFaction !== 'red') {
+        newOwner = 'red';
+        messages.push(`🏴 ${point.name}(${point.x},${point.y}) 被红方占领！每回合+${point.goldPerTurn}金币`);
+      }
+      goldGained.red += point.goldPerTurn;
+    } else if (blueUnits.length > 0 && redUnits.length === 0) {
+      if (point.ownerFaction !== 'blue') {
+        newOwner = 'blue';
+        messages.push(`🏴 ${point.name}(${point.x},${point.y}) 被蓝方占领！每回合+${point.goldPerTurn}金币`);
+      }
+      goldGained.blue += point.goldPerTurn;
+    } else if (point.ownerFaction !== 'neutral') {
+      goldGained[/** @type {'red' | 'blue'} */ (point.ownerFaction)] += point.goldPerTurn;
+    }
+
+    return {
+      ...point,
+      ownerFaction: newOwner
+    };
+  });
+
+  return { capturePoints: newPoints, messages, goldGained };
+}
+
+/**
+ * @param {Unit[]} units
+ * @param {'red' | 'blue'} faction
+ * @param {boolean} [discountHalf=false]
+ * @returns {{ total: number; breakdown: { type: string, count: number, cost: number }[] }}
+ */
+export function calculateMaintenanceCost(units, faction, discountHalf = false) {
+  const econRules = gameRules.economy;
+  if (!econRules.unitMaintenance?.enabled) {
+    return { total: 0, breakdown: [] };
+  }
+
+  const factionUnits = units.filter(u => u.faction === faction);
+  const freeUnits = econRules.maintenanceFreeUnits || 0;
+  const payableUnits = factionUnits.slice(freeUnits);
+
+  /** @type {Record<string, { count: number, cost: number }>} */
+  const typeMap = {};
+
+  for (const unit of payableUnits) {
+    const unitType = /** @type {UnitType} */ (unit.type);
+    const cost = econRules.unitMaintenance[unitType] || 5;
+    if (!typeMap[unitType]) {
+      typeMap[unitType] = { count: 0, cost };
+    }
+    typeMap[unitType].count += 1;
+  }
+
+  const breakdown = Object.entries(typeMap).map(([type, data]) => ({
+    type,
+    count: data.count,
+    cost: data.cost * data.count * (discountHalf ? 0.5 : 1)
+  }));
+
+  const total = Math.floor(breakdown.reduce((sum, b) => sum + b.cost, 0));
+
+  return { total, breakdown };
+}
+
+/**
+ * @param {UnitType} unitType
+ * @returns {number}
+ */
+export function getKillGoldReward(unitType) {
+  const rewards = gameRules.economy.killGoldReward;
+  return rewards[unitType] || 20;
+}
+
+/**
+ * @param {BaseState[]} bases
+ * @param {'red' | 'blue'} faction
+ * @returns {number}
+ */
+export function calculateBaseGold(bases, faction) {
+  const econRules = gameRules.economy;
+  const ownBases = bases.filter(b => b.faction === faction && b.durability > 0);
+  return ownBases.length * econRules.goldPerSurvivingBase;
+}
+
+/**
+ * @typedef {object} EconomyState
+ * @property {CapturePointState[]} capturePoints
+ * @property {{ red: number, blue: number }} gold
+ * @property {{ red: number, blue: number }} nextTurnGoldBonus
+ * @property {{ red: boolean, blue: boolean }} maintenanceDiscountNextTurn
+ */
+
+/**
+ * @param {EconomyState} economyState
+ * @param {BaseState[]} bases
+ * @param {Unit[]} units
+ * @param {'red' | 'blue'} activeFaction
+ * @param {{ red: number, blue: number }} killGoldThisTurn
+ * @param {string[][] | null} [boardLayout]
+ * @returns {{
+ *   economyState: EconomyState;
+ *   messages: string[];
+ *   moraleChanges: { red: number, blue: number };
+ *   netIncome: { red: number, blue: number };
+ *   incomeBreakdown: { red: Record<string, number>, blue: Record<string, number> };
+ * }}
+ */
+export function settleEconomy(economyState, bases, units, activeFaction, killGoldThisTurn, boardLayout) {
+  const econRules = gameRules.economy;
+  const messages = [];
+  const moraleChanges = { red: 0, blue: 0 };
+  const netIncome = { red: 0, blue: 0 };
+  const incomeBreakdown = {
+    red: /** @type {Record<string, number>} */ ({}),
+    blue: /** @type {Record<string, number>} */ ({})
+  };
+
+  /** @type {Array<'red' | 'blue'>} */
+  const factions = ['red', 'blue'];
+
+  const captureResult = settleCapturePoints(economyState.capturePoints, units, boardLayout);
+  messages.push(...captureResult.messages);
+
+  for (const faction of factions) {
+    let totalIncome = 0;
+    let totalCost = 0;
+
+    const baseGold = calculateBaseGold(bases, faction);
+    incomeBreakdown[faction]['基地产出'] = baseGold;
+    totalIncome += baseGold;
+
+    const perTurnBase = econRules.baseGoldPerTurn;
+    incomeBreakdown[faction]['基础收入'] = perTurnBase;
+    totalIncome += perTurnBase;
+
+    const cpGold = captureResult.goldGained[faction];
+    if (cpGold > 0) {
+      incomeBreakdown[faction]['据点收益'] = cpGold;
+      totalIncome += cpGold;
+    }
+
+    const killGold = killGoldThisTurn[faction] || 0;
+    if (killGold > 0) {
+      incomeBreakdown[faction]['击杀奖励'] = killGold;
+      totalIncome += killGold;
+    }
+
+    const bonus = economyState.nextTurnGoldBonus[faction] || 0;
+    if (bonus > 0) {
+      incomeBreakdown[faction]['额外筹款'] = bonus;
+      totalIncome += bonus;
+    }
+
+    const hasDiscount = economyState.maintenanceDiscountNextTurn[faction];
+    const maintenance = calculateMaintenanceCost(units, faction, hasDiscount);
+    if (maintenance.total > 0) {
+      incomeBreakdown[faction]['维护费用'] = -maintenance.total;
+      totalCost += maintenance.total;
+    }
+
+    const net = totalIncome - totalCost;
+    netIncome[faction] = net;
+
+    const newGold = Math.max(0, (economyState.gold[faction] || 0) + net);
+    const actualGain = newGold - (economyState.gold[faction] || 0);
+
+    const factionName = faction === 'red' ? '红方' : '蓝方';
+    const breakdownStr = Object.entries(incomeBreakdown[faction])
+      .filter(([, v]) => v !== 0)
+      .map(([k, v]) => `${k}${v > 0 ? '+' : ''}${Math.floor(v)}`)
+      .join('，');
+
+    messages.push(`💰 ${factionName}经济结算：${breakdownStr}，净收入${actualGain >= 0 ? '+' : ''}${Math.floor(actualGain)}金币（当前：${Math.floor(newGold)}）`);
+
+    if (newGold <= 0 && net < 0) {
+      moraleChanges[faction] -= econRules.bankruptMoralePenalty || 15;
+      messages.push(`⚠️ ${factionName}军费破产！士气-${econRules.bankruptMoralePenalty || 15}`);
+    } else if (newGold < econRules.lowGoldPenaltyThreshold) {
+      moraleChanges[faction] -= econRules.lowGoldMoralePenalty || 5;
+      messages.push(`⚠️ ${factionName}军费告急（<${econRules.lowGoldPenaltyThreshold}）！士气-${econRules.lowGoldMoralePenalty || 5}`);
+    }
+
+    economyState = {
+      ...economyState,
+      gold: {
+        ...economyState.gold,
+        [faction]: newGold
+      }
+    };
+  }
+
+  economyState = {
+    ...economyState,
+    capturePoints: captureResult.capturePoints,
+    nextTurnGoldBonus: { red: 0, blue: 0 },
+    maintenanceDiscountNextTurn: { red: false, blue: false }
+  };
+
+  return {
+    economyState,
+    messages,
+    moraleChanges,
+    netIncome,
+    incomeBreakdown
+  };
+}
+
+/**
+ * @param {CapturePointState[]} capturePoints
+ * @param {number} x
+ * @param {number} y
+ * @returns {CapturePointState | null}
+ */
+export function getCapturePointAt(capturePoints, x, y) {
+  if (!capturePoints) return null;
+  return capturePoints.find(p => p.x === x && p.y === y) || null;
+}
+

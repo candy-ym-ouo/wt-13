@@ -3,6 +3,7 @@ import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
 import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO, UNIT_COUNTER_TYPE } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
+import { shopItems, shopConfig } from '$lib/config/shopConfig';
 import { debouncedAutoSave, cancelPendingAutoSave } from '$lib/utils/storageSave';
 import {
   tickActiveCards,
@@ -36,7 +37,14 @@ import {
   getMoveSkillForUnit,
   getHaltStationaryBonus,
   getChargePostMoveBonus,
-  didPathPassThroughFriendly
+  didPathPassThroughFriendly,
+  createInitialCapturePoints,
+  settleEconomy,
+  getKillGoldReward,
+  calculateMaintenanceCost,
+  findSummonPosition,
+  checkSummonFeasibility,
+  getCapturePointAt
 } from '$lib/utils/gameLogic';
 
 /**
@@ -147,6 +155,23 @@ import {
  * @property {{red: number, blue: number}} killCounts
  * @property {import('../utils/gameLogic').ScoreSettlementResult | null} scoreSettlement
  * @property {DeploymentState | null} deployment
+ * @property {import('../utils/gameLogic').CapturePointState[]} capturePoints
+ * @property {{red: number, blue: number}} gold
+ * @property {{red: number, blue: number}} nextTurnGoldBonus
+ * @property {{red: boolean, blue: boolean}} maintenanceDiscountNextTurn
+ * @property {{red: number, blue: number}} killGoldEarnedThisTurn
+ * @property {Record<string, number>} shopPurchaseCounts
+ * @property {EconomyNotification[]} economyNotifications
+ */
+
+/**
+ * @typedef {object} EconomyNotification
+ * @property {string} id
+ * @property {'income' | 'expense' | 'capture' | 'purchase' | 'warning' | 'info'} type
+ * @property {string} message
+ * @property {number} [amount]
+ * @property {'red' | 'blue'} [faction]
+ * @property {number} turn
  */
 
 /**
@@ -342,6 +367,7 @@ function createInitialState() {
   };
 
   const bases = createInitialBases();
+  const capturePoints = createInitialCapturePoints();
 
   return {
     units,
@@ -399,7 +425,17 @@ function createInitialState() {
       initialHands: [[], []],
       mulliganUsed: /** @type {[number, number]} */ ([0, 0]),
       showHandStrategy: true
-    }
+    },
+    capturePoints,
+    gold: {
+      red: gameRules.economy.startingGold,
+      blue: gameRules.economy.startingGold
+    },
+    nextTurnGoldBonus: { red: 0, blue: 0 },
+    maintenanceDiscountNextTurn: { red: false, blue: false },
+    killGoldEarnedThisTurn: { red: 0, blue: 0 },
+    shopPurchaseCounts: {},
+    economyNotifications: []
   };
 }
 
@@ -1281,11 +1317,37 @@ function createGameState() {
 
       /** @type {{red: number, blue: number}} */
       const newKillCounts = { ...state.killCounts };
+      /** @type {{red: number, blue: number}} */
+      const newKillGold = { ...state.killGoldEarnedThisTurn };
+      const newEconNotifications = [...state.economyNotifications];
+
       if (defenderDead) {
         newKillCounts[/** @type {'red' | 'blue'} */ (attackerFaction)] = (newKillCounts[/** @type {'red' | 'blue'} */ (attackerFaction)] || 0) + 1;
+        const goldReward = getKillGoldReward(/** @type {UnitType} */ (defender?.type || 'infantry'));
+        newKillGold[/** @type {'red' | 'blue'} */ (attackerFaction)] = (newKillGold[/** @type {'red' | 'blue'} */ (attackerFaction)] || 0) + goldReward;
+        const atkFactionName = attackerFaction === 'red' ? '红方' : '蓝方';
+        newEconNotifications.push({
+          id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          type: 'income',
+          message: `💰 击杀${defenderName}获得 ${goldReward} 金币`,
+          amount: goldReward,
+          faction: /** @type {'red' | 'blue'} */ (attackerFaction),
+          turn: state.turn
+        });
       }
       if (attackerDeadFromCounter) {
         newKillCounts[/** @type {'red' | 'blue'} */ (defenderFaction)] = (newKillCounts[/** @type {'red' | 'blue'} */ (defenderFaction)] || 0) + 1;
+        const goldReward = getKillGoldReward(/** @type {UnitType} */ (attacker?.type || 'infantry'));
+        newKillGold[/** @type {'red' | 'blue'} */ (defenderFaction)] = (newKillGold[/** @type {'red' | 'blue'} */ (defenderFaction)] || 0) + goldReward;
+        const defFactionName = defenderFaction === 'red' ? '红方' : '蓝方';
+        newEconNotifications.push({
+          id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          type: 'income',
+          message: `💰 反击击杀${attackerName}获得 ${goldReward} 金币`,
+          amount: goldReward,
+          faction: /** @type {'red' | 'blue'} */ (defenderFaction),
+          turn: state.turn
+        });
       }
 
       return {
@@ -1301,7 +1363,9 @@ function createGameState() {
           red: state.turnDamageDealt.red + (attackerFaction === 'red' ? finalDamage : 0) + (counterDamage > 0 && !counterShieldBlocked && defenderFaction === 'red' ? counterDamage : 0),
           blue: state.turnDamageDealt.blue + (attackerFaction === 'blue' ? finalDamage : 0) + (counterDamage > 0 && !counterShieldBlocked && defenderFaction === 'blue' ? counterDamage : 0)
         },
-        killCounts: newKillCounts
+        killCounts: newKillCounts,
+        killGoldEarnedThisTurn: newKillGold,
+        economyNotifications: newEconNotifications.slice(-20)
       };
     }),
     endTurn: () => update(state => {
@@ -1730,6 +1794,92 @@ function createGameState() {
         }
       }
 
+      const econState = {
+        capturePoints: state.capturePoints,
+        gold: state.gold,
+        nextTurnGoldBonus: state.nextTurnGoldBonus,
+        maintenanceDiscountNextTurn: state.maintenanceDiscountNextTurn
+      };
+
+      const econResult = settleEconomy(
+        econState,
+        state.bases,
+        units,
+        /** @type {'red' | 'blue'} */ (state.currentFaction),
+        state.killGoldEarnedThisTurn,
+        state.boardLayout
+      );
+
+      statusMessages.push(...econResult.messages);
+
+      const econMoraleChanges = econResult.moraleChanges;
+      if (econMoraleChanges.red !== 0 || econMoraleChanges.blue !== 0) {
+        for (const faction of /** @type {('red' | 'blue')[]} */ (['red', 'blue'])) {
+          const delta = econMoraleChanges[faction];
+          if (delta !== 0) {
+            const affectedUnits = units.filter(u => u.faction === faction);
+            units = units.map(u => {
+              if (u.faction !== faction) return u;
+              const before = u.morale;
+              const after = clampMorale(before + delta);
+              if (before !== after) {
+                moraleChanges.push({
+                  unitId: u.id,
+                  unitName: unitConfig[/** @type {UnitType} */ (u.type)].name,
+                  faction,
+                  before,
+                  after,
+                  delta: after - before,
+                  reason: delta < 0 ? '经济压力（军费紧张）' : '经济提振'
+                });
+              }
+              return { ...u, morale: after };
+            });
+          }
+        }
+      }
+
+      const econLogEntries = econResult.messages.map(msg => ({
+        id: `log_${Date.now()}_econ_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: state.currentFaction,
+        type: /** @type {ActionLogType} */ ('status'),
+        description: msg,
+        details: { economyMessage: true },
+        timestamp: Date.now()
+      }));
+
+      if (econLogEntries.length > 0) {
+        const lastEconTurnLog = newActionLogs[newActionLogs.length - 1];
+        if (lastEconTurnLog && lastEconTurnLog.turn === state.turn && lastEconTurnLog.faction === state.currentFaction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastEconTurnLog,
+            actions: [...lastEconTurnLog.actions, ...econLogEntries]
+          };
+        } else {
+          newActionLogs.push({
+            turn: state.turn,
+            faction: state.currentFaction,
+            actions: econLogEntries
+          });
+        }
+      }
+
+      const econNotifications = econResult.messages.map((msg, idx) => ({
+        id: `econ_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 4)}`,
+        type: /** @type {'warning' | 'info'} */ (msg.includes('⚠️') ? 'warning' : 'info'),
+        message: msg,
+        turn: state.turn
+      }));
+
+      const resetShopCounts = /** @type {Record<string, number>} */ ({});
+      for (const [key, count] of Object.entries(state.shopPurchaseCounts)) {
+        const turnKey = `${state.turn}_`;
+        if (!key.startsWith(turnKey)) {
+          resetShopCounts[key] = count;
+        }
+      }
+
       return {
         ...state,
         currentFaction: nextFaction,
@@ -1750,13 +1900,20 @@ function createGameState() {
         enemyMarkers: tickedMarkers,
         turnHistory: [...state.turnHistory, { turn: state.turn, faction: state.currentFaction }],
         lastStatusMessages: statusMessages,
-        lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges,
+        lastMoraleChanges: dotKilled || moraleChanges.length > 0 ? moraleChanges : state.lastMoraleChanges,
         actionLogs: newActionLogs,
         lastActionLog: isGameOver ? newActionLogs[newActionLogs.length - 1].actions[newActionLogs[newActionLogs.length - 1].actions.length - 1] : turnEndLog,
         tileEffects: newTileEffects,
         roundSnapshots: [...state.roundSnapshots, snapshot],
         turnDamageDealt: { red: 0, blue: 0 },
-        turnCardsUsed: { red: 0, blue: 0 }
+        turnCardsUsed: { red: 0, blue: 0 },
+        capturePoints: econResult.economyState.capturePoints,
+        gold: econResult.economyState.gold,
+        nextTurnGoldBonus: econResult.economyState.nextTurnGoldBonus,
+        maintenanceDiscountNextTurn: econResult.economyState.maintenanceDiscountNextTurn,
+        killGoldEarnedThisTurn: { red: 0, blue: 0 },
+        shopPurchaseCounts: resetShopCounts,
+        economyNotifications: [...state.economyNotifications, ...econNotifications].slice(-30)
       };
     }),
     /**
@@ -3127,7 +3284,288 @@ function createGameState() {
       });
 
       return { ...state, units };
-    })
+    }),
+    /**
+     * @param {string} itemId
+     * @returns {{ success: boolean; message: string }}
+     */
+    purchaseShopItem: (itemId) => {
+      /** @type {{ success: boolean; message: string }} */
+      let result = { success: false, message: '' };
+      update(state => {
+        if (state.turn < shopConfig.openFromTurn) {
+          result = { success: false, message: `商店第${shopConfig.openFromTurn}回合开放` };
+          return state;
+        }
+        if (state.gamePhase === 'gameOver') {
+          result = { success: false, message: '游戏已结束' };
+          return state;
+        }
+
+        const item = shopItems.find(i => i.id === itemId);
+        if (!item) {
+          result = { success: false, message: '商品不存在' };
+          return state;
+        }
+
+        const faction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+        const factionName = faction === 'red' ? '红方' : '蓝方';
+
+        const turnPurchaseKey = `${state.turn}_${itemId}_${faction}`;
+        const turnPurchaseCount = state.shopPurchaseCounts[turnPurchaseKey] || 0;
+        if (item.maxPurchasesPerTurn && turnPurchaseCount >= item.maxPurchasesPerTurn) {
+          result = { success: false, message: `${item.name}本回合已达购买上限` };
+          return state;
+        }
+
+        if (state.gold[faction] < item.cost) {
+          result = { success: false, message: `金币不足（需${item.cost}，当前${state.gold[faction]}）` };
+          return state;
+        }
+
+        let newUnits = state.units;
+        let newGold = { ...state.gold, [faction]: state.gold[faction] - item.cost };
+        let newBases = state.bases;
+        let newCapturePoints = state.capturePoints;
+        let newNextTurnGoldBonus = { ...state.nextTurnGoldBonus };
+        let newMaintenanceDiscount = { ...state.maintenanceDiscountNextTurn };
+        const newEconNotifications = [...state.economyNotifications];
+        const clampMorale = (/** @type {number} */ v) =>
+          Math.max(gameRules.morale.min, Math.min(gameRules.morale.max, v));
+        /** @type {MoraleChange[]} */
+        const moraleChanges = [];
+
+        if (item.type === 'unit' && item.unitType) {
+          const base = state.bases.find(b => b.faction === faction);
+          if (!base) {
+            result = { success: false, message: `${factionName}基地不存在，无法召唤单位` };
+            return state;
+          }
+          const feasible = checkSummonFeasibility(newUnits, faction);
+          if (!feasible.canSummon) {
+            result = { success: false, message: `无法召唤（${feasible.reason}）` };
+            return state;
+          }
+          const summonResult = findSummonPosition(newUnits, faction, state.bases, state.boardLayout || boardConfig.layout, state.tileEffects || null);
+          if (!summonResult.found) {
+            result = { success: false, message: `基地周围无空位（${summonResult.reason || '无法放置'}）` };
+            return state;
+          }
+          const unitStats = unitConfig[/** @type {UnitType} */ (item.unitType)];
+          const newUnit = {
+            id: `unit_shop_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            type: /** @type {UnitType} */ (item.unitType),
+            name: unitStats.name,
+            faction,
+            x: summonResult.x,
+            y: summonResult.y,
+            currentHp: unitStats.hp,
+            maxHp: unitStats.hp,
+            atk: unitStats.attack,
+            def: unitStats.defense,
+            move: unitStats.moveRange,
+            range: unitStats.attackRange,
+            morale: gameRules.morale.initial,
+            statusEffects: [],
+            buffs: [],
+            hasMoved: true,
+            hasAttacked: true,
+            attackCount: 0,
+            stunned: 0,
+            level: 1,
+            exp: 0,
+            statPoints: 0,
+            winStreak: 0,
+            specialization: null,
+            allocatedStats: { atk: 0, def: 0, hp: 0, move: 0 }
+          };
+          newUnits = [...newUnits, newUnit];
+          newEconNotifications.push({
+            id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            type: 'purchase',
+            message: `🛒 购买【${item.name}】-${item.cost}金币，召唤于(${summonResult.x},${summonResult.y})`,
+            amount: -item.cost,
+            faction,
+            turn: state.turn
+          });
+        } else if (item.type === 'resource') {
+          if (item.effect === 'gold_bonus_next_turn' && item.value) {
+            newNextTurnGoldBonus[faction] = (newNextTurnGoldBonus[faction] || 0) + item.value;
+            newEconNotifications.push({
+              id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'purchase',
+              message: `🛒 购买【${item.name}】-${item.cost}金币，下回合额外+${item.value}金币`,
+              amount: -item.cost,
+              faction,
+              turn: state.turn
+            });
+          } else if (item.effect === 'gold_instant' && item.value) {
+            newGold[faction] += item.value;
+            newEconNotifications.push({
+              id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'purchase',
+              message: `🛒 购买【${item.name}】-${item.cost}金币，立即获得${item.value}金币`,
+              amount: item.value - item.cost,
+              faction,
+              turn: state.turn
+            });
+          } else if (item.effect === 'base_repair' && item.value) {
+            /** @type {number} */
+            const val = item.value;
+            newBases = state.bases.map(b => {
+              if (b.faction === faction) {
+                return { ...b, durability: Math.min(b.maxDurability, b.durability + val) };
+              }
+              return b;
+            });
+            newEconNotifications.push({
+              id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'purchase',
+              message: `🛒 购买【${item.name}】-${item.cost}金币，基地修复+${val}耐久`,
+              amount: -item.cost,
+              faction,
+              turn: state.turn
+            });
+          }
+        } else if (item.type === 'buff') {
+          if (item.effect === 'morale_boost' && item.value) {
+            /** @type {number} */
+            const val = item.value;
+            newUnits = newUnits.map(u => {
+              if (u.faction !== faction) return u;
+              const before = u.morale;
+              const after = clampMorale(before + val);
+              if (before !== after) {
+                moraleChanges.push({
+                  unitId: u.id,
+                  unitName: unitConfig[/** @type {UnitType} */ (u.type)].name,
+                  faction,
+                  before,
+                  after,
+                  delta: after - before,
+                  reason: `商店【${item.name}】`
+                });
+              }
+              return { ...u, morale: after };
+            });
+            newEconNotifications.push({
+              id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'purchase',
+              message: `🛒 购买【${item.name}】-${item.cost}金币，全军士气+${val}`,
+              amount: -item.cost,
+              faction,
+              turn: state.turn
+            });
+          } else if (item.effect === 'morale_boost_maintenance_discount' && item.value) {
+            /** @type {number} */
+            const val = item.value;
+            newUnits = newUnits.map(u => {
+              if (u.faction !== faction) return u;
+              const before = u.morale;
+              const after = clampMorale(before + val);
+              if (before !== after) {
+                moraleChanges.push({
+                  unitId: u.id,
+                  unitName: unitConfig[/** @type {UnitType} */ (u.type)].name,
+                  faction,
+                  before,
+                  after,
+                  delta: after - before,
+                  reason: `商店【${item.name}】`
+                });
+              }
+              return { ...u, morale: after };
+            });
+            newMaintenanceDiscount[faction] = true;
+            newEconNotifications.push({
+              id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'purchase',
+              message: `🛒 购买【${item.name}】-${item.cost}金币，士气+${val}且下回合维护费减半`,
+              amount: -item.cost,
+              faction,
+              turn: state.turn
+            });
+          } else if (item.effect === 'instant_heal_20' && item.value) {
+            /** @type {number} */
+            const val = item.value;
+            newUnits = newUnits.map(u => {
+              if (u.faction !== faction) return u;
+              const healAmount = Math.floor(u.maxHp * (val / 100));
+              const newHp = Math.min(u.maxHp, u.currentHp + healAmount);
+              return { ...u, currentHp: newHp };
+            });
+            newEconNotifications.push({
+              id: `econ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'purchase',
+              message: `🛒 购买【${item.name}】-${item.cost}金币，全军回复${val}%生命`,
+              amount: -item.cost,
+              faction,
+              turn: state.turn
+            });
+          }
+        }
+
+        const newShopCounts = {
+          ...state.shopPurchaseCounts,
+          [turnPurchaseKey]: turnPurchaseCount + 1
+        };
+
+        const desc = `${factionName}购买商店【${item.name}】，花费${item.cost}金币`;
+        const shopLog = {
+          id: `log_${Date.now()}_shop_${Math.random().toString(36).slice(2, 6)}`,
+          turn: state.turn,
+          faction,
+          type: /** @type {ActionLogType} */ ('card'),
+          description: desc,
+          details: {
+            itemId: item.id,
+            itemName: item.name,
+            itemType: item.type,
+            cost: item.cost,
+            goldBefore: state.gold[faction],
+            goldAfter: newGold[faction]
+          },
+          timestamp: Date.now()
+        };
+
+        const newActionLogs = [...state.actionLogs];
+        const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+        if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === faction) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastTurnLog,
+            actions: [...lastTurnLog.actions, shopLog]
+          };
+        } else {
+          newActionLogs.push({ turn: state.turn, faction, actions: [shopLog] });
+        }
+
+        result = { success: true, message: desc };
+
+        return {
+          ...state,
+          gold: newGold,
+          units: newUnits,
+          bases: newBases,
+          capturePoints: newCapturePoints,
+          nextTurnGoldBonus: newNextTurnGoldBonus,
+          maintenanceDiscountNextTurn: newMaintenanceDiscount,
+          shopPurchaseCounts: newShopCounts,
+          economyNotifications: newEconNotifications.slice(-30),
+          lastMoraleChanges: moraleChanges.length > 0 ? moraleChanges : state.lastMoraleChanges,
+          actionLogs: newActionLogs,
+          lastActionLog: shopLog
+        };
+      });
+      return result;
+    },
+    /**
+     * @param {EconomyNotification} notification
+     */
+    addEconomyNotification: (notification) => update(state => ({
+      ...state,
+      economyNotifications: [...state.economyNotifications, notification].slice(-30)
+    })),
+    clearEconomyNotifications: () => update(state => ({ ...state, economyNotifications: [] }))
   };
 }
 

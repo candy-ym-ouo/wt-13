@@ -99,9 +99,31 @@ export const gameRules = {
     }
   },
   economy: {
-    enabled: false,
-    baseIncome: 100,
-    incomePerTurn: 50
+    enabled: true,
+    startingGold: 200,
+    baseGoldPerTurn: 30,
+    goldPerSurvivingBase: 50,
+    capturePointGoldPerTurn: 25,
+    killGoldReward: {
+      infantry: 20,
+      cavalry: 30,
+      archer: 25,
+      mage: 40,
+      tank: 35
+    },
+    damageToGoldRatio: 0.1,
+    unitMaintenance: {
+      enabled: true,
+      infantry: 5,
+      cavalry: 8,
+      archer: 6,
+      mage: 10,
+      tank: 7
+    },
+    maintenanceFreeUnits: 3,
+    lowGoldPenaltyThreshold: 50,
+    lowGoldMoralePenalty: 5,
+    bankruptMoralePenalty: 15
   },
   morale: {
     initial: 80,

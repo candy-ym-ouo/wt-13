@@ -5,13 +5,14 @@
   import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, CARD_RARITY_LABELS, CARD_RARITY_COLORS, CARD_RARITY_BG, CARD_RARITY_ICONS, cardRarityConfig, eventCards } from '$lib/config/eventCardConfig';
-  import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview } from '$lib/utils/gameLogic';
+  import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview, calculateMaintenanceCost } from '$lib/utils/gameLogic';
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
   import { seasonStore } from '$lib/stores/seasonStore.js';
   import { RANK_TIERS, RANK_SUB_TIERS } from '$lib/config/seasonConfig.js';
   import { saveRosterFromGame, getFactionRoster, clearRoster, loadRoster } from '$lib/utils/storageRoster';
   import { saveToSlot, loadFromSlot, deleteSlot, getAllSlotMetas, hasAutoSave, loadAutoSave, clearAutoSave, getManualSlots, getAutoSlot, autoSave } from '$lib/utils/storageSave';
+  import { shopItems, shopConfig } from '$lib/config/shopConfig';
   import TacticalHintPanel from './TacticalHintPanel.svelte';
   import DeploymentPanel from './DeploymentPanel.svelte';
 
@@ -68,6 +69,13 @@
   let showRoundStats = false;
   let showSaveLoad = false;
   let showResumePrompt = false;
+  let showShop = false;
+  let showEconomyPanel = true;
+  let activeShopTab = 'unit';
+  let lastPurchaseMessage = '';
+  let lastPurchaseSuccess = false;
+  /** @type {any} */
+  let purchaseTimer = null;
   /** @type {import('$lib/utils/storageSave').SaveMeta | null} */
   let resumeMeta = null;
   /** @type {Map<number, import('$lib/utils/storageSave').SaveMeta>} */
@@ -888,6 +896,19 @@
   }
 
   /**
+   * @param {string} itemId
+   */
+  function handlePurchase(itemId) {
+    const result = gameState.purchaseShopItem(itemId);
+    lastPurchaseSuccess = result.success;
+    lastPurchaseMessage = result.message;
+    if (purchaseTimer) clearTimeout(purchaseTimer);
+    purchaseTimer = setTimeout(() => {
+      lastPurchaseMessage = '';
+    }, 3000);
+  }
+
+  /**
    * @param {string} cardId
    * @returns {string}
    */
@@ -1125,8 +1146,24 @@
         </div>
         <span class="energy-text">{energy}/{cardConfig.maxEnergy}</span>
       </div>
+      {#if state && gameRules.economy.enabled}
+        <div class="gold-bar-wrapper" title="金币">
+          <span class="gold-icon">💰</span>
+          <span class="gold-current" style="color: {getFactionColor(state.currentFaction)}">
+            {state.gold[state.currentFaction]}
+          </span>
+          <span class="gold-other" style="opacity: 0.6">
+            / 红方:{state.gold.red} 蓝方:{state.gold.blue}
+          </span>
+        </div>
+      {/if}
     </div>
     <div class="top-actions">
+      {#if state && gameRules.economy.enabled && state.turn >= 2}
+        <button class="btn btn-shop" on:click={() => showShop = !showShop}>
+          🛒 商店
+        </button>
+      {/if}
       <button class="btn btn-secondary" on:click={() => showRoundStats = !showRoundStats}>
         📈 回合
       </button>
@@ -1206,6 +1243,87 @@
         </div>
       {/each}
     </div>
+  {/if}
+
+  {#if state && gameRules.economy.enabled && !state.gameOver && showEconomyPanel}
+    <div class="economy-panel">
+      <div class="economy-panel-header">
+        <span class="economy-title">💰 经济系统</span>
+        <button class="btn-icon" on:click={() => showEconomyPanel = false}>×</button>
+      </div>
+      <div class="economy-info-grid">
+        {#each ['red', 'blue'] as faction}
+          {@const captureCount = state.capturePoints.filter(cp => cp.owner === faction).length}
+          {@const ownedBases = state.bases.filter(b => b.faction === faction).length}
+          {@const unitCount = state.units.filter(u => u.faction === faction).length}
+          {@const freeUnits = gameRules.economy.maintenanceFreeUnits}
+          {@const payingUnits = Math.max(0, unitCount - freeUnits)}
+          {@const maintenanceTotal = calculateMaintenanceCost(state.units, faction, state.maintenanceDiscountNextTurn[faction])}
+          {@const nextIncome = gameRules.economy.baseGoldPerTurn
+            + ownedBases * gameRules.economy.goldPerSurvivingBase
+            + captureCount * gameRules.economy.capturePointGoldPerTurn
+            + (state.nextTurnGoldBonus[faction] || 0)}
+          <div class="economy-faction-block" style="border-color: {getFactionColor(faction)}">
+            <div class="economy-faction-name" style="color: {getFactionColor(faction)}">
+              {getFactionName(faction)}
+            </div>
+            <div class="economy-gold-row">
+              <span class="label">💰 金币</span>
+              <span class="value" style="color: {state.gold[faction] < 50 ? '#e74c3c' : '#f1c40f'}">
+                {state.gold[faction]}
+              </span>
+            </div>
+            <div class="economy-row">
+              <span class="label">🏴 占点</span>
+              <span class="value">{captureCount}/{state.capturePoints.length}</span>
+            </div>
+            <div class="economy-row">
+              <span class="label">🏰 基地</span>
+              <span class="value">{ownedBases}</span>
+            </div>
+            <div class="economy-row">
+              <span class="label">👥 单位</span>
+              <span class="value">{unitCount} (维护{maintenanceTotal}💰)</span>
+            </div>
+            <div class="economy-row">
+              <span class="label">📈 下回合收入</span>
+              <span class="value income-positive">
+                {nextIncome}💰
+                {#if state.maintenanceDiscountNextTurn[faction]}
+                  <span class="discount-tag">维护费减半</span>
+                {/if}
+              </span>
+            </div>
+          </div>
+        {/each}
+      </div>
+
+      {#if state.capturePoints.length > 0}
+        <div class="capture-points-section">
+          <div class="section-subtitle">📌 占点详情</div>
+          <div class="capture-points-grid">
+            {#each state.capturePoints as cp (cp.id)}
+              <div class="capture-point-item">
+                <span class="cp-icon">{cp.icon}</span>
+                <div class="cp-info">
+                  <span class="cp-name">{cp.name} ({cp.x},{cp.y})</span>
+                  <span class="cp-gold">+{cp.goldPerTurn}💰/回合</span>
+                </div>
+                <span class="cp-owner" style="color: {cp.owner ? getFactionColor(cp.owner) : '#999'}">
+                  {cp.owner ? getFactionName(cp.owner) : '中立'}
+                </span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if !showEconomyPanel && state && gameRules.economy.enabled}
+    <button class="economy-toggle-btn" on:click={() => showEconomyPanel = true}>
+      💰 经济
+    </button>
   {/if}
 
   {#if state && !state.gameOver && (currentEnemyMarkers.length > 0 || currentRevealedAreas.length > 0 || state.fogOfWarEnabled)}
@@ -1734,6 +1852,89 @@
             </tbody>
           </table>
         </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if showShop && state && !state.gameOver && gameRules.economy.enabled}
+    <div
+      class="records-overlay shop-overlay"
+      on:click|self={() => showShop = false}
+      role="dialog"
+      aria-label="商店"
+      tabindex="0"
+      on:keydown={(e) => e.key === 'Escape' && (showShop = false)}
+    >
+      <div class="records-panel shop-panel">
+        <div class="records-header">
+          <h3>🛒 商店（第{state.turn}回合，{getFactionName(state.currentFaction)}行动）</h3>
+          <div class="shop-header-info">
+            <span class="shop-gold" style="color: {getFactionColor(state.currentFaction)}">
+              💰 金币: {state.gold[state.currentFaction]}
+            </span>
+            {#if state.turn < shopConfig.openFromTurn}
+              <span class="shop-locked">🔒 第{shopConfig.openFromTurn}回合开放</span>
+            {/if}
+          </div>
+          <button class="btn-close" on:click={() => showShop = false} aria-label="关闭">×</button>
+        </div>
+
+        <div class="shop-tabs">
+          {#each ['unit', 'resource', 'buff'] as category}
+            <button
+              class="shop-tab {activeShopTab === category ? 'active' : ''}"
+              on:click={() => activeShopTab = category}
+            >
+              {category === 'unit' ? '⚔️ 招募' : category === 'resource' ? '📦 资源' : '✨ 增益'}
+            </button>
+          {/each}
+        </div>
+
+        <div class="shop-items-grid">
+          {#each shopItems.filter(i => i.type === activeShopTab) as item (item.id)}
+            {@const turnKey = `${state.turn}_${item.id}_${state.currentFaction}`}
+            {@const purchasedThisTurn = state.shopPurchaseCounts[turnKey] || 0}
+            {@const canAfford = state.gold[state.currentFaction] >= item.cost}
+            {@const notMaxed = !item.maxPurchasesPerTurn || purchasedThisTurn < item.maxPurchasesPerTurn}
+            {@const canBuy = canAfford && notMaxed && state.turn >= shopConfig.openFromTurn}
+            <div class="shop-item-card {canBuy ? 'buyable' : 'unavailable'}">
+              <div class="shop-item-icon">{item.icon}</div>
+              <div class="shop-item-info">
+                <div class="shop-item-name">{item.name}</div>
+                <div class="shop-item-desc">{item.description}</div>
+                <div class="shop-item-meta">
+                  {#if item.maxPurchasesPerTurn}
+                    <span class="shop-item-limit">
+                      限购 {item.maxPurchasesPerTurn}/回合 (已购 {purchasedThisTurn})
+                    </span>
+                  {/if}
+                  {#if item.type === 'unit' && item.unitType}
+                    <span class="shop-unit-stat">
+                      ⚔️{unitConfig[item.unitType].attack} 🛡️{unitConfig[item.unitType].defense}
+                      ❤️{unitConfig[item.unitType].hp} 📍{unitConfig[item.unitType].move}
+                    </span>
+                  {/if}
+                </div>
+              </div>
+              <div class="shop-item-price {canAfford ? 'affordable' : 'expensive'}">
+                💰 {item.cost}
+              </div>
+              <button
+                class="btn {canBuy ? 'btn-primary' : 'btn-disabled'}"
+                disabled={!canBuy}
+                on:click={() => handlePurchase(item.id)}
+              >
+                {canAfford ? (notMaxed ? '购买' : '已达上限') : '金币不足'}
+              </button>
+            </div>
+          {/each}
+        </div>
+
+        {#if lastPurchaseMessage}
+          <div class="purchase-result {lastPurchaseSuccess ? 'success' : 'error'}">
+            {lastPurchaseMessage}
+          </div>
         {/if}
       </div>
     </div>
@@ -2576,6 +2777,60 @@
     text-align: center;
   }
 
+  .gold-bar-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(241, 196, 15, 0.15);
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid rgba(241, 196, 15, 0.3);
+  }
+
+  .gold-icon {
+    font-size: 16px;
+  }
+
+  .gold-current {
+    font-size: 14px;
+    font-weight: bold;
+    min-width: 40px;
+  }
+
+  .gold-other {
+    font-size: 10px;
+    color: #888;
+  }
+
+  .btn-shop {
+    background: linear-gradient(135deg, #f39c12, #e67e22);
+    color: white;
+  }
+
+  .btn-shop:hover {
+    background: linear-gradient(135deg, #e67e22, #d35400);
+  }
+
+  .btn-disabled {
+    background: #7f8c8d;
+    color: #bdc3c7;
+  }
+
+  .btn-icon {
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .btn-icon:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+  }
+
   .cooldown-bar {
     display: flex;
     align-items: center;
@@ -2758,6 +3013,347 @@
     font-size: 10px;
     font-weight: bold;
     margin-left: 8px;
+  }
+
+  .economy-panel {
+    position: absolute;
+    left: 20px;
+    top: 110px;
+    width: 260px;
+    background: rgba(26, 26, 46, 0.95);
+    border: 2px solid #f1c40f;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: white;
+    z-index: 50;
+  }
+
+  .economy-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #333;
+  }
+
+  .economy-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: #f1c40f;
+  }
+
+  .economy-info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .economy-faction-block {
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  .economy-faction-name {
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 6px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .economy-gold-row,
+  .economy-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    margin-bottom: 4px;
+    line-height: 1.4;
+  }
+
+  .economy-gold-row .label,
+  .economy-row .label {
+    color: #bbb;
+  }
+
+  .economy-gold-row .value,
+  .economy-row .value {
+    font-weight: bold;
+  }
+
+  .economy-gold-row {
+    padding: 4px 6px;
+    background: rgba(241, 196, 15, 0.1);
+    border-radius: 4px;
+    margin-bottom: 6px;
+  }
+
+  .income-positive {
+    color: #2ecc71;
+  }
+
+  .discount-tag {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 5px;
+    background: #e74c3c;
+    color: white;
+    border-radius: 8px;
+    margin-left: 4px;
+  }
+
+  .capture-points-section {
+    border-top: 1px solid #333;
+    padding-top: 8px;
+  }
+
+  .section-subtitle {
+    font-size: 11px;
+    color: #bbb;
+    margin-bottom: 6px;
+  }
+
+  .capture-points-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .capture-point-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    padding: 4px 6px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+  }
+
+  .cp-icon {
+    font-size: 14px;
+  }
+
+  .cp-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cp-name {
+    font-weight: bold;
+  }
+
+  .cp-gold {
+    color: #f1c40f;
+    font-size: 9px;
+  }
+
+  .cp-owner {
+    font-weight: bold;
+    font-size: 10px;
+  }
+
+  .economy-toggle-btn {
+    position: absolute;
+    left: 20px;
+    top: 110px;
+    background: linear-gradient(135deg, #f39c12, #e67e22);
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    z-index: 50;
+    box-shadow: 0 2px 8px rgba(243, 156, 18, 0.4);
+  }
+
+  .economy-toggle-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 3px 12px rgba(243, 156, 18, 0.5);
+  }
+
+  .shop-overlay {
+    z-index: 2000;
+  }
+
+  .shop-panel {
+    max-width: 700px;
+    width: 90%;
+  }
+
+  .shop-header-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-right: 20px;
+  }
+
+  .shop-gold {
+    font-size: 16px;
+    font-weight: bold;
+  }
+
+  .shop-locked {
+    font-size: 12px;
+    color: #e74c3c;
+    background: rgba(231, 76, 60, 0.1);
+    padding: 3px 8px;
+    border-radius: 12px;
+  }
+
+  .shop-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    border-bottom: 2px solid #333;
+  }
+
+  .shop-tab {
+    flex: 1;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.2s;
+  }
+
+  .shop-tab:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .shop-tab.active {
+    color: #f1c40f;
+    border-bottom-color: #f1c40f;
+  }
+
+  .shop-items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    max-height: 50vh;
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+
+  .shop-item-card {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 6px 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 2px solid #333;
+    border-radius: 8px;
+    transition: all 0.2s;
+  }
+
+  .shop-item-card.buyable {
+    border-color: #2ecc71;
+    background: rgba(46, 204, 113, 0.05);
+  }
+
+  .shop-item-card.buyable:hover {
+    border-color: #27ae60;
+    background: rgba(46, 204, 113, 0.1);
+    transform: translateY(-2px);
+  }
+
+  .shop-item-card.unavailable {
+    opacity: 0.7;
+  }
+
+  .shop-item-icon {
+    grid-row: 1 / span 3;
+    font-size: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 8px;
+  }
+
+  .shop-item-info {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .shop-item-name {
+    font-size: 14px;
+    font-weight: bold;
+    color: white;
+    margin-bottom: 2px;
+  }
+
+  .shop-item-desc {
+    font-size: 11px;
+    color: #bbb;
+    line-height: 1.4;
+    margin-bottom: 4px;
+  }
+
+  .shop-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .shop-item-limit,
+  .shop-unit-stat {
+    font-size: 10px;
+    padding: 2px 6px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    color: #888;
+  }
+
+  .shop-item-price {
+    grid-column: 2;
+    font-size: 16px;
+    font-weight: bold;
+    color: #f1c40f;
+  }
+
+  .shop-item-price.expensive {
+    color: #e74c3c;
+  }
+
+  .shop-item-card button {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+  }
+
+  .purchase-result {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    text-align: center;
+  }
+
+  .purchase-result.success {
+    background: rgba(46, 204, 113, 0.15);
+    color: #2ecc71;
+    border: 1px solid #2ecc71;
+  }
+
+  .purchase-result.error {
+    background: rgba(231, 76, 60, 0.15);
+    color: #e74c3c;
+    border: 1px solid #e74c3c;
   }
 
   .game-over-overlay {
