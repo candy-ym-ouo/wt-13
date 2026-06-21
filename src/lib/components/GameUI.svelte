@@ -8,6 +8,7 @@
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
   import { saveRosterFromGame, getFactionRoster, clearRoster, loadRoster } from '$lib/utils/storageRoster';
+  import { saveToSlot, loadFromSlot, deleteSlot, getAllSlotMetas, hasAutoSave, loadAutoSave, clearAutoSave, getManualSlots, getAutoSlot } from '$lib/utils/storageSave';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -60,6 +61,12 @@
   let showBattleLog = false;
   let showReplay = false;
   let showRoundStats = false;
+  let showSaveLoad = false;
+  let showResumePrompt = false;
+  /** @type {import('$lib/utils/storageSave').SaveMeta | null} */
+  let resumeMeta = null;
+  /** @type {Map<number, import('$lib/utils/storageSave').SaveMeta>} */
+  let slotMetas = new Map();
   /** @type {GameRecord | null} */
   let replayRecord = null;
   /** @type {GameRecord[]} */
@@ -297,6 +304,7 @@
       if (s.gameOver && !recordSaved) {
         saveRecord();
         recordSaved = true;
+        gameState.disableAutoSave();
       }
     });
     unsubscribeSelected = selectedUnit.subscribe(/** @param {Unit | null} u */ u => {
@@ -322,9 +330,25 @@
     });
     records = /** @type {GameRecord[]} */ (getGameRecords());
 
+    if (hasAutoSave()) {
+      const result = loadAutoSave();
+      if (result.success && result.state && !result.state.gameOver) {
+        gameState.loadFromSave(result.state);
+        if (result.repaired) {
+          gameState.setMessage('检测到异常存档，已自动修复恢复');
+        } else {
+          const fName = result.state.currentFaction === 'red' ? '红方' : '蓝方';
+          gameState.setMessage(`已恢复上次游戏进度（第${result.state.turn}回合，${fName}行动）`);
+        }
+        gameState.enableAutoSave();
+        return;
+      }
+    }
+
     if (!state || !state.hands || state.hands.red.length === 0) {
       initHands();
     }
+    gameState.enableAutoSave();
   });
 
   onDestroy(() => {
@@ -436,6 +460,7 @@
     }
     initHands();
     gameState.setMessage('游戏开始！红方先行动');
+    gameState.enableAutoSave();
   }
 
   /**
@@ -554,6 +579,62 @@
     if (confirm('确定要清除所有游戏记录吗？')) {
       clearGameRecords();
       records = [];
+    }
+  }
+
+  function handleShowSaveLoad() {
+    showSaveLoad = !showSaveLoad;
+    if (showSaveLoad) {
+      slotMetas = getAllSlotMetas();
+    }
+  }
+
+  /**
+   * @param {number} slot
+   */
+  function handleSaveToSlot(slot) {
+    if (!state) return;
+    const success = saveToSlot(state, slot);
+    if (success) {
+      gameState.setMessage(`已保存至存档位 ${slot === getAutoSlot() ? '自动存档' : slot}`);
+    } else {
+      gameState.setMessage('保存失败，请检查存储空间');
+    }
+    slotMetas = getAllSlotMetas();
+  }
+
+  /**
+   * @param {number} slot
+   */
+  function handleLoadFromSlot(slot) {
+    const result = loadFromSlot(slot);
+    if (result.success && result.state) {
+      if (result.meta && result.meta.gameOver) {
+        gameState.setMessage('该存档游戏已结束，无法恢复');
+        return;
+      }
+      gameState.loadFromSave(result.state);
+      if (result.repaired) {
+        gameState.setMessage('存档数据异常，已自动修复并恢复');
+      } else {
+        const fName = result.state.currentFaction === 'red' ? '红方' : '蓝方';
+        gameState.setMessage(`已加载存档位 ${slot === getAutoSlot() ? '自动存档' : slot}（第${result.state.turn}回合，${fName}行动）`);
+      }
+      gameState.enableAutoSave();
+      showSaveLoad = false;
+    } else {
+      gameState.setMessage('加载存档失败');
+    }
+  }
+
+  /**
+   * @param {number} slot
+   */
+  function handleDeleteSlot(slot) {
+    const label = slot === getAutoSlot() ? '自动存档' : `存档位 ${slot}`;
+    if (confirm(`确定要删除${label}吗？`)) {
+      deleteSlot(slot);
+      slotMetas = getAllSlotMetas();
     }
   }
 
@@ -1001,6 +1082,9 @@
       <button class="btn btn-secondary" on:click={handleShowRoster}>
         🏋️ 阵容
       </button>
+      <button class="btn btn-secondary" on:click={handleShowSaveLoad}>
+        💾 存档
+      </button>
       <button class="btn btn-secondary" on:click={handleRestart}>
         🔄 重开
       </button>
@@ -1149,6 +1233,75 @@
         <div class="intel-summary-item">
           <span class="summary-label">侦查区域</span>
           <span class="summary-value">📡 {currentRevealedAreas.length}</span>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showSaveLoad}
+    <div
+      class="records-overlay"
+      on:click|self={handleShowSaveLoad}
+      role="dialog"
+      aria-label="存档管理"
+      tabindex="0"
+      on:keydown={(e) => e.key === 'Escape' && handleShowSaveLoad()}
+    >
+      <div class="records-panel save-load-panel">
+        <div class="records-header">
+          <h3>💾 存档管理</h3>
+          <button class="btn-close" on:click={handleShowSaveLoad} aria-label="关闭">×</button>
+        </div>
+        <div class="save-load-info">
+          <p class="save-tip">自动存档在每次操作后自动保存，刷新页面可自动恢复进度。手动存档位可用于保存关键节点。</p>
+        </div>
+        <div class="save-slots">
+          {#each [getAutoSlot(), ...getManualSlots()] as slot (slot)}
+            {@const meta = slotMetas.get(slot)}
+            {@const isAuto = slot === getAutoSlot()}
+            <div class="save-slot" class:save-slot-auto={isAuto}>
+              <div class="slot-header">
+                <span class="slot-number">{isAuto ? '🔄 自动存档' : `📁 存档位 ${slot}`}</span>
+                {#if meta}
+                  <span class="slot-time">{formatDate(new Date(meta.timestamp).toISOString())}</span>
+                {:else}
+                  <span class="slot-empty">空</span>
+                {/if}
+              </div>
+              {#if meta}
+                <div class="slot-detail">
+                  <span class="slot-turn">第{meta.turn}回合</span>
+                  <span class="slot-faction" style="color: {meta.faction === 'red' ? '#e74c3c' : '#3498db'}">
+                    {meta.faction === 'red' ? '红方' : '蓝方'}行动
+                  </span>
+                  {#if meta.gameOver}
+                    <span class="slot-over">已结束</span>
+                  {/if}
+                </div>
+              {:else}
+                <div class="slot-detail">
+                  <span class="slot-no-data">无存档数据</span>
+                </div>
+              {/if}
+              <div class="slot-actions">
+                {#if !state?.gameOver}
+                  <button class="btn btn-sm btn-save" on:click={() => handleSaveToSlot(slot)}>
+                    💾 保存
+                  </button>
+                {/if}
+                {#if meta && !meta.gameOver}
+                  <button class="btn btn-sm btn-load" on:click={() => handleLoadFromSlot(slot)}>
+                    📂 加载
+                  </button>
+                {/if}
+                {#if meta}
+                  <button class="btn btn-sm btn-delete" on:click={() => handleDeleteSlot(slot)}>
+                    🗑️ 删除
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
         </div>
       </div>
     </div>
@@ -4115,5 +4268,151 @@
 
   .replay-round-summary {
     padding: 0 12px 8px;
+  }
+
+  .save-load-panel {
+    max-width: 520px;
+  }
+
+  .save-load-info {
+    padding: 8px 16px;
+    background: rgba(52, 152, 219, 0.08);
+    border-radius: 6px;
+    margin: 0 0 12px;
+  }
+
+  .save-tip {
+    margin: 0;
+    font-size: 12px;
+    color: #7f8c8d;
+    line-height: 1.5;
+  }
+
+  .save-slots {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 4px;
+  }
+
+  .save-slot {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 12px 14px;
+    transition: background 0.2s;
+  }
+
+  .save-slot:hover {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  .save-slot-auto {
+    border-color: rgba(52, 152, 219, 0.3);
+    background: rgba(52, 152, 219, 0.05);
+  }
+
+  .save-slot-auto:hover {
+    background: rgba(52, 152, 219, 0.1);
+  }
+
+  .slot-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  .slot-number {
+    font-size: 14px;
+    font-weight: 600;
+    color: #ecf0f1;
+  }
+
+  .slot-time {
+    font-size: 11px;
+    color: #7f8c8d;
+  }
+
+  .slot-empty {
+    font-size: 11px;
+    color: #555;
+    font-style: italic;
+  }
+
+  .slot-detail {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+
+  .slot-turn {
+    color: #bdc3c7;
+  }
+
+  .slot-faction {
+    font-weight: 500;
+  }
+
+  .slot-over {
+    color: #e74c3c;
+    font-size: 11px;
+    padding: 1px 6px;
+    background: rgba(231, 76, 60, 0.15);
+    border-radius: 3px;
+  }
+
+  .slot-no-data {
+    color: #555;
+    font-size: 12px;
+  }
+
+  .slot-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .btn-sm {
+    font-size: 11px;
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #bdc3c7;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-sm:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .btn-save {
+    border-color: rgba(46, 204, 113, 0.4);
+    color: #2ecc71;
+  }
+
+  .btn-save:hover {
+    background: rgba(46, 204, 113, 0.15);
+  }
+
+  .btn-load {
+    border-color: rgba(52, 152, 219, 0.4);
+    color: #3498db;
+  }
+
+  .btn-load:hover {
+    background: rgba(52, 152, 219, 0.15);
+  }
+
+  .btn-delete {
+    border-color: rgba(231, 76, 60, 0.3);
+    color: #e74c3c;
+  }
+
+  .btn-delete:hover {
+    background: rgba(231, 76, 60, 0.12);
   }
 </style>

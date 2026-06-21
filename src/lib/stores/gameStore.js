@@ -3,6 +3,7 @@ import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
 import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
+import { debouncedAutoSave, cancelPendingAutoSave } from '$lib/utils/storageSave';
 import {
   tickActiveCards,
   tickCooldowns,
@@ -369,6 +370,23 @@ function createInitialState() {
 function createGameState() {
   const { subscribe, set, update } = writable(createInitialState());
 
+  let autoSaveEnabled = false;
+
+  function enableAutoSave() {
+    autoSaveEnabled = true;
+  }
+
+  function disableAutoSave() {
+    autoSaveEnabled = false;
+    cancelPendingAutoSave();
+  }
+
+  subscribe(state => {
+    if (autoSaveEnabled && state && !state.gameOver) {
+      debouncedAutoSave(state);
+    }
+  });
+
   /**
    * @param {{ type: ActionLogType; description: string; details?: object; factionOverride?: string; unitId?: string }} logData
    */
@@ -422,7 +440,18 @@ function createGameState() {
     subscribe,
     set,
     update,
-    reset: () => set(createInitialState()),
+    reset: () => {
+      disableAutoSave();
+      cancelPendingAutoSave();
+      set(createInitialState());
+    },
+    loadFromSave: (/** @type {GameState} */ savedState) => {
+      disableAutoSave();
+      cancelPendingAutoSave();
+      set(savedState);
+    },
+    enableAutoSave,
+    disableAutoSave,
     addActionLog,
     /**
      * @param {string | null} unitId
