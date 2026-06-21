@@ -27,6 +27,17 @@ const STORAGE_KEY = 'tactical_board_game_records';
  */
 
 /**
+ * @typedef {object} RoundSnapshot
+ * @property {number} turn
+ * @property {string} faction
+ * @property {{red: number, blue: number}} aliveCount
+ * @property {{red: number, blue: number}} totalDamageDealt
+ * @property {{red: number, blue: number}} cardsUsed
+ * @property {{red: number, blue: number}} baseDurability
+ * @property {{red: number, blue: number}} baseCaptureProgress
+ */
+
+/**
  * @typedef {object} GameRecordInput
  * @property {string} winner
  * @property {string} victoryCondition
@@ -35,6 +46,7 @@ const STORAGE_KEY = 'tactical_board_game_records';
  * @property {number} [avgMoraleWinner]
  * @property {number} [avgMoraleLoser]
  * @property {TurnLog[]} [actionLogs]
+ * @property {RoundSnapshot[]} [roundSnapshots]
  */
 
 /**
@@ -48,6 +60,7 @@ const STORAGE_KEY = 'tactical_board_game_records';
  * @property {number} [avgMoraleLoser]
  * @property {string} date
  * @property {TurnLog[]} [actionLogs]
+ * @property {RoundSnapshot[]} [roundSnapshots]
  */
 
 /**

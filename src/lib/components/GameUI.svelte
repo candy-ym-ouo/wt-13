@@ -20,6 +20,17 @@
    */
 
   /**
+   * @typedef {object} RoundSnapshot
+   * @property {number} turn
+   * @property {string} faction
+   * @property {{red: number, blue: number}} aliveCount
+   * @property {{red: number, blue: number}} totalDamageDealt
+   * @property {{red: number, blue: number}} cardsUsed
+   * @property {{red: number, blue: number}} baseDurability
+   * @property {{red: number, blue: number}} baseCaptureProgress
+   */
+
+  /**
    * @typedef {object} GameRecord
    * @property {number} id
    * @property {string} winner
@@ -30,6 +41,7 @@
    * @property {number} [avgMoraleLoser]
    * @property {string} date
    * @property {TurnLog[]} [actionLogs]
+   * @property {RoundSnapshot[]} [roundSnapshots]
    */
 
   /** @type {GameState | null} */
@@ -47,6 +59,7 @@
   let showRecords = false;
   let showBattleLog = false;
   let showReplay = false;
+  let showRoundStats = false;
   /** @type {GameRecord | null} */
   let replayRecord = null;
   /** @type {GameRecord[]} */
@@ -301,7 +314,8 @@
       totalUnits: state.units.length,
       avgMoraleWinner,
       avgMoraleLoser,
-      actionLogs: state.actionLogs
+      actionLogs: state.actionLogs,
+      roundSnapshots: state.roundSnapshots
     };
     saveGameRecord(record);
     records = /** @type {GameRecord[]} */ (getGameRecords());
@@ -797,6 +811,76 @@
       targetY: previewTargetData.y
     };
   }
+
+  /**
+   * @param {RoundSnapshot[]} snapshots
+   * @returns {{ redTotalDmg: number; blueTotalDmg: number; redTotalCards: number; blueTotalCards: number; redMaxAlive: number; blueMaxAlive: number }}
+   */
+  function computeRoundSummary(snapshots) {
+    let redTotalDmg = 0, blueTotalDmg = 0, redTotalCards = 0, blueTotalCards = 0;
+    let redMaxAlive = 0, blueMaxAlive = 0;
+    for (const s of snapshots) {
+      redTotalDmg += s.totalDamageDealt.red;
+      blueTotalDmg += s.totalDamageDealt.blue;
+      redTotalCards += s.cardsUsed.red;
+      blueTotalCards += s.cardsUsed.blue;
+      if (s.aliveCount.red > redMaxAlive) redMaxAlive = s.aliveCount.red;
+      if (s.aliveCount.blue > blueMaxAlive) blueMaxAlive = s.aliveCount.blue;
+    }
+    return { redTotalDmg, blueTotalDmg, redTotalCards, blueTotalCards, redMaxAlive, blueMaxAlive };
+  }
+
+  /**
+   * @param {RoundSnapshot[]} snapshots
+   * @param {'red' | 'blue'} faction
+   * @returns {number}
+   */
+  function getMaxDamage(snapshots, faction) {
+    let max = 0;
+    for (const s of snapshots) {
+      if (s.totalDamageDealt[faction] > max) max = s.totalDamageDealt[faction];
+    }
+    return max || 1;
+  }
+
+  /**
+   * @param {RoundSnapshot[]} snapshots
+   * @param {'red' | 'blue'} faction
+   * @returns {number}
+   */
+  function getMaxCards(snapshots, faction) {
+    let max = 0;
+    for (const s of snapshots) {
+      if (s.cardsUsed[faction] > max) max = s.cardsUsed[faction];
+    }
+    return max || 1;
+  }
+
+  /**
+   * @param {RoundSnapshot[]} snapshots
+   * @returns {number}
+   */
+  function getMaxBaseDur(snapshots) {
+    let max = 0;
+    for (const s of snapshots) {
+      if (s.baseDurability.red > max) max = s.baseDurability.red;
+      if (s.baseDurability.blue > max) max = s.baseDurability.blue;
+    }
+    return max || 100;
+  }
+
+  /**
+   * @param {RoundSnapshot[]} snapshots
+   * @returns {number}
+   */
+  function getMaxAlive(snapshots) {
+    let max = 0;
+    for (const s of snapshots) {
+      if (s.aliveCount.red > max) max = s.aliveCount.red;
+      if (s.aliveCount.blue > max) max = s.aliveCount.blue;
+    }
+    return max || 1;
+  }
 </script>
 
 <div class="game-ui">
@@ -827,6 +911,9 @@
       </div>
     </div>
     <div class="top-actions">
+      <button class="btn btn-secondary" on:click={() => showRoundStats = !showRoundStats}>
+        📈 回合
+      </button>
       <button class="btn btn-secondary" on:click={handleShowBattleLog}>
         📜 战报
       </button>
@@ -1008,6 +1095,29 @@
             </div>
           </div>
         {/if}
+        {#if state.roundSnapshots && state.roundSnapshots.length > 0}
+          {@const gSummary = computeRoundSummary(state.roundSnapshots)}
+          <div class="gameover-round-summary">
+            <div class="gameover-summary-row">
+              <span class="gameover-label">总伤害</span>
+              <span style="color: #e74c3c">{gSummary.redTotalDmg}</span>
+              <span style="color: #3498db">{gSummary.blueTotalDmg}</span>
+            </div>
+            <div class="gameover-summary-row">
+              <span class="gameover-label">总卡牌</span>
+              <span style="color: #e74c3c">{gSummary.redTotalCards}</span>
+              <span style="color: #3498db">{gSummary.blueTotalCards}</span>
+            </div>
+            <div class="gameover-summary-row">
+              <span class="gameover-label">存活</span>
+              <span style="color: #e74c3c">{state.units.filter(u => u.faction === 'red').length}</span>
+              <span style="color: #3498db">{state.units.filter(u => u.faction === 'blue').length}</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary" on:click={() => showRoundStats = true}>
+            📈 查看回合趋势
+          </button>
+        {/if}
         <button class="btn btn-primary" on:click={handleRestart}>再来一局</button>
         {#if !rosterSaved && state.winner}
           <button class="btn btn-secondary" on:click={() => { saveRosterFromGame(state.units, state.winner); rosterSaved = true; }}>
@@ -1085,6 +1195,143 @@
     </div>
   {/if}
 
+  {#if showRoundStats && state && state.roundSnapshots.length > 0}
+    <div
+      class="records-overlay"
+      on:click|self={() => showRoundStats = false}
+      role="dialog"
+      aria-label="回合统计"
+      tabindex="0"
+      on:keydown={(e) => e.key === 'Escape' && (showRoundStats = false)}
+    >
+      <div class="records-panel round-stats-panel">
+        <div class="records-header">
+          <h3>📈 回合数据趋势</h3>
+          <button class="btn-close" on:click={() => showRoundStats = false} aria-label="关闭">×</button>
+        </div>
+        {#if state.roundSnapshots.length > 0}
+          {@const snapshots = state.roundSnapshots}
+          {@const summary = computeRoundSummary(snapshots)}
+        <div class="round-summary-bar">
+          <div class="summary-item red">
+            <span class="summary-faction">红方</span>
+            <span class="summary-stat">总伤害 {summary.redTotalDmg}</span>
+            <span class="summary-stat">总卡牌 {summary.redTotalCards}</span>
+          </div>
+          <div class="summary-item blue">
+            <span class="summary-faction">蓝方</span>
+            <span class="summary-stat">总伤害 {summary.blueTotalDmg}</span>
+            <span class="summary-stat">总卡牌 {summary.blueTotalCards}</span>
+          </div>
+        </div>
+
+        <div class="trend-section">
+          <div class="trend-title">👥 存活数趋势</div>
+          <div class="trend-chart">
+            <div class="trend-bars">
+              {#each snapshots as s}
+                <div class="trend-bar-group" title="回合{s.turn} 红:{s.aliveCount.red} 蓝:{s.aliveCount.blue}">
+                  <div class="trend-bar-wrapper">
+                    <div class="trend-bar red" style="height: {(s.aliveCount.red / getMaxAlive(snapshots)) * 100}%"></div>
+                    <div class="trend-bar blue" style="height: {(s.aliveCount.blue / getMaxAlive(snapshots)) * 100}%"></div>
+                  </div>
+                  <span class="trend-label">{s.turn}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        </div>
+
+        <div class="trend-section">
+          <div class="trend-title">⚔️ 每回合伤害</div>
+          <div class="trend-chart">
+            <div class="trend-bars">
+              {#each snapshots as s}
+                <div class="trend-bar-group" title="回合{s.turn} 红:{s.totalDamageDealt.red} 蓝:{s.totalDamageDealt.blue}">
+                  <div class="trend-bar-wrapper">
+                    <div class="trend-bar red" style="height: {(s.totalDamageDealt.red / getMaxDamage(snapshots, 'red')) * 100}%"></div>
+                    <div class="trend-bar blue" style="height: {(s.totalDamageDealt.blue / getMaxDamage(snapshots, 'blue')) * 100}%"></div>
+                  </div>
+                  <span class="trend-label">{s.turn}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        </div>
+
+        <div class="trend-section">
+          <div class="trend-title">🃏 卡牌消耗</div>
+          <div class="trend-chart">
+            <div class="trend-bars">
+              {#each snapshots as s}
+                <div class="trend-bar-group" title="回合{s.turn} 红:{s.cardsUsed.red} 蓝:{s.cardsUsed.blue}">
+                  <div class="trend-bar-wrapper">
+                    <div class="trend-bar red" style="height: {(s.cardsUsed.red / getMaxCards(snapshots, 'red')) * 100}%"></div>
+                    <div class="trend-bar blue" style="height: {(s.cardsUsed.blue / getMaxCards(snapshots, 'blue')) * 100}%"></div>
+                  </div>
+                  <span class="trend-label">{s.turn}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        </div>
+
+        <div class="trend-section">
+          <div class="trend-title">🏰 基地耐久</div>
+          <div class="trend-chart">
+            <div class="trend-bars">
+              {#each snapshots as s}
+                <div class="trend-bar-group" title="回合{s.turn} 红:{s.baseDurability.red} 蓝:{s.baseDurability.blue}">
+                  <div class="trend-bar-wrapper">
+                    <div class="trend-bar red" style="height: {(s.baseDurability.red / getMaxBaseDur(snapshots)) * 100}%"></div>
+                    <div class="trend-bar blue" style="height: {(s.baseDurability.blue / getMaxBaseDur(snapshots)) * 100}%"></div>
+                  </div>
+                  <span class="trend-label">{s.turn}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        </div>
+
+        <div class="round-detail-table">
+          <table>
+            <thead>
+              <tr>
+                <th>回合</th>
+                <th>行动方</th>
+                <th>红方存活</th>
+                <th>蓝方存活</th>
+                <th>红方伤害</th>
+                <th>蓝方伤害</th>
+                <th>红方卡牌</th>
+                <th>蓝方卡牌</th>
+                <th>红基地耐久</th>
+                <th>蓝基地耐久</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each [...snapshots].reverse() as s}
+                <tr>
+                  <td>{s.turn}</td>
+                  <td style="color: {getFactionColor(s.faction)}">{getFactionName(s.faction)}</td>
+                  <td>{s.aliveCount.red}</td>
+                  <td>{s.aliveCount.blue}</td>
+                  <td class="dmg-cell">{s.totalDamageDealt.red || 0}</td>
+                  <td class="dmg-cell">{s.totalDamageDealt.blue || 0}</td>
+                  <td>{s.cardsUsed.red || 0}</td>
+                  <td>{s.cardsUsed.blue || 0}</td>
+                  <td>{Math.floor(s.baseDurability.red)}</td>
+                  <td>{Math.floor(s.baseDurability.blue)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   {#if showRecords}
     <div
       class="records-overlay"
@@ -1119,6 +1366,15 @@
                   </div>
                 {/if}
                 <div class="record-date">{formatDate(record.date)}</div>
+                {#if record.roundSnapshots && record.roundSnapshots.length > 0}
+                  {@const rSummary = computeRoundSummary(record.roundSnapshots)}
+                  <div class="record-round-stats">
+                    <span style="color: #e74c3c">⚔️{rSummary.redTotalDmg}</span>
+                    <span style="color: #3498db">⚔️{rSummary.blueTotalDmg}</span>
+                    <span style="color: #e74c3c">🃏{rSummary.redTotalCards}</span>
+                    <span style="color: #3498db">🃏{rSummary.blueTotalCards}</span>
+                  </div>
+                {/if}
                 {#if record.actionLogs && record.actionLogs.length > 0}
                   <button class="btn btn-secondary btn-small record-replay-btn" on:click={() => handleShowReplay(record)}>
                     📽️ 查看复盘
@@ -1160,6 +1416,72 @@
           </div>
           <button class="btn-close" on:click={handleCloseReplay} aria-label="关闭">×</button>
         </div>
+        {#if replayRecord.roundSnapshots && replayRecord.roundSnapshots.length > 0}
+          {@const rpSnapshots = replayRecord.roundSnapshots}
+          {@const rpSummary = computeRoundSummary(rpSnapshots)}
+          <div class="replay-round-summary">
+            <div class="round-summary-bar">
+              <div class="summary-item red">
+                <span class="summary-faction">红方</span>
+                <span class="summary-stat">总伤害 {rpSummary.redTotalDmg}</span>
+                <span class="summary-stat">总卡牌 {rpSummary.redTotalCards}</span>
+              </div>
+              <div class="summary-item blue">
+                <span class="summary-faction">蓝方</span>
+                <span class="summary-stat">总伤害 {rpSummary.blueTotalDmg}</span>
+                <span class="summary-stat">总卡牌 {rpSummary.blueTotalCards}</span>
+              </div>
+            </div>
+            <div class="trend-section">
+              <div class="trend-title">👥 存活数</div>
+              <div class="trend-chart">
+                <div class="trend-bars">
+                  {#each rpSnapshots as s}
+                    <div class="trend-bar-group" title="回合{s.turn} 红:{s.aliveCount.red} 蓝:{s.aliveCount.blue}">
+                      <div class="trend-bar-wrapper">
+                        <div class="trend-bar red" style="height: {(s.aliveCount.red / getMaxAlive(rpSnapshots)) * 100}%"></div>
+                        <div class="trend-bar blue" style="height: {(s.aliveCount.blue / getMaxAlive(rpSnapshots)) * 100}%"></div>
+                      </div>
+                      <span class="trend-label">{s.turn}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            </div>
+            <div class="trend-section">
+              <div class="trend-title">⚔️ 伤害</div>
+              <div class="trend-chart">
+                <div class="trend-bars">
+                  {#each rpSnapshots as s}
+                    <div class="trend-bar-group" title="回合{s.turn} 红:{s.totalDamageDealt.red} 蓝:{s.totalDamageDealt.blue}">
+                      <div class="trend-bar-wrapper">
+                        <div class="trend-bar red" style="height: {(s.totalDamageDealt.red / getMaxDamage(rpSnapshots, 'red')) * 100}%"></div>
+                        <div class="trend-bar blue" style="height: {(s.totalDamageDealt.blue / getMaxDamage(rpSnapshots, 'blue')) * 100}%"></div>
+                      </div>
+                      <span class="trend-label">{s.turn}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            </div>
+            <div class="trend-section">
+              <div class="trend-title">🏰 基地耐久</div>
+              <div class="trend-chart">
+                <div class="trend-bars">
+                  {#each rpSnapshots as s}
+                    <div class="trend-bar-group" title="回合{s.turn} 红:{s.baseDurability.red} 蓝:{s.baseDurability.blue}">
+                      <div class="trend-bar-wrapper">
+                        <div class="trend-bar red" style="height: {(s.baseDurability.red / getMaxBaseDur(rpSnapshots)) * 100}%"></div>
+                        <div class="trend-bar blue" style="height: {(s.baseDurability.blue / getMaxBaseDur(rpSnapshots)) * 100}%"></div>
+                      </div>
+                      <span class="trend-label">{s.turn}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            </div>
+          </div>
+        {/if}
         <div class="battle-log-list">
           {#if !replayRecord.actionLogs || replayRecord.actionLogs.length === 0}
             <p class="empty">该记录没有详细战报</p>
@@ -3387,5 +3709,147 @@
     font-size: 14px;
     font-weight: bold;
     color: #9b59b6;
+  }
+
+  .round-stats-panel {
+    max-width: 640px;
+  }
+
+  .round-summary-bar {
+    display: flex;
+    gap: 12px;
+    padding: 8px 12px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    margin-bottom: 12px;
+  }
+
+  .summary-item {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .summary-item.red .summary-faction { color: #e74c3c; }
+  .summary-item.blue .summary-faction { color: #3498db; }
+  .summary-faction { font-weight: bold; font-size: 13px; }
+  .summary-stat { font-size: 12px; color: #ccc; }
+
+  .trend-section {
+    margin-bottom: 14px;
+  }
+
+  .trend-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: #eee;
+    margin-bottom: 6px;
+  }
+
+  .trend-chart {
+    background: rgba(0,0,0,0.25);
+    border-radius: 6px;
+    padding: 8px;
+    overflow-x: auto;
+  }
+
+  .trend-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    min-height: 80px;
+  }
+
+  .trend-bar-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 18px;
+  }
+
+  .trend-bar-wrapper {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 60px;
+  }
+
+  .trend-bar {
+    width: 7px;
+    border-radius: 2px 2px 0 0;
+    transition: height 0.3s ease;
+  }
+
+  .trend-bar.red { background: #e74c3c; }
+  .trend-bar.blue { background: #3498db; }
+
+  .trend-label {
+    font-size: 8px;
+    color: #888;
+    margin-top: 2px;
+  }
+
+  .round-detail-table {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 8px;
+  }
+
+  .round-detail-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+
+  .round-detail-table th {
+    background: rgba(0,0,0,0.4);
+    color: #aaa;
+    padding: 4px 6px;
+    text-align: center;
+    position: sticky;
+    top: 0;
+  }
+
+  .round-detail-table td {
+    padding: 3px 6px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    color: #ccc;
+  }
+
+  .dmg-cell { color: #e67e22; font-weight: bold; }
+
+  .gameover-round-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0;
+    padding: 8px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+  }
+
+  .gameover-summary-row {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    font-size: 13px;
+  }
+
+  .gameover-label {
+    color: #888;
+    min-width: 50px;
+  }
+
+  .record-round-stats {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    margin-top: 4px;
+  }
+
+  .replay-round-summary {
+    padding: 0 12px 8px;
   }
 </style>

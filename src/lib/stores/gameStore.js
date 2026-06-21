@@ -34,6 +34,17 @@ import {
  */
 
 /**
+ * @typedef {object} RoundSnapshot
+ * @property {number} turn
+ * @property {string} faction
+ * @property {{red: number, blue: number}} aliveCount
+ * @property {{red: number, blue: number}} totalDamageDealt
+ * @property {{red: number, blue: number}} cardsUsed
+ * @property {{red: number, blue: number}} baseDurability
+ * @property {{red: number, blue: number}} baseCaptureProgress
+ */
+
+/**
  * @typedef {'idle' | 'unitSelected' | 'unitMoved' | 'cardSelected' | 'gameOver'} GamePhase
  */
 
@@ -102,6 +113,9 @@ import {
  * @property {{red: RevealedArea[], blue: RevealedArea[]}} revealedAreas
  * @property {{red: EnemyMarker[], blue: EnemyMarker[]}} enemyMarkers
  * @property {boolean} fogOfWarEnabled
+ * @property {RoundSnapshot[]} roundSnapshots
+ * @property {{red: number, blue: number}} turnDamageDealt
+ * @property {{red: number, blue: number}} turnCardsUsed
  */
 
 /**
@@ -339,7 +353,10 @@ function createInitialState() {
     pityCounter: { red: 0, blue: 0 },
     revealedAreas: { red: [], blue: [] },
     enemyMarkers: { red: [], blue: [] },
-    fogOfWarEnabled: true
+    fogOfWarEnabled: true,
+    roundSnapshots: [],
+    turnDamageDealt: { red: 0, blue: 0 },
+    turnCardsUsed: { red: 0, blue: 0 }
   };
 }
 
@@ -848,7 +865,11 @@ function createGameState() {
         lastMoraleChanges: moraleChanges,
         actionLogs: newActionLogs,
         lastActionLog: attackLog,
-        enemyMarkers: markersAfterDeath
+        enemyMarkers: markersAfterDeath,
+        turnDamageDealt: {
+          red: state.turnDamageDealt.red + (attackerFaction === 'red' ? finalDamage : 0) + (counterDamage > 0 && !counterShieldBlocked && defenderFaction === 'red' ? counterDamage : 0),
+          blue: state.turnDamageDealt.blue + (attackerFaction === 'blue' ? finalDamage : 0) + (counterDamage > 0 && !counterShieldBlocked && defenderFaction === 'blue' ? counterDamage : 0)
+        }
       };
     }),
     endTurn: () => update(state => {
@@ -1189,6 +1210,29 @@ function createGameState() {
         }
       }
 
+      const redAlive = units.filter(u => u.faction === 'red').length;
+      const blueAlive = units.filter(u => u.faction === 'blue').length;
+
+      const redBase = state.bases.find(b => b.faction === 'red');
+      const blueBase = state.bases.find(b => b.faction === 'blue');
+
+      /** @type {RoundSnapshot} */
+      const snapshot = {
+        turn: state.turn,
+        faction: state.currentFaction,
+        aliveCount: { red: redAlive, blue: blueAlive },
+        totalDamageDealt: { ...state.turnDamageDealt },
+        cardsUsed: { ...state.turnCardsUsed },
+        baseDurability: {
+          red: redBase ? redBase.durability : 0,
+          blue: blueBase ? blueBase.durability : 0
+        },
+        baseCaptureProgress: {
+          red: redBase ? redBase.captureProgress : 0,
+          blue: blueBase ? blueBase.captureProgress : 0
+        }
+      };
+
       return {
         ...state,
         currentFaction: nextFaction,
@@ -1208,7 +1252,10 @@ function createGameState() {
         lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges,
         actionLogs: newActionLogs,
         lastActionLog: turnEndLog,
-        tileEffects: newTileEffects
+        tileEffects: newTileEffects,
+        roundSnapshots: [...state.roundSnapshots, snapshot],
+        turnDamageDealt: { red: 0, blue: 0 },
+        turnCardsUsed: { red: 0, blue: 0 }
       };
     }),
     /**
@@ -1451,7 +1498,11 @@ function createGameState() {
         gamePhase: 'idle',
         lastCardAction: usedCard ? { cardId: usedCard.id, type: isInstant ? 'play' : 'activate' } : null,
         actionLogs: newActionLogs,
-        lastActionLog: cardLog
+        lastActionLog: cardLog,
+        turnCardsUsed: {
+          red: state.turnCardsUsed.red + (faction === 'red' ? 1 : 0),
+          blue: state.turnCardsUsed.blue + (faction === 'blue' ? 1 : 0)
+        }
       };
     }),
     /**
@@ -1660,7 +1711,10 @@ function createGameState() {
           }
         }
 
-        return { ...state, units: updatedUnits, lastMoraleChanges: moraleChanges, actionLogs: newActionLogs, lastActionLog: damageLog };
+        return { ...state, units: updatedUnits, lastMoraleChanges: moraleChanges, actionLogs: newActionLogs, lastActionLog: damageLog, turnDamageDealt: {
+          red: state.turnDamageDealt.red + (state.currentFaction === 'red' ? finalDamageLocal : 0),
+          blue: state.turnDamageDealt.blue + (state.currentFaction === 'blue' ? finalDamageLocal : 0)
+        } };
       }
 
       return { ...state, units: updatedUnits, lastMoraleChanges: moraleChanges };
