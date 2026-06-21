@@ -827,7 +827,8 @@ export function normalizeCounterType(type) {
  */
 export function getCounterTypeRules(counterType) {
   const safeType = normalizeCounterType(counterType);
-  const rules = gameRules.combat.counterTypes?.[safeType];
+  const counterTypesMap = /** @type {Record<string, any>} */ (gameRules.combat.counterTypes);
+  const rules = counterTypesMap?.[safeType];
   if (rules) {
     return {
       damageRatio: rules.damageRatio ?? 0,
