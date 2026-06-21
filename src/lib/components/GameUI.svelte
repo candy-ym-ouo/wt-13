@@ -814,11 +814,12 @@
 
   /**
    * @param {RoundSnapshot[]} snapshots
-   * @returns {{ redTotalDmg: number; blueTotalDmg: number; redTotalCards: number; blueTotalCards: number; redMaxAlive: number; blueMaxAlive: number }}
+   * @returns {{ redTotalDmg: number; blueTotalDmg: number; redTotalCards: number; blueTotalCards: number; redMaxAlive: number; blueMaxAlive: number; redMaxCapture: number; blueMaxCapture: number }}
    */
   function computeRoundSummary(snapshots) {
     let redTotalDmg = 0, blueTotalDmg = 0, redTotalCards = 0, blueTotalCards = 0;
     let redMaxAlive = 0, blueMaxAlive = 0;
+    let redMaxCapture = 0, blueMaxCapture = 0;
     for (const s of snapshots) {
       redTotalDmg += s.totalDamageDealt.red;
       blueTotalDmg += s.totalDamageDealt.blue;
@@ -826,8 +827,10 @@
       blueTotalCards += s.cardsUsed.blue;
       if (s.aliveCount.red > redMaxAlive) redMaxAlive = s.aliveCount.red;
       if (s.aliveCount.blue > blueMaxAlive) blueMaxAlive = s.aliveCount.blue;
+      if (s.baseCaptureProgress.red > redMaxCapture) redMaxCapture = s.baseCaptureProgress.red;
+      if (s.baseCaptureProgress.blue > blueMaxCapture) blueMaxCapture = s.baseCaptureProgress.blue;
     }
-    return { redTotalDmg, blueTotalDmg, redTotalCards, blueTotalCards, redMaxAlive, blueMaxAlive };
+    return { redTotalDmg, blueTotalDmg, redTotalCards, blueTotalCards, redMaxAlive, blueMaxAlive, redMaxCapture, blueMaxCapture };
   }
 
   /**
@@ -867,6 +870,19 @@
       if (s.baseDurability.blue > max) max = s.baseDurability.blue;
     }
     return max || 100;
+  }
+
+  /**
+   * @param {RoundSnapshot[]} snapshots
+   * @returns {number}
+   */
+  function getMaxCapture(snapshots) {
+    let max = 0;
+    for (const s of snapshots) {
+      if (s.baseCaptureProgress.red > max) max = s.baseCaptureProgress.red;
+      if (s.baseCaptureProgress.blue > max) max = s.baseCaptureProgress.blue;
+    }
+    return max || 1;
   }
 
   /**
@@ -1113,6 +1129,11 @@
               <span style="color: #e74c3c">{state.units.filter(u => u.faction === 'red').length}</span>
               <span style="color: #3498db">{state.units.filter(u => u.faction === 'blue').length}</span>
             </div>
+            <div class="gameover-summary-row">
+              <span class="gameover-label">最高占点</span>
+              <span style="color: #e74c3c">{Math.round(gSummary.redMaxCapture * 100)}%</span>
+              <span style="color: #3498db">{Math.round(gSummary.blueMaxCapture * 100)}%</span>
+            </div>
           </div>
           <button class="btn btn-secondary" on:click={() => showRoundStats = true}>
             📈 查看回合趋势
@@ -1217,11 +1238,13 @@
             <span class="summary-faction">红方</span>
             <span class="summary-stat">总伤害 {summary.redTotalDmg}</span>
             <span class="summary-stat">总卡牌 {summary.redTotalCards}</span>
+            <span class="summary-stat">最高占点 {Math.round(summary.redMaxCapture * 100)}%</span>
           </div>
           <div class="summary-item blue">
             <span class="summary-faction">蓝方</span>
             <span class="summary-stat">总伤害 {summary.blueTotalDmg}</span>
             <span class="summary-stat">总卡牌 {summary.blueTotalCards}</span>
+            <span class="summary-stat">最高占点 {Math.round(summary.blueMaxCapture * 100)}%</span>
           </div>
         </div>
 
@@ -1293,6 +1316,23 @@
           </div>
         </div>
 
+        <div class="trend-section">
+          <div class="trend-title">🏴 占领进度</div>
+          <div class="trend-chart">
+            <div class="trend-bars">
+              {#each snapshots as s}
+                <div class="trend-bar-group" title="回合{s.turn} 红方:{Math.round(s.baseCaptureProgress.red * 100)}% 蓝方:{Math.round(s.baseCaptureProgress.blue * 100)}%">
+                  <div class="trend-bar-wrapper">
+                    <div class="trend-bar red" style="height: {(s.baseCaptureProgress.red / getMaxCapture(snapshots)) * 100}%"></div>
+                    <div class="trend-bar blue" style="height: {(s.baseCaptureProgress.blue / getMaxCapture(snapshots)) * 100}%"></div>
+                  </div>
+                  <span class="trend-label">{s.turn}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        </div>
+
         <div class="round-detail-table">
           <table>
             <thead>
@@ -1307,6 +1347,8 @@
                 <th>蓝方卡牌</th>
                 <th>红基地耐久</th>
                 <th>蓝基地耐久</th>
+                <th>红方占点</th>
+                <th>蓝方占点</th>
               </tr>
             </thead>
             <tbody>
@@ -1322,6 +1364,8 @@
                   <td>{s.cardsUsed.blue || 0}</td>
                   <td>{Math.floor(s.baseDurability.red)}</td>
                   <td>{Math.floor(s.baseDurability.blue)}</td>
+                  <td class="capture-cell">{Math.round(s.baseCaptureProgress.red * 100)}%</td>
+                  <td class="capture-cell">{Math.round(s.baseCaptureProgress.blue * 100)}%</td>
                 </tr>
               {/each}
             </tbody>
@@ -1425,11 +1469,13 @@
                 <span class="summary-faction">红方</span>
                 <span class="summary-stat">总伤害 {rpSummary.redTotalDmg}</span>
                 <span class="summary-stat">总卡牌 {rpSummary.redTotalCards}</span>
+                <span class="summary-stat">最高占点 {Math.round(rpSummary.redMaxCapture * 100)}%</span>
               </div>
               <div class="summary-item blue">
                 <span class="summary-faction">蓝方</span>
                 <span class="summary-stat">总伤害 {rpSummary.blueTotalDmg}</span>
                 <span class="summary-stat">总卡牌 {rpSummary.blueTotalCards}</span>
+                <span class="summary-stat">最高占点 {Math.round(rpSummary.blueMaxCapture * 100)}%</span>
               </div>
             </div>
             <div class="trend-section">
@@ -1473,6 +1519,22 @@
                       <div class="trend-bar-wrapper">
                         <div class="trend-bar red" style="height: {(s.baseDurability.red / getMaxBaseDur(rpSnapshots)) * 100}%"></div>
                         <div class="trend-bar blue" style="height: {(s.baseDurability.blue / getMaxBaseDur(rpSnapshots)) * 100}%"></div>
+                      </div>
+                      <span class="trend-label">{s.turn}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            </div>
+            <div class="trend-section">
+              <div class="trend-title">🏴 占领进度</div>
+              <div class="trend-chart">
+                <div class="trend-bars">
+                  {#each rpSnapshots as s}
+                    <div class="trend-bar-group" title="回合{s.turn} 红方:{Math.round(s.baseCaptureProgress.red * 100)}% 蓝方:{Math.round(s.baseCaptureProgress.blue * 100)}%">
+                      <div class="trend-bar-wrapper">
+                        <div class="trend-bar red" style="height: {(s.baseCaptureProgress.red / getMaxCapture(rpSnapshots)) * 100}%"></div>
+                        <div class="trend-bar blue" style="height: {(s.baseCaptureProgress.blue / getMaxCapture(rpSnapshots)) * 100}%"></div>
                       </div>
                       <span class="trend-label">{s.turn}</span>
                     </div>
@@ -3819,6 +3881,7 @@
   }
 
   .dmg-cell { color: #e67e22; font-weight: bold; }
+  .capture-cell { color: #2ecc71; font-weight: bold; }
 
   .gameover-round-summary {
     display: flex;
