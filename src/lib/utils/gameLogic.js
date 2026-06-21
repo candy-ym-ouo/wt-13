@@ -156,7 +156,8 @@ export function getEffectiveMoveRange(unit, unitType) {
 
   if (unit.specialization) {
     const spec = SPECIALIZATION_CONFIG[unitType]?.find(s => s.id === unit.specialization);
-    if (spec?.bonuses?.move) moveRange += spec.bonuses.move;
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.move) moveRange += bonuses.move;
   }
 
   if (unit.buffs) {
@@ -447,7 +448,8 @@ export function getAttackRange(unit, units) {
 
   if (unit.specialization) {
     const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
-    if (spec?.bonuses?.attackRange) attackRange += spec.bonuses.attackRange;
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.attackRange) attackRange += bonuses.attackRange;
   }
 
   /** @type {AttackTile[]} */
@@ -486,7 +488,8 @@ export function getAttackRangeTiles(unit) {
 
   if (unit.specialization) {
     const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
-    if (spec?.bonuses?.attackRange) attackRange += spec.bonuses.attackRange;
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.attackRange) attackRange += bonuses.attackRange;
   }
 
   /** @type {{x: number, y: number}[]} */
@@ -608,7 +611,8 @@ function getEffectiveAttackRange(unit, unitType) {
   let attackRange = config.attackRange;
   if (unit.specialization) {
     const spec = SPECIALIZATION_CONFIG[unitType]?.find(s => s.id === unit.specialization);
-    if (spec?.bonuses?.attackRange) attackRange += spec.bonuses.attackRange;
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.attackRange) attackRange += bonuses.attackRange;
   }
   return attackRange;
 }
@@ -799,11 +803,13 @@ export function calculateDamage(attacker, defender, terrain) {
 
   if (attacker.specialization) {
     const spec = SPECIALIZATION_CONFIG[attacker.type]?.find(s => s.id === attacker.specialization);
-    if (spec?.bonuses?.atk) attack += spec.bonuses.atk;
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.atk) attack += bonuses.atk;
   }
   if (defender.specialization) {
     const spec = SPECIALIZATION_CONFIG[defender.type]?.find(s => s.id === defender.specialization);
-    if (spec?.bonuses?.def) defense += spec.bonuses.def;
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.def) defense += bonuses.def;
   }
 
   if (attacker.buffs) {
@@ -838,18 +844,21 @@ export function calculateDamage(attacker, defender, terrain) {
 
   if (attacker.specialization) {
     const spec = SPECIALIZATION_CONFIG[attacker.type]?.find(s => s.id === attacker.specialization);
-    if (spec?.bonuses?.highHpBonus && (defender.currentHp / (defender.maxHp || defenderConfig.hp)) > 0.7) {
-      attack *= (1 + spec.bonuses.highHpBonus);
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.highHpBonus && (defender.currentHp / (defender.maxHp || defenderConfig.hp)) > 0.7) {
+      attack *= (1 + bonuses.highHpBonus);
     }
   }
 
   if (defender.specialization) {
     const spec = SPECIALIZATION_CONFIG[defender.type]?.find(s => s.id === defender.specialization);
-    if (spec?.bonuses?.allyDamageReduction) {
-      const range = spec.bonuses.allyDamageReductionRange || 2;
+    /** @type {any} */
+    const specBonuses = spec?.bonuses;
+    if (specBonuses?.allyDamageReduction) {
+      const range = specBonuses.allyDamageReductionRange || 2;
       const hasAlly = false;
       if (hasAlly) {
-        attack *= (1 - (spec.bonuses.allyDamageReduction || 0));
+        attack *= (1 - (specBonuses.allyDamageReduction || 0));
       }
     }
   }
@@ -1247,7 +1256,9 @@ export function calculateScoreSettlement(units, bases, killCounts) {
   const blueScore = calculateFactionScore(units, bases, 'blue', killCounts);
   const scoreDiff = Math.abs(redScore.totalScore - blueScore.totalScore);
 
+  /** @type {'red' | 'blue' | 'draw'} */
   let winner;
+  /** @type {string} */
   let condition;
 
   if (scoreDiff <= gameRules.scoreSettlement.drawScoreThreshold) {

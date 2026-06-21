@@ -182,8 +182,51 @@
    * @returns {string}
    */
   function getSpecName(specId, unitType) {
-    const spec = SPECIALIZATION_CONFIG[unitType]?.find(s => s.id === specId);
+    const specs = SPECIALIZATION_CONFIG[/** @type {keyof typeof SPECIALIZATION_CONFIG} */ (unitType)];
+    const spec = specs?.find(/** @param {any} s */ s => s.id === specId);
     return spec?.name || specId || '';
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {number}
+   */
+  function getEffectiveMoveRange(unit) {
+    const base = getUnitMoveRange(unit.type);
+    const allocated = unit.allocatedStats?.move || 0;
+    const growth = gameRules.experience.statGrowth;
+    let move = base + allocated * growth.move;
+    if (unit.specialization) {
+      /** @type {any} */
+      const bonuses = SPECIALIZATION_CONFIG[unit.type]?.find(/** @param {any} s */ s => s.id === unit.specialization)?.bonuses;
+      if (bonuses?.move) move += bonuses.move;
+    }
+    return move;
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {string}
+   */
+  function getSpecDesc(unit) {
+    if (!unit.specialization) return '';
+    /** @type {any} */
+    const spec = SPECIALIZATION_CONFIG[unit.type]?.find(/** @param {any} s */ s => s.id === unit.specialization);
+    return spec?.description || '';
+  }
+
+  /**
+   * @param {Unit} unit
+   * @returns {number}
+   */
+  function getEffectiveAttackRange(unit) {
+    let range = getUnitAttackRange(unit.type);
+    if (unit.specialization) {
+      /** @type {any} */
+      const bonuses = SPECIALIZATION_CONFIG[unit.type]?.find(/** @param {any} s */ s => s.id === unit.specialization)?.bonuses;
+      if (bonuses?.attackRange) range += bonuses.attackRange;
+    }
+    return range;
   }
 
   /**
@@ -196,8 +239,10 @@
     const growth = gameRules.experience.statGrowth;
     let atk = config.attack + (allocated.atk || 0) * growth.atk;
     if (unit.specialization) {
-      const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
-      if (spec?.bonuses?.atk) atk += spec.bonuses.atk;
+      const spec = SPECIALIZATION_CONFIG[unit.type]?.find(/** @param {any} s */ s => s.id === unit.specialization);
+      /** @type {any} */
+      const bonuses = spec?.bonuses;
+      if (bonuses?.atk) atk += bonuses.atk;
     }
     return atk;
   }
@@ -212,16 +257,26 @@
     const growth = gameRules.experience.statGrowth;
     let def = config.defense + (allocated.def || 0) * growth.def;
     if (unit.specialization) {
-      const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
-      if (spec?.bonuses?.def) def += spec.bonuses.def;
+      const spec = SPECIALIZATION_CONFIG[unit.type]?.find(/** @param {any} s */ s => s.id === unit.specialization);
+      /** @type {any} */
+      const bonuses = spec?.bonuses;
+      if (bonuses?.def) def += bonuses.def;
     }
     return def;
   }
 
+  /**
+   * @param {string} unitId
+   * @param {'atk' | 'def' | 'hp' | 'move'} stat
+   */
   function handleAllocateStat(unitId, stat) {
     gameState.allocateStatPoint(unitId, stat);
   }
 
+  /**
+   * @param {string} unitId
+   * @param {string} specId
+   */
   function handleChooseSpec(unitId, specId) {
     gameState.chooseSpecialization(unitId, specId);
   }
@@ -373,7 +428,7 @@
     rosterSaved = false;
     gameState.reset();
     const roster = loadRoster();
-    for (const faction of ['red', 'blue']) {
+    for (const faction of /** @type {('red' | 'blue')[]} */ (['red', 'blue'])) {
       const factionUnits = roster[faction]?.units || [];
       if (factionUnits.length > 0) {
         gameState.loadRosterIntoGame(factionUnits, faction);
@@ -1207,7 +1262,7 @@
         {/if}
         <button class="btn btn-primary" on:click={handleRestart}>再来一局</button>
         {#if !rosterSaved && state?.winner && state.winner !== 'draw'}
-          <button class="btn btn-secondary" on:click={() => { saveRosterFromGame(state.units, /** @type {'red' | 'blue'} */ (state.winner)); rosterSaved = true; }}>
+          <button class="btn btn-secondary" on:click={() => { if (state) saveRosterFromGame(state.units, /** @type {'red' | 'blue'} */ (state.winner)); rosterSaved = true; }}>
             💾 保存阵容存档
           </button>
         {/if}
@@ -1728,7 +1783,7 @@
               {#each factionRoster as rosterUnit (rosterUnit.persistentId)}
                 <div class="roster-unit-item">
                   <span class="roster-unit-icon">{getUnitIcon(rosterUnit.type)}</span>
-                  <span class="roster-unit-name">{unitConfig[rosterUnit.type]?.name || rosterUnit.type}</span>
+                  <span class="roster-unit-name">{unitConfig[/** @type {keyof typeof unitConfig} */ (rosterUnit.type)]?.name || rosterUnit.type}</span>
                   <span class="roster-unit-level">Lv.{rosterUnit.level || 1}</span>
                   {#if rosterUnit.specialization}
                     <span class="roster-spec-badge">{getSpecName(rosterUnit.specialization, rosterUnit.type)}</span>
@@ -1828,39 +1883,39 @@
         <div class="stat-row">
           <div class="stat-item">
             <span class="stat-label">移动</span>
-            <span class="stat-value">{getUnitMoveRange(selectedUnitData.type) + (selectedUnitData.allocatedStats?.move || 0) * gameRules.experience.statGrowth.move + (selectedUnitData.specialization && SPECIALIZATION_CONFIG[selectedUnitData.type]?.find(s => s.id === selectedUnitData.specialization)?.bonuses?.move || 0)}</span>
+            <span class="stat-value">{selectedUnitData ? getEffectiveMoveRange(selectedUnitData) : 0}</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">射程</span>
-            <span class="stat-value">{getUnitAttackRange(selectedUnitData.type) + (selectedUnitData.specialization && SPECIALIZATION_CONFIG[selectedUnitData.type]?.find(s => s.id === selectedUnitData.specialization)?.bonuses?.attackRange || 0)}</span>
+            <span class="stat-value">{selectedUnitData ? getEffectiveAttackRange(selectedUnitData) : 0}</span>
           </div>
         </div>
       </div>
-      {#if (selectedUnitData.statPoints || 0) > 0}
+      {#if (selectedUnitData?.statPoints || 0) > 0}
         <div class="stat-allocation-panel">
-          <div class="info-label">🎯 可分配属性点：{selectedUnitData.statPoints}</div>
+          <div class="info-label">🎯 可分配属性点：{selectedUnitData?.statPoints}</div>
           <div class="stat-alloc-buttons">
-            <button class="btn btn-alloc" on:click={() => handleAllocateStat(selectedUnitData.id, 'atk')} disabled={(selectedUnitData.statPoints || 0) <= 0}>
+            <button class="btn btn-alloc" on:click={() => selectedUnitData && handleAllocateStat(selectedUnitData.id, 'atk')} disabled={(selectedUnitData?.statPoints || 0) <= 0}>
               ⚔️ 攻击+3
             </button>
-            <button class="btn btn-alloc" on:click={() => handleAllocateStat(selectedUnitData.id, 'def')} disabled={(selectedUnitData.statPoints || 0) <= 0}>
+            <button class="btn btn-alloc" on:click={() => selectedUnitData && handleAllocateStat(selectedUnitData.id, 'def')} disabled={(selectedUnitData?.statPoints || 0) <= 0}>
               🛡️ 防御+3
             </button>
-            <button class="btn btn-alloc" on:click={() => handleAllocateStat(selectedUnitData.id, 'hp')} disabled={(selectedUnitData.statPoints || 0) <= 0}>
+            <button class="btn btn-alloc" on:click={() => selectedUnitData && handleAllocateStat(selectedUnitData.id, 'hp')} disabled={(selectedUnitData?.statPoints || 0) <= 0}>
               ❤️ 生命+15
             </button>
-            <button class="btn btn-alloc" on:click={() => handleAllocateStat(selectedUnitData.id, 'move')} disabled={(selectedUnitData.statPoints || 0) <= 0}>
+            <button class="btn btn-alloc" on:click={() => selectedUnitData && handleAllocateStat(selectedUnitData.id, 'move')} disabled={(selectedUnitData?.statPoints || 0) <= 0}>
               👟 移动+1
             </button>
           </div>
         </div>
       {/if}
-      {#if (selectedUnitData.level || 1) >= gameRules.experience.specializationLevel && !selectedUnitData.specialization}
+      {#if (selectedUnitData?.level || 1) >= gameRules.experience.specializationLevel && !selectedUnitData?.specialization}
         <div class="specialization-panel">
           <div class="info-label">⚡ 能力分化（Lv.{gameRules.experience.specializationLevel}解锁）</div>
           <div class="spec-options">
             {#each getSpecOptions(selectedUnitData) as spec (spec.id)}
-              <button class="btn btn-spec" on:click={() => handleChooseSpec(selectedUnitData.id, spec.id)}>
+              <button class="btn btn-spec" on:click={() => selectedUnitData && handleChooseSpec(selectedUnitData.id, spec.id)}>
                 <span class="spec-name">{spec.name}</span>
                 <span class="spec-desc">{spec.description}</span>
               </button>
@@ -1868,11 +1923,11 @@
           </div>
         </div>
       {/if}
-      {#if selectedUnitData.specialization}
+      {#if selectedUnitData?.specialization}
         <div class="specialization-active">
           <div class="info-label">⚡ 能力分化</div>
-          <span class="spec-active-tag">{getSpecName(selectedUnitData.specialization, selectedUnitData.type)}</span>
-          <span class="spec-active-desc">{SPECIALIZATION_CONFIG[selectedUnitData.type]?.find(s => s.id === selectedUnitData.specialization)?.description || ''}</span>
+          <span class="spec-active-tag">{selectedUnitData ? getSpecName(selectedUnitData.specialization, selectedUnitData.type) : ''}</span>
+          <span class="spec-active-desc">{selectedUnitData ? getSpecDesc(selectedUnitData) : ''}</span>
         </div>
       {/if}
       {#if getUnitTerrain(selectedUnitData)}

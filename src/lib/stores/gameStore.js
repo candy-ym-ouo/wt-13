@@ -208,7 +208,7 @@ function grantXPToUnit(unit, xpAmount, reason) {
   const growth = gameRules.experience.statGrowth;
   const hpBonus = allocatedStats.hp * growth.hp;
   const specConfig = unit.specialization ? SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization) : null;
-  const specHpBonus = specConfig?.bonuses?.hp || 0;
+  const specHpBonus = /** @type {number} */ (/** @type {any} */ (specConfig?.bonuses)?.hp) || 0;
 
   let updatedMaxHp = unitConfig[/** @type {UnitType} */ (unit.type)].hp + hpBonus + specHpBonus;
   let updatedCurrentHp = unit.currentHp;
@@ -2574,7 +2574,7 @@ function createGameState() {
       }
 
       const specConfig = unit.specialization ? SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization) : null;
-      const specHpBonus = specConfig?.bonuses?.hp || 0;
+      const specHpBonus = /** @type {number} */ (/** @type {any} */ (specConfig?.bonuses)?.hp) || 0;
       const baseMaxHp = unitConfig[/** @type {UnitType} */ (unit.type)].hp + allocatedStats.hp * growth.hp + specHpBonus;
       maxHp = baseMaxHp;
 
@@ -2632,7 +2632,7 @@ function createGameState() {
       const spec = specOptions.find(s => s.id === specId);
       const growth = gameRules.experience.statGrowth;
       const allocatedStats = unit.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 };
-      const specHpBonus = spec?.bonuses?.hp || 0;
+      const specHpBonus = /** @type {number} */ (/** @type {any} */ (spec?.bonuses)?.hp) || 0;
       const newMaxHp = unitConfig[/** @type {UnitType} */ (unit.type)].hp + allocatedStats.hp * growth.hp + specHpBonus;
 
       const units = state.units.map(u => {
@@ -2687,7 +2687,7 @@ function createGameState() {
 
         const allocatedStats = rosterMatch.allocatedStats || { atk: 0, def: 0, hp: 0, move: 0 };
         const specConfig = rosterMatch.specialization ? SPECIALIZATION_CONFIG[u.type]?.find(s => s.id === rosterMatch.specialization) : null;
-        const specHpBonus = specConfig?.bonuses?.hp || 0;
+        const specHpBonus = /** @type {number} */ (/** @type {any} */ (specConfig?.bonuses)?.hp) || 0;
         const newMaxHp = unitConfig[/** @type {UnitType} */ (u.type)].hp + allocatedStats.hp * growth.hp + specHpBonus;
 
         return {

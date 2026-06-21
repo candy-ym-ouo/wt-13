@@ -61,10 +61,10 @@ export function saveRoster(roster) {
 export function saveRosterFromGame(survivingUnits, winnerFaction) {
   const roster = loadRoster();
 
-  for (const faction of ['red', 'blue']) {
+  for (const faction of /** @type {('red' | 'blue')[]} */ (['red', 'blue'])) {
     const factionUnits = survivingUnits.filter(u => u.faction === faction);
     const existingRoster = roster[faction].units;
-    const existingMap = new Map(existingRoster.map(u => [u.persistentId, u]));
+    const existingMap = new Map(existingRoster.map(/** @param {RosterUnit} u */ u => [u.persistentId, u]));
 
     for (const unit of factionUnits) {
       const pid = unit.persistentId || `${unit.faction}_${unit.type}_${unit.id}`;
@@ -109,9 +109,9 @@ export function saveRosterFromGame(survivingUnits, winnerFaction) {
  */
 export function findRosterUnit(faction, unitType) {
   const roster = loadRoster();
-  const factionRoster = roster[faction];
+  const factionRoster = roster[/** @type {'red' | 'blue'} */ (faction)];
   if (!factionRoster || !factionRoster.units) return null;
-  return factionRoster.units.find(u => u.type === unitType) || null;
+  return factionRoster.units.find(/** @param {RosterUnit} u */ u => u.type === unitType) || null;
 }
 
 /**
@@ -120,7 +120,7 @@ export function findRosterUnit(faction, unitType) {
  */
 export function getFactionRoster(faction) {
   const roster = loadRoster();
-  return roster[faction]?.units || [];
+  return roster[/** @type {'red' | 'blue'} */ (faction)]?.units || [];
 }
 
 /**
