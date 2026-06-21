@@ -459,6 +459,39 @@ export function getAttackRange(unit, units) {
 }
 
 /**
+ * @param {Unit} unit
+ * @returns {{x: number, y: number}[]}
+ */
+export function getAttackRangeTiles(unit) {
+  const config = unitConfig[/** @type {UnitType} */ (unit.type)];
+  let attackRange = config.attackRange;
+
+  if (unit.specialization) {
+    const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
+    if (spec?.bonuses?.attackRange) attackRange += spec.bonuses.attackRange;
+  }
+
+  /** @type {{x: number, y: number}[]} */
+  const result = [];
+
+  for (let dy = -attackRange; dy <= attackRange; dy++) {
+    for (let dx = -attackRange; dx <= attackRange; dx++) {
+      const distance = Math.abs(dx) + Math.abs(dy);
+      if (distance === 0 || distance > attackRange) continue;
+
+      const x = unit.x + dx;
+      const y = unit.y + dy;
+
+      if (x < 0 || x >= boardConfig.width || y < 0 || y >= boardConfig.height) continue;
+
+      result.push({ x, y });
+    }
+  }
+
+  return result;
+}
+
+/**
  * @param {UnitType} attackerType
  * @param {UnitType} defenderType
  * @returns {number}

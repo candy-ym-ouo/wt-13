@@ -9,6 +9,7 @@
     getTerrain,
     getMoveRange,
     getAttackRange,
+    getAttackRangeTiles,
     findPath,
     calculateDamage,
     getUnitAt,
@@ -50,6 +51,8 @@
   let fogLayer;
   /** @type {any} */
   let scoutPreviewLayer;
+  /** @type {any} */
+  let dangerZoneLayer;
 
   /** @type {number | null} */
   let animationFrameId = null;
@@ -89,6 +92,10 @@
   let attackHighlights = [];
   /** @type {any[]} */
   let pathDots = [];
+  /** @type {any[]} */
+  let dangerHighlights = [];
+  /** @type {Map<string, number>} */
+  let threatMap = new Map();
 
   /** @type {(() => void) | undefined} */
   let unsubscribeState;
@@ -170,6 +177,9 @@
 
     scoutPreviewLayer = new PIXI.Container();
     app.stage.addChild(scoutPreviewLayer);
+
+    dangerZoneLayer = new PIXI.Container();
+    app.stage.addChild(dangerZoneLayer);
 
     overlayLayer = new PIXI.Container();
     app.stage.addChild(overlayLayer);
@@ -636,6 +646,142 @@
     scoutPreviewLayer.addChild(infoText);
   }
 
+  function drawDangerZones() {
+    if (!dangerZoneLayer || !state) return;
+    dangerZoneLayer.removeChildren();
+    for (const d of dangerHighlights) d.destroy();
+    dangerHighlights = [];
+    threatMap.clear();
+
+    if (!selectedUnitData || selectedUnitData.faction !== state.currentFaction) return;
+
+    const currentFaction = /** @type {'red' | 'blue'} */ (state.currentFaction);
+    const enemyUnits = state.units.filter(
+      /** @param {import('../utils/cardSystem').Unit} u */
+      u => u.faction !== currentFaction
+    );
+
+    for (const enemy of enemyUnits) {
+      if (isHardCC(enemy)) continue;
+      const tiles = getAttackRangeTiles(enemy);
+      for (const tile of tiles) {
+        const key = `${tile.x},${tile.y}`;
+        threatMap.set(key, (threatMap.get(key) || 0) + 1);
+      }
+    }
+
+    for (const [key, count] of threatMap.entries()) {
+      const [x, y] = key.split(',').map(Number);
+      const alpha = Math.min(0.25, 0.08 + count * 0.05);
+      const overlay = new PIXI.Graphics();
+      overlay.beginFill(0xff0000, alpha);
+      overlay.drawRect(
+        x * boardConfig.tileSize,
+        y * boardConfig.tileSize,
+        boardConfig.tileSize,
+        boardConfig.tileSize
+      );
+      overlay.endFill();
+      overlay.lineStyle(1, 0xff0000, 0.2);
+      overlay.drawRect(
+        x * boardConfig.tileSize + 1,
+        y * boardConfig.tileSize + 1,
+        boardConfig.tileSize - 2,
+        boardConfig.tileSize - 2
+      );
+      dangerZoneLayer.addChild(overlay);
+      dangerHighlights.push(overlay);
+
+      if (count >= 3) {
+        const warnIcon = new PIXI.Text('⚠', {
+          fontSize: 10,
+          fill: 0xff4444,
+          stroke: 0x000000,
+          strokeThickness: 1
+        });
+        warnIcon.anchor.set(0.5);
+        warnIcon.x = x * boardConfig.tileSize + boardConfig.tileSize - 9;
+        warnIcon.y = y * boardConfig.tileSize + 9;
+        dangerZoneLayer.addChild(warnIcon);
+        dangerHighlights.push(warnIcon);
+      }
+    }
+
+    const layout = state.boardLayout || boardConfig.layout;
+    for (let by = 0; by < boardConfig.height; by++) {
+      for (let bx = 0; bx < boardConfig.width; bx++) {
+        const terrain = getTerrain(bx, by, layout);
+        if (!terrain) continue;
+
+        if (terrain.isBase) {
+          const baseColor = terrain.faction === currentFaction ? 0x2ecc71 : 0xe74c3c;
+          const baseBorder = new PIXI.Graphics();
+          baseBorder.lineStyle(2, baseColor, 0.6);
+          baseBorder.drawRect(
+            bx * boardConfig.tileSize + 2,
+            by * boardConfig.tileSize + 2,
+            boardConfig.tileSize - 4,
+            boardConfig.tileSize - 4
+          );
+          dangerZoneLayer.addChild(baseBorder);
+          dangerHighlights.push(baseBorder);
+
+          const baseMark = new PIXI.Text(terrain.faction === currentFaction ? '🏠' : '⚔', {
+            fontSize: 9
+          });
+          baseMark.anchor.set(0.5);
+          baseMark.x = bx * boardConfig.tileSize + 9;
+          baseMark.y = by * boardConfig.tileSize + boardConfig.tileSize - 9;
+          dangerZoneLayer.addChild(baseMark);
+          dangerHighlights.push(baseMark);
+        } else if (terrain.defenseBonus >= 3) {
+          const defBorder = new PIXI.Graphics();
+          defBorder.lineStyle(1.5, 0xf1c40f, 0.5);
+          defBorder.drawRect(
+            bx * boardConfig.tileSize + 2,
+            by * boardConfig.tileSize + 2,
+            boardConfig.tileSize - 4,
+            boardConfig.tileSize - 4
+          );
+          dangerZoneLayer.addChild(defBorder);
+          dangerHighlights.push(defBorder);
+
+          const shieldIcon = new PIXI.Text('🛡', { fontSize: 9 });
+          shieldIcon.anchor.set(0.5);
+          shieldIcon.x = bx * boardConfig.tileSize + boardConfig.tileSize - 9;
+          shieldIcon.y = by * boardConfig.tileSize + 9;
+          dangerZoneLayer.addChild(shieldIcon);
+          dangerHighlights.push(shieldIcon);
+        } else if (terrain.defenseBonus >= 2) {
+          const defBorder = new PIXI.Graphics();
+          defBorder.lineStyle(1, 0xf1c40f, 0.3);
+          defBorder.drawRect(
+            bx * boardConfig.tileSize + 3,
+            by * boardConfig.tileSize + 3,
+            boardConfig.tileSize - 6,
+            boardConfig.tileSize - 6
+          );
+          dangerZoneLayer.addChild(defBorder);
+          dangerHighlights.push(defBorder);
+        }
+
+        if (terrain.moraleBonus > 0 && !terrain.isBase) {
+          const moraleMark = new PIXI.Text('↑', {
+            fontSize: 8,
+            fill: 0x2ecc71,
+            stroke: 0x000000,
+            strokeThickness: 1
+          });
+          moraleMark.anchor.set(0.5);
+          moraleMark.x = bx * boardConfig.tileSize + 9;
+          moraleMark.y = by * boardConfig.tileSize + boardConfig.tileSize - 9;
+          dangerZoneLayer.addChild(moraleMark);
+          dangerHighlights.push(moraleMark);
+        }
+      }
+    }
+  }
+
   function renderBoard() {
     drawBoard();
     drawBaseStatus();
@@ -869,6 +1015,8 @@
     pathDots = [];
     overlayLayer.removeChildren();
 
+    drawDangerZones();
+
     if (!selectedUnitData || !state || state.gameOver) return;
     if (selectedUnitData.faction !== state.currentFaction) return;
 
@@ -894,17 +1042,68 @@
     if (!selectedUnitData.hasMoved && !ccLocked) {
       const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
       for (const tile of moveRange) {
+        const threatKey = `${tile.x},${tile.y}`;
+        const threatLevel = threatMap.get(threatKey) || 0;
+
         const h = new PIXI.Graphics();
-        h.beginFill(0x00ff00, 0.3);
-        h.drawRect(
-          tile.x * boardConfig.tileSize,
-          tile.y * boardConfig.tileSize,
-          boardConfig.tileSize,
-          boardConfig.tileSize
-        );
-        h.endFill();
+        if (threatLevel > 0) {
+          h.beginFill(0x00ff00, 0.2);
+          h.drawRect(
+            tile.x * boardConfig.tileSize,
+            tile.y * boardConfig.tileSize,
+            boardConfig.tileSize,
+            boardConfig.tileSize
+          );
+          h.endFill();
+          h.lineStyle(1.5, 0xff4444, 0.7);
+          h.drawRect(
+            tile.x * boardConfig.tileSize + 1,
+            tile.y * boardConfig.tileSize + 1,
+            boardConfig.tileSize - 2,
+            boardConfig.tileSize - 2
+          );
+        } else {
+          h.beginFill(0x00ff00, 0.3);
+          h.drawRect(
+            tile.x * boardConfig.tileSize,
+            tile.y * boardConfig.tileSize,
+            boardConfig.tileSize,
+            boardConfig.tileSize
+          );
+          h.endFill();
+        }
         moveHighlights.push(h);
         overlayLayer.addChild(h);
+
+        if (threatLevel > 0) {
+          const cornerSize = 12;
+          const tx = tile.x * boardConfig.tileSize;
+          const ty = tile.y * boardConfig.tileSize;
+          const dangerCorner = new PIXI.Graphics();
+          dangerCorner.beginFill(0xff4444, 0.7);
+          dangerCorner.moveTo(tx + boardConfig.tileSize - cornerSize, ty);
+          dangerCorner.lineTo(tx + boardConfig.tileSize, ty);
+          dangerCorner.lineTo(tx + boardConfig.tileSize, ty + cornerSize);
+          dangerCorner.closePath();
+          dangerCorner.endFill();
+          moveHighlights.push(dangerCorner);
+          overlayLayer.addChild(dangerCorner);
+
+          if (threatLevel >= 2) {
+            const dangerText = new PIXI.Text(`${threatLevel}`, {
+              fontSize: 8,
+              fill: 0xff4444,
+              stroke: 0x000000,
+              strokeThickness: 2,
+              fontWeight: 'bold'
+            });
+            dangerText.anchor.set(0.5);
+            dangerText.x = tx + boardConfig.tileSize - 7;
+            dangerText.y = ty + 7;
+            moveHighlights.push(dangerText);
+            overlayLayer.addChild(dangerText);
+          }
+        }
       }
     }
 
@@ -967,6 +1166,43 @@
           warnText.y = tile.y * boardConfig.tileSize + 6;
           attackHighlights.push(warnText);
           overlayLayer.addChild(warnText);
+        }
+
+        const defTerrain = getTerrain(tile.target.x, tile.target.y, layout);
+        const atkTerrain = getTerrain(selectedUnitData.x, selectedUnitData.y, layout);
+        const preview = calculateCombatPreview(
+          selectedUnitData,
+          tile.target,
+          defTerrain || undefined,
+          atkTerrain || undefined
+        );
+        if (preview.willCounter) {
+          const counterIcon = new PIXI.Text('↩', {
+            fontSize: 12,
+            fill: 0xff9800,
+            stroke: 0x000000,
+            strokeThickness: 2,
+            fontWeight: 'bold'
+          });
+          counterIcon.anchor.set(0.5);
+          counterIcon.x = tile.x * boardConfig.tileSize + boardConfig.tileSize - 9;
+          counterIcon.y = tile.y * boardConfig.tileSize + boardConfig.tileSize - 9;
+          attackHighlights.push(counterIcon);
+          overlayLayer.addChild(counterIcon);
+
+          if (preview.counterDamage > 0) {
+            const counterDmgText = new PIXI.Text(`-${preview.counterDamage}`, {
+              fontSize: 8,
+              fill: 0xff9800,
+              stroke: 0x000000,
+              strokeThickness: 1
+            });
+            counterDmgText.anchor.set(0.5);
+            counterDmgText.x = tile.x * boardConfig.tileSize + boardConfig.tileSize - 10;
+            counterDmgText.y = tile.y * boardConfig.tileSize + boardConfig.tileSize - 19;
+            attackHighlights.push(counterDmgText);
+            overlayLayer.addChild(counterDmgText);
+          }
         }
       }
     }
