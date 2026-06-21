@@ -275,11 +275,6 @@
 
     gameState.endTurn();
 
-    const survivingFactionUnits = state.units.filter(u => u.faction === state.currentFaction && u.currentHp > 0);
-    for (const unit of survivingFactionUnits) {
-      gameState.grantXPToUnit(unit.id, gameRules.experience.onSurviveTurn);
-    }
-
     const nextTurn = nextFaction === 'red' ? state.turn + 1 : state.turn;
     const nextDrawHistory = state.drawHistory[nextFaction] || {};
     const nextPityCounter = state.pityCounter[nextFaction] || 0;
@@ -299,10 +294,6 @@
     gameState.selectCard(null);
 
     if (baseResult.victory) {
-      const winnerUnits = state.units.filter(u => u.faction === baseResult.victory.winner && u.currentHp > 0);
-      for (const unit of winnerUnits) {
-        gameState.grantXPToUnit(unit.id, gameRules.experience.onWin);
-      }
       gameState.setVictory(baseResult.victory.winner, baseResult.victory.condition);
     }
   }

@@ -1148,18 +1148,6 @@
     const attackerKilledByCounter = actualCounterDmg > 0 && attacker.currentHp - actualCounterDmg <= 0;
 
     gameState.attack(attacker.id, defender.id, damage);
-
-    gameState.grantXPToUnit(attacker.id, gameRules.experience.onAttack);
-    if (killOccurred) {
-      gameState.grantXPToUnit(attacker.id, gameRules.experience.onKill);
-    }
-
-    if (willCounter && !counterShielded && actualCounterDmg > 0) {
-      gameState.grantXPToUnit(defender.id, gameRules.experience.onAttack);
-      if (attackerKilledByCounter) {
-        gameState.grantXPToUnit(defender.id, gameRules.experience.onKill);
-      }
-    }
     
     const hasDoubleAttack = attacker.buffs?.some(
       /** @param {any} b */
