@@ -1,4 +1,4 @@
-import { eventCards, cardConfig, CARD_CATEGORY } from '$lib/config/eventCardConfig';
+import { eventCards, cardConfig, CARD_CATEGORY, CARD_RARITY, cardRarityConfig } from '$lib/config/eventCardConfig';
 import { STATUS_EFFECT_TYPES, unitConfig } from '$lib/config/unitConfig';
 import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
 
@@ -32,6 +32,8 @@ import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
  * @property {string} icon
  * @property {number} cost
  * @property {number} cooldown
+ * @property {string} rarity
+ * @property {number} weight
  * @property {string} [trigger]
  * @property {string} [instanceId]
  * @property {'available' | 'active' | 'cooling'} [cardState]
@@ -94,12 +96,71 @@ import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
  */
 
 /**
+ * @typedef {object} RarityConfig
+ * @property {number} baseWeight
+ * @property {number} dupeWeightPenalty
+ * @property {number} minTurn
+ */
+
+/**
+ * @param {Record<string, number>} drawHistory
+ * @param {number} pityCounter
+ * @param {number} currentTurn
  * @returns {EventCard}
  */
-export function drawCard() {
-  const randomIndex = Math.floor(Math.random() * eventCards.length);
+export function drawCard(drawHistory, pityCounter, currentTurn) {
+  if (!drawHistory) drawHistory = {};
+  if (!pityCounter) pityCounter = 0;
+  if (!currentTurn) currentTurn = 1;
+
+  /** @type {Record<string, RarityConfig & {pityThreshold?: number; maxDupeCount?: number}>} */
+  const rarityCfgMap = /** @type {any} */ (cardRarityConfig);
+
+  /** @type {EventCard[]} */
+  let pool = /** @type {EventCard[]} */ (eventCards.filter(card => {
+    const rarityCfg = rarityCfgMap[card.rarity];
+    return currentTurn >= (rarityCfg?.minTurn || 1);
+  }));
+
+  let forcedRarity = null;
+  if (pityCounter >= cardRarityConfig.pityThreshold) {
+    forcedRarity = CARD_RARITY.RARE;
+  }
+  if (pityCounter >= cardRarityConfig.pityThreshold * 2) {
+    forcedRarity = CARD_RARITY.LIMITED;
+  }
+
+  if (forcedRarity) {
+    const forcedPool = pool.filter(c => c.rarity === forcedRarity);
+    if (forcedPool.length > 0) {
+      pool = forcedPool;
+    }
+  }
+
+  const weightedPool = pool.map(card => {
+    const rarityCfg = rarityCfgMap[card.rarity];
+    let w = card.weight || rarityCfg?.baseWeight || 50;
+    const dupeCount = drawHistory[card.id] || 0;
+    if (dupeCount > 0) {
+      const penalty = rarityCfg?.dupeWeightPenalty || 0.3;
+      w *= Math.pow(penalty, Math.min(dupeCount, cardRarityConfig.maxDupeCount));
+    }
+    return { card, weight: Math.max(w, 1) };
+  });
+
+  const totalWeight = weightedPool.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * totalWeight;
+  let selected = weightedPool[0].card;
+  for (const item of weightedPool) {
+    roll -= item.weight;
+    if (roll <= 0) {
+      selected = item.card;
+      break;
+    }
+  }
+
   return /** @type {EventCard} */ ({
-    ...eventCards[randomIndex],
+    ...selected,
     cardState: 'available',
     remainingDuration: 0,
     remainingCooldown: 0
@@ -107,14 +168,20 @@ export function drawCard() {
 }
 
 /**
+ * @param {number} currentTurn
  * @returns {EventCard[]}
  */
-export function drawInitialHand() {
+export function drawInitialHand(currentTurn) {
+  if (!currentTurn) currentTurn = 1;
   /** @type {EventCard[]} */
   const hand = [];
+  /** @type {Record<string, number>} */
+  const tempHistory = {};
   for (let i = 0; i < cardConfig.initialHandSize; i++) {
+    const card = drawCard(tempHistory, 0, currentTurn);
+    tempHistory[card.id] = (tempHistory[card.id] || 0) + 1;
     hand.push({
-      ...drawCard(),
+      ...card,
       instanceId: String(Date.now() + i + Math.random())
     });
   }
@@ -273,6 +340,9 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
         : (targetUnit && targetUnit.faction === currentFaction ? targetUnit : null);
       if (friendlyUnit) {
         effects.push({ type: 'heal', unitId: friendlyUnit.id, value: card.effect.value });
+        if (card.id === 'divine_heal') {
+          effects.push({ type: 'cleanse', unitId: friendlyUnit.id });
+        }
       }
       break;
     }
@@ -299,6 +369,13 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
           unitId: friendlyUnit.id,
           buff: { type: 'defenseBoost', value: card.effect.value, duration: card.effect.duration }
         });
+        if (card.id === 'fortress') {
+          effects.push({
+            type: 'addBuff',
+            unitId: friendlyUnit.id,
+            buff: { type: 'statusResistBoost', value: 1.0, duration: card.effect.duration }
+          });
+        }
       }
       break;
     }
@@ -318,6 +395,13 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
     case 'damage':
       if (targetUnit && targetUnit.faction !== currentFaction) {
         effects.push({ type: 'damage', unitId: targetUnit.id, value: card.effect.value });
+        if (card.id === 'meteor_strike') {
+          effects.push({
+            type: 'stun',
+            unitId: targetUnit.id,
+            duration: 1
+          });
+        }
       }
       break;
     case 'stun':

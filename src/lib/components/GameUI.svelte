@@ -1,9 +1,9 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId } from '$lib/stores/gameStore';
+  import { gameState, selectedUnit, currentHand, currentEnergy, currentCooldowns, previewTarget, previewTargetId, currentDrawHistory, currentPityCounter } from '$lib/stores/gameStore';
   import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
-  import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, eventCards } from '$lib/config/eventCardConfig';
+  import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, CARD_RARITY_LABELS, CARD_RARITY_COLORS, CARD_RARITY_BG, CARD_RARITY_ICONS, cardRarityConfig, eventCards } from '$lib/config/eventCardConfig';
   import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview } from '$lib/utils/gameLogic';
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
@@ -40,6 +40,9 @@
   let energy = 0;
   /** @type {CooldownEntry[]} */
   let cooldowns;
+  /** @type {Record<string, number>} */
+  let drawHistory = {};
+  let pityCounter = 0;
   let showRecords = false;
   let showBattleLog = false;
   let showReplay = false;
@@ -58,6 +61,12 @@
   let unsubscribeEnergy;
   /** @type {(() => void) | undefined} */
   let unsubscribeCooldowns;
+
+  /** @type {(() => void) | undefined} */
+  let unsubscribeDrawHistory;
+
+  /** @type {(() => void) | undefined} */
+  let unsubscribePityCounter;
 
   /** @type {Unit | null} */
   let previewTargetData;
@@ -89,6 +98,12 @@
     unsubscribeCooldowns = currentCooldowns.subscribe(/** @type {CooldownEntry[]} c */ c => {
       cooldowns = c;
     });
+    unsubscribeDrawHistory = currentDrawHistory.subscribe(/** @param {Record<string, number>} h */ h => {
+      drawHistory = h;
+    });
+    unsubscribePityCounter = currentPityCounter.subscribe(/** @param {number} p */ p => {
+      pityCounter = p;
+    });
     unsubscribePreview = previewTarget.subscribe(/** @param {Unit | null} u */ u => {
       previewTargetData = u;
     });
@@ -105,12 +120,15 @@
     if (unsubscribeHand) unsubscribeHand();
     if (unsubscribeEnergy) unsubscribeEnergy();
     if (unsubscribeCooldowns) unsubscribeCooldowns();
+    if (unsubscribeDrawHistory) unsubscribeDrawHistory();
+    if (unsubscribePityCounter) unsubscribePityCounter();
     if (unsubscribePreview) unsubscribePreview();
   });
 
   function initHands() {
-    const redHand = drawInitialHand();
-    const blueHand = drawInitialHand();
+    const currentTurn = state?.turn || 1;
+    const redHand = drawInitialHand(currentTurn);
+    const blueHand = drawInitialHand(currentTurn);
     for (const card of redHand) {
       gameState.addCard('red', card);
     }
@@ -156,11 +174,14 @@
 
     gameState.endTurn();
 
-    const newCard = drawCard();
+    const nextTurn = nextFaction === 'red' ? state.turn + 1 : state.turn;
+    const nextDrawHistory = state.drawHistory[nextFaction] || {};
+    const nextPityCounter = state.pityCounter[nextFaction] || 0;
+    const newCard = drawCard(nextDrawHistory, nextPityCounter, nextTurn);
     gameState.addCard(nextFaction, newCard);
 
     const nextName = nextFaction === 'red' ? '红方' : '蓝方';
-    const turnNum = nextFaction === 'red' ? state.turn + 1 : state.turn;
+    const turnNum = nextTurn;
 
     let msg = `第 ${turnNum} 回合 - ${nextName}行动（获得 ${cardConfig.energyPerTurn} 能量）`;
     if (baseResult.messages.length > 0) {
@@ -1230,23 +1251,34 @@
   <div class="bottom-panel">
     <div class="hand-cards">
       <span class="hand-label">手牌 ({handCards?.length || 0}/{cardConfig.maxHandSize})</span>
+      {#if pityCounter > 0}
+        <span class="pity-indicator" title="保底计数：连续 {pityCounter} 次未抽到稀有以上卡牌，{cardRarityConfig.pityThreshold} 次后保底稀有">
+          保底 {pityCounter}/{cardRarityConfig.pityThreshold}
+        </span>
+      {/if}
       <div class="cards-container">
         {#each handCards || [] as card (card.instanceId)}
           <div
             class="card"
+            class:card-rarity-basic={card.rarity === 'basic'}
+            class:card-rarity-rare={card.rarity === 'rare'}
+            class:card-rarity-limited={card.rarity === 'limited'}
             role="button"
             tabindex="0"
             aria-label={card.name}
             class:selected={state?.selectedCardId === card.instanceId}
             class:unplayable={!isCardPlayable(card) && !isCardActive(card)}
             class:active={isCardActive(card)}
-            style="border-color: {CARD_CATEGORY_COLORS[card.category]}"
+            style="border-color: {CARD_CATEGORY_COLORS[card.category]}; background: {CARD_RARITY_BG[card.rarity] || 'rgba(40,40,60,0.9)'}"
             on:click={() => handleSelectCard(card)}
             on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardKeydown(card)}
             title={isCardPlayable(card) ? card.description : `${card.description}\n[${getCardUnplayableReason(card)}]`}
           >
             <div class="card-category-badge" style="background: {CARD_CATEGORY_COLORS[card.category]}">
               {CARD_CATEGORY_LABELS[card.category]}
+            </div>
+            <div class="card-rarity-badge" style="color: {CARD_RARITY_COLORS[card.rarity]}">
+              {CARD_RARITY_ICONS[card.rarity]} {CARD_RARITY_LABELS[card.rarity]}
             </div>
             <div class="card-cost" title="能量消耗">⚡{card.cost}</div>
             {#if isCardActive(card)}
@@ -1255,7 +1287,7 @@
               </div>
             {/if}
             <div class="card-icon">{card.icon}</div>
-            <div class="card-name">{card.name}</div>
+            <div class="card-name" style="color: {CARD_RARITY_COLORS[card.rarity]}">{card.name}</div>
             <div class="card-type">
               {#if isCardActive(card)}
                 <span class="card-state-tag">{getCardStateLabel(card)}</span>
@@ -2458,6 +2490,56 @@
     text-align: center;
     padding: 4px;
     font-weight: bold;
+  }
+
+  .card-rarity-badge {
+    font-size: 8px;
+    font-weight: bold;
+    margin-top: 2px;
+    letter-spacing: 0.5px;
+  }
+
+  .card-rarity-basic {
+    border-width: 2px;
+  }
+
+  .card-rarity-rare {
+    border-width: 2px;
+    box-shadow: inset 0 0 8px rgba(241, 196, 15, 0.15);
+  }
+
+  .card-rarity-rare:hover {
+    box-shadow: 0 0 15px rgba(241, 196, 15, 0.3);
+  }
+
+  .card-rarity-limited {
+    border-width: 3px;
+    box-shadow: inset 0 0 10px rgba(231, 76, 60, 0.2);
+    animation: limitedGlow 3s ease-in-out infinite;
+  }
+
+  .card-rarity-limited:hover {
+    box-shadow: 0 0 20px rgba(231, 76, 60, 0.4);
+  }
+
+  @keyframes limitedGlow {
+    0%, 100% {
+      box-shadow: inset 0 0 10px rgba(231, 76, 60, 0.2);
+    }
+    50% {
+      box-shadow: inset 0 0 15px rgba(231, 76, 60, 0.4);
+    }
+  }
+
+  .pity-indicator {
+    font-size: 11px;
+    color: #f39c12;
+    background: rgba(243, 156, 18, 0.15);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: bold;
+    margin-left: 8px;
+    cursor: help;
   }
 
   .action-buttons {

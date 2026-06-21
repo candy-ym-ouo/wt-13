@@ -75,6 +75,8 @@ import {
  * @property {TurnLog[]} actionLogs
  * @property {ActionLog | null} lastActionLog
  * @property {Record<string, import('../utils/gameLogic').TileEffect>} tileEffects
+ * @property {{red: Record<string, number>, blue: Record<string, number>}} drawHistory
+ * @property {{red: number, blue: number}} pityCounter
  */
 
 /**
@@ -230,7 +232,9 @@ function createInitialState() {
       }]
     }],
     lastActionLog: null,
-    tileEffects: {}
+    tileEffects: {},
+    drawHistory: { red: {}, blue: {} },
+    pityCounter: { red: 0, blue: 0 }
   };
 }
 
@@ -1026,7 +1030,18 @@ function createGameState() {
           remainingCooldown: 0
         }];
       }
-      return { ...state, hands };
+      const drawHistory = {
+        red: { ...state.drawHistory.red },
+        blue: { ...state.drawHistory.blue }
+      };
+      drawHistory[faction][card.id] = (drawHistory[faction][card.id] || 0) + 1;
+      const pityCounter = { ...state.pityCounter };
+      if (card.rarity === 'rare' || card.rarity === 'limited') {
+        pityCounter[faction] = 0;
+      } else {
+        pityCounter[faction] = (pityCounter[faction] || 0) + 1;
+      }
+      return { ...state, hands, drawHistory, pityCounter };
     }),
     /**
      * @param {'red' | 'blue'} faction
@@ -1961,4 +1976,12 @@ export const currentEnergy = derived(gameState, /** @param {GameState} $state */
 
 export const currentCooldowns = derived(gameState, /** @param {GameState} $state */ $state =>
   $state.cooldowns[/** @type {'red' | 'blue'} */ ($state.currentFaction)] || []
+);
+
+export const currentDrawHistory = derived(gameState, /** @param {GameState} $state */ $state =>
+  $state.drawHistory[/** @type {'red' | 'blue'} */ ($state.currentFaction)] || {}
+);
+
+export const currentPityCounter = derived(gameState, /** @param {GameState} $state */ $state =>
+  $state.pityCounter[/** @type {'red' | 'blue'} */ ($state.currentFaction)] || 0
 );
