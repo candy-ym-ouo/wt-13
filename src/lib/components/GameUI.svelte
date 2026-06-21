@@ -239,7 +239,7 @@
   onMount(() => {
     unsubscribe = gameState.subscribe(/** @param {GameState} s */ s => {
       state = s;
-      if (s.gameOver && s.winner && !recordSaved) {
+      if (s.gameOver && !recordSaved) {
         saveRecord();
         recordSaved = true;
       }
@@ -298,15 +298,22 @@
   function saveRecord() {
     if (!state) return;
     const winner = state.winner || '';
+    const isDraw = winner === 'draw';
     const loser = winner === 'red' ? 'blue' : 'red';
-    const winnerUnits = state.units.filter(u => u.faction === winner);
-    const loserUnits = state.units.filter(u => u.faction === loser);
-    const avgMoraleWinner = winnerUnits.length > 0
-      ? Math.round(winnerUnits.reduce((acc, u) => acc + (u.morale ?? 80), 0) / winnerUnits.length)
-      : 0;
-    const avgMoraleLoser = loserUnits.length > 0
-      ? Math.round(loserUnits.reduce((acc, u) => acc + (u.morale ?? 80), 0) / loserUnits.length)
-      : 0;
+    const winnerUnits = isDraw ? [] : state.units.filter(u => u.faction === winner);
+    const loserUnits = isDraw ? [] : state.units.filter(u => u.faction === loser);
+    const redUnits = state.units.filter(u => u.faction === 'red');
+    const blueUnits = state.units.filter(u => u.faction === 'blue');
+    const avgMoraleWinner = isDraw
+      ? (redUnits.length > 0 ? Math.round(redUnits.reduce((acc, u) => acc + (u.morale ?? 80), 0) / redUnits.length) : 0)
+      : (winnerUnits.length > 0
+        ? Math.round(winnerUnits.reduce((acc, u) => acc + (u.morale ?? 80), 0) / winnerUnits.length)
+        : 0);
+    const avgMoraleLoser = isDraw
+      ? (blueUnits.length > 0 ? Math.round(blueUnits.reduce((acc, u) => acc + (u.morale ?? 80), 0) / blueUnits.length) : 0)
+      : (loserUnits.length > 0
+        ? Math.round(loserUnits.reduce((acc, u) => acc + (u.morale ?? 80), 0) / loserUnits.length)
+        : 0);
     const record = {
       winner: state.winner || '',
       victoryCondition: state.victoryCondition || '',
@@ -320,7 +327,7 @@
     saveGameRecord(record);
     records = /** @type {GameRecord[]} */ (getGameRecords());
 
-    if (!rosterSaved) {
+    if (!rosterSaved && !isDraw) {
       saveRosterFromGame(state.units, winner);
       rosterSaved = true;
     }
@@ -1096,12 +1103,16 @@
     <div class="game-over-overlay">
       <div class="game-over-content">
         <h2>游戏结束</h2>
-        <p class="winner" style="color: {state.winner ? getFactionColor(state.winner) : '#999'}">
-          {state.winner ? getFactionName(state.winner) : ''} 胜利！
+        <p class="winner" style="color: {state.winner === 'draw' ? '#f1c40f' : (state.winner ? getFactionColor(state.winner) : '#999')}">
+          {#if state.winner === 'draw'}
+            🤝 平局！
+          {:else if state.winner}
+            {getFactionName(state.winner)} 胜利！
+          {/if}
         </p>
         <p class="condition">{state.victoryCondition}</p>
         <p class="stat-line">共经历 {state.turn} 回合</p>
-        {#if state.winner}
+        {#if state.winner && state.winner !== 'draw'}
           <div class="morale-summary">
             <div style="color: {getFactionColor(state.winner)}">
               {getFactionName(state.winner)} 平均士气：{getEndGameMoraleStats(state).avgMoraleWinner}
@@ -1109,6 +1120,54 @@
             <div style="color: {getFactionColor(getEndGameMoraleStats(state).loser)}">
               {getFactionName(getEndGameMoraleStats(state).loser)} 平均士气：{getEndGameMoraleStats(state).avgMoraleLoser}
             </div>
+          </div>
+        {/if}
+        {#if state.scoreSettlement}
+          <div class="score-settlement">
+            <div class="score-title">📊 分数结算详情</div>
+            <div class="score-header-row">
+              <span class="score-label">项目</span>
+              <span class="score-red" style="color: #e74c3c">红方</span>
+              <span class="score-blue" style="color: #3498db">蓝方</span>
+            </div>
+            <div class="score-row">
+              <span class="score-label">🏰 基地耐久</span>
+              <span class="score-red">{state.scoreSettlement.scores.red.baseDurabilityScore}</span>
+              <span class="score-blue">{state.scoreSettlement.scores.blue.baseDurabilityScore}</span>
+            </div>
+            <div class="score-row">
+              <span class="score-label">👥 剩余兵力</span>
+              <span class="score-red">{state.scoreSettlement.scores.red.survivingUnitsScore}</span>
+              <span class="score-blue">{state.scoreSettlement.scores.blue.survivingUnitsScore}</span>
+            </div>
+            <div class="score-row">
+              <span class="score-label">❤️ 兵力血量</span>
+              <span class="score-red">{state.scoreSettlement.scores.red.unitHpScore}</span>
+              <span class="score-blue">{state.scoreSettlement.scores.blue.unitHpScore}</span>
+            </div>
+            <div class="score-row">
+              <span class="score-label">⚔️ 击杀数</span>
+              <span class="score-red">{state.scoreSettlement.scores.red.killCountScore} ({state.killCounts?.red || 0}杀)</span>
+              <span class="score-blue">{state.scoreSettlement.scores.blue.killCountScore} ({state.killCounts?.blue || 0}杀)</span>
+            </div>
+            <div class="score-row">
+              <span class="score-label">🏴 占领进度</span>
+              <span class="score-red">{state.scoreSettlement.scores.red.captureProgressScore}</span>
+              <span class="score-blue">{state.scoreSettlement.scores.blue.captureProgressScore}</span>
+            </div>
+            <div class="score-row score-total">
+              <span class="score-label">🔢 总分</span>
+              <span class="score-red">{state.scoreSettlement.scores.red.totalScore}</span>
+              <span class="score-blue">{state.scoreSettlement.scores.blue.totalScore}</span>
+            </div>
+            <div class="score-diff">
+              分差：{state.scoreSettlement.scoreDiff}（阈值：{gameRules.scoreSettlement.drawScoreThreshold}）
+            </div>
+          </div>
+        {:else if state.killCounts}
+          <div class="kill-summary">
+            <div style="color: #e74c3c">红方击杀：{state.killCounts.red}</div>
+            <div style="color: #3498db">蓝方击杀：{state.killCounts.blue}</div>
           </div>
         {/if}
         {#if state.roundSnapshots && state.roundSnapshots.length > 0}
@@ -1134,14 +1193,21 @@
               <span style="color: #e74c3c">{Math.round(gSummary.redMaxCapture * 100)}%</span>
               <span style="color: #3498db">{Math.round(gSummary.blueMaxCapture * 100)}%</span>
             </div>
+            {#if state.killCounts}
+              <div class="gameover-summary-row">
+                <span class="gameover-label">击杀</span>
+                <span style="color: #e74c3c">{state.killCounts.red}</span>
+                <span style="color: #3498db">{state.killCounts.blue}</span>
+              </div>
+            {/if}
           </div>
           <button class="btn btn-secondary" on:click={() => showRoundStats = true}>
             📈 查看回合趋势
           </button>
         {/if}
         <button class="btn btn-primary" on:click={handleRestart}>再来一局</button>
-        {#if !rosterSaved && state.winner}
-          <button class="btn btn-secondary" on:click={() => { saveRosterFromGame(state.units, state.winner); rosterSaved = true; }}>
+        {#if !rosterSaved && state?.winner && state.winner !== 'draw'}
+          <button class="btn btn-secondary" on:click={() => { saveRosterFromGame(state.units, /** @type {'red' | 'blue'} */ (state.winner)); rosterSaved = true; }}>
             💾 保存阵容存档
           </button>
         {/if}
@@ -2603,6 +2669,86 @@
     border-radius: 8px;
     font-size: 14px;
     line-height: 1.8;
+  }
+
+  .kill-summary {
+    margin: 15px 0;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.8;
+    display: flex;
+    justify-content: space-around;
+  }
+
+  .score-settlement {
+    margin: 15px 0 20px 0;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    border: 1px solid rgba(241, 196, 15, 0.3);
+  }
+
+  .score-title {
+    text-align: center;
+    font-size: 16px;
+    font-weight: bold;
+    color: #f1c40f;
+    margin-bottom: 12px;
+  }
+
+  .score-header-row,
+  .score-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+
+  .score-header-row {
+    font-weight: bold;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    margin-bottom: 6px;
+    padding-bottom: 8px;
+    color: #ddd;
+  }
+
+  .score-row {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .score-row:last-child {
+    border-bottom: none;
+  }
+
+  .score-total {
+    font-weight: bold;
+    font-size: 15px;
+    background: rgba(241, 196, 15, 0.1);
+    border-radius: 6px;
+    margin-top: 6px;
+    padding: 8px !important;
+  }
+
+  .score-label {
+    color: #bbb;
+  }
+
+  .score-red,
+  .score-blue {
+    text-align: center;
+    font-weight: 600;
+  }
+
+  .score-diff {
+    text-align: center;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.15);
+    font-size: 12px;
+    color: #999;
   }
 
   .record-morale {

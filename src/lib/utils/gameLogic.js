@@ -91,6 +91,24 @@ import { gameRules } from '$lib/config/gameRules';
  */
 
 /**
+ * @typedef {object} FactionScoreBreakdown
+ * @property {number} baseDurabilityScore
+ * @property {number} survivingUnitsScore
+ * @property {number} unitHpScore
+ * @property {number} killCountScore
+ * @property {number} captureProgressScore
+ * @property {number} totalScore
+ */
+
+/**
+ * @typedef {object} ScoreSettlementResult
+ * @property {'red' | 'blue' | 'draw'} winner
+ * @property {string} condition
+ * @property {{red: FactionScoreBreakdown, blue: FactionScoreBreakdown}} scores
+ * @property {number} scoreDiff
+ */
+
+/**
  * @typedef {keyof typeof unitConfig} UnitType
  * @typedef {keyof typeof boardConfig.terrain} TerrainType
  */
@@ -1169,6 +1187,99 @@ export function checkVictory(units, currentFaction, boardLayout, bases) {
   }
 
   return null;
+}
+
+/**
+ * @param {Unit[]} units
+ * @param {BaseState[]} bases
+ * @param {'red' | 'blue'} faction
+ * @param {{red: number, blue: number}} killCounts
+ * @returns {FactionScoreBreakdown}
+ */
+export function calculateFactionScore(units, bases, faction, killCounts) {
+  const weights = gameRules.scoreSettlement;
+  const factionUnits = units.filter(u => u.faction === faction);
+  const factionBase = bases.find(b => b.faction === faction);
+  const enemyFaction = faction === 'red' ? 'blue' : 'red';
+  const enemyBase = bases.find(b => b.faction === enemyFaction);
+
+  let baseDurabilityScore = 0;
+  if (factionBase) {
+    baseDurabilityScore = (factionBase.durability / factionBase.maxDurability) * weights.baseDurabilityMaxScore * weights.baseDurabilityWeight;
+  }
+
+  const survivingUnitsScore = factionUnits.length * weights.survivingUnitsWeight;
+
+  let unitHpScore = 0;
+  for (const unit of factionUnits) {
+    const hpRatio = unit.currentHp / (unit.maxHp || 1);
+    unitHpScore += hpRatio * weights.unitHpWeight * 100;
+  }
+
+  const killCountScore = (killCounts[faction] || 0) * weights.killCountWeight;
+
+  let captureProgressScore = 0;
+  if (enemyBase && enemyBase.capturingFaction === faction) {
+    const captureTurnsRequired = gameRules.victoryConditions.captureBase.captureTurnsRequired || 3;
+    captureProgressScore = (enemyBase.captureProgress / captureTurnsRequired) * weights.captureProgressWeight;
+  }
+
+  const totalScore = baseDurabilityScore + survivingUnitsScore + unitHpScore + killCountScore + captureProgressScore;
+
+  return {
+    baseDurabilityScore: Math.round(baseDurabilityScore * 10) / 10,
+    survivingUnitsScore: Math.round(survivingUnitsScore * 10) / 10,
+    unitHpScore: Math.round(unitHpScore * 10) / 10,
+    killCountScore: Math.round(killCountScore * 10) / 10,
+    captureProgressScore: Math.round(captureProgressScore * 10) / 10,
+    totalScore: Math.round(totalScore * 10) / 10
+  };
+}
+
+/**
+ * @param {Unit[]} units
+ * @param {BaseState[]} bases
+ * @param {{red: number, blue: number}} killCounts
+ * @returns {ScoreSettlementResult}
+ */
+export function calculateScoreSettlement(units, bases, killCounts) {
+  const redScore = calculateFactionScore(units, bases, 'red', killCounts);
+  const blueScore = calculateFactionScore(units, bases, 'blue', killCounts);
+  const scoreDiff = Math.abs(redScore.totalScore - blueScore.totalScore);
+
+  let winner;
+  let condition;
+
+  if (scoreDiff <= gameRules.scoreSettlement.drawScoreThreshold) {
+    winner = 'draw';
+    condition = `超时平局！双方分差 ${scoreDiff.toFixed(1)} 未超过阈值`;
+  } else if (redScore.totalScore > blueScore.totalScore) {
+    winner = 'red';
+    condition = `超时判定！红方以 ${redScore.totalScore.toFixed(1)} : ${blueScore.totalScore.toFixed(1)} 获胜（分差 ${scoreDiff.toFixed(1)}）`;
+  } else {
+    winner = 'blue';
+    condition = `超时判定！蓝方以 ${blueScore.totalScore.toFixed(1)} : ${redScore.totalScore.toFixed(1)} 获胜（分差 ${scoreDiff.toFixed(1)}）`;
+  }
+
+  return {
+    winner,
+    condition,
+    scores: { red: redScore, blue: blueScore },
+    scoreDiff: Math.round(scoreDiff * 10) / 10
+  };
+}
+
+/**
+ * @param {number} turn
+ * @param {Unit[]} units
+ * @param {BaseState[]} bases
+ * @param {{red: number, blue: number}} killCounts
+ * @returns {ScoreSettlementResult | null}
+ */
+export function checkTimeoutVictory(turn, units, bases, killCounts) {
+  if (!gameRules.victoryConditions.timeout.enabled) return null;
+  if (turn < gameRules.maxTurns) return null;
+  return calculateScoreSettlement(units, bases, killCounts);
 }
 
 /**

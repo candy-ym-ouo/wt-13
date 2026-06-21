@@ -23,7 +23,21 @@ export const gameRules = {
       durabilityDamagePerUnit: 5,
       garrisonRepairBonus: 10,
       garrisonUnitRequired: true
+    },
+    timeout: {
+      enabled: true,
+      description: '回合数耗尽，按分数判定胜负',
+      useScoreSettlement: true
     }
+  },
+  scoreSettlement: {
+    baseDurabilityWeight: 2.0,
+    baseDurabilityMaxScore: 100,
+    survivingUnitsWeight: 15.0,
+    unitHpWeight: 0.5,
+    killCountWeight: 10.0,
+    captureProgressWeight: 50.0,
+    drawScoreThreshold: 5.0
   },
   combat: {
     damageFormula: 'attack * (100 / (100 + defense))',

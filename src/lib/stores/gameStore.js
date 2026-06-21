@@ -23,7 +23,9 @@ import {
   processTileEffectsOnUnits,
   tickTileEffects as tickTileEffectsLogic,
   calculateCombatPreview,
-  getTerrain
+  getTerrain,
+  checkTimeoutVictory,
+  calculateScoreSettlement
 } from '$lib/utils/gameLogic';
 
 /**
@@ -116,6 +118,8 @@ import {
  * @property {RoundSnapshot[]} roundSnapshots
  * @property {{red: number, blue: number}} turnDamageDealt
  * @property {{red: number, blue: number}} turnCardsUsed
+ * @property {{red: number, blue: number}} killCounts
+ * @property {import('../utils/gameLogic').ScoreSettlementResult | null} scoreSettlement
  */
 
 /**
@@ -356,7 +360,9 @@ function createInitialState() {
     fogOfWarEnabled: true,
     roundSnapshots: [],
     turnDamageDealt: { red: 0, blue: 0 },
-    turnCardsUsed: { red: 0, blue: 0 }
+    turnCardsUsed: { red: 0, blue: 0 },
+    killCounts: { red: 0, blue: 0 },
+    scoreSettlement: null
   };
 }
 
@@ -857,6 +863,15 @@ function createGameState() {
         )
       };
 
+      /** @type {{red: number, blue: number}} */
+      const newKillCounts = { ...state.killCounts };
+      if (defenderDead) {
+        newKillCounts[/** @type {'red' | 'blue'} */ (attackerFaction)] = (newKillCounts[/** @type {'red' | 'blue'} */ (attackerFaction)] || 0) + 1;
+      }
+      if (attackerDeadFromCounter) {
+        newKillCounts[/** @type {'red' | 'blue'} */ (defenderFaction)] = (newKillCounts[/** @type {'red' | 'blue'} */ (defenderFaction)] || 0) + 1;
+      }
+
       return {
         ...state,
         units: updatedUnits,
@@ -869,7 +884,8 @@ function createGameState() {
         turnDamageDealt: {
           red: state.turnDamageDealt.red + (attackerFaction === 'red' ? finalDamage : 0) + (counterDamage > 0 && !counterShieldBlocked && defenderFaction === 'red' ? counterDamage : 0),
           blue: state.turnDamageDealt.blue + (attackerFaction === 'blue' ? finalDamage : 0) + (counterDamage > 0 && !counterShieldBlocked && defenderFaction === 'blue' ? counterDamage : 0)
-        }
+        },
+        killCounts: newKillCounts
       };
     }),
     endTurn: () => update(state => {
@@ -1233,6 +1249,60 @@ function createGameState() {
         }
       };
 
+      const timeoutResult = checkTimeoutVictory(newTurn, units, state.bases, state.killCounts);
+      let isGameOver = false;
+      let finalWinner = null;
+      let finalCondition = null;
+      let finalScoreSettlement = null;
+
+      if (timeoutResult) {
+        isGameOver = true;
+        finalWinner = timeoutResult.winner;
+        finalCondition = timeoutResult.condition;
+        finalScoreSettlement = timeoutResult;
+
+        if (timeoutResult.winner !== 'draw') {
+          const winXp = gameRules.experience.onWin;
+          if (winXp > 0) {
+            units = units.map(u => {
+              if (u.faction === timeoutResult.winner) {
+                const result = grantXPToUnit(u, winXp, '超时胜利');
+                return result.unit;
+              }
+              return u;
+            });
+          }
+        }
+
+        const timeoutLog = {
+          id: `log_${Date.now()}_victory_${Math.random().toString(36).slice(2, 6)}`,
+          turn: newTurn,
+          faction: timeoutResult.winner === 'draw' ? nextFaction : timeoutResult.winner,
+          type: /** @type {ActionLogType} */ ('victory'),
+          description: timeoutResult.condition,
+          details: {
+            winner: timeoutResult.winner,
+            condition: timeoutResult.condition,
+            scores: timeoutResult.scores,
+            scoreDiff: timeoutResult.scoreDiff
+          },
+          timestamp: Date.now()
+        };
+        const lastLog = newActionLogs[newActionLogs.length - 1];
+        if (lastLog && lastLog.turn === newTurn && lastLog.faction === (timeoutResult.winner === 'draw' ? nextFaction : timeoutResult.winner)) {
+          newActionLogs[newActionLogs.length - 1] = {
+            ...lastLog,
+            actions: [...lastLog.actions, timeoutLog]
+          };
+        } else {
+          newActionLogs.push({
+            turn: newTurn,
+            faction: timeoutResult.winner === 'draw' ? nextFaction : timeoutResult.winner,
+            actions: [timeoutLog]
+          });
+        }
+      }
+
       return {
         ...state,
         currentFaction: nextFaction,
@@ -1240,7 +1310,11 @@ function createGameState() {
         units,
         selectedUnitId: null,
         selectedCardId: null,
-        gamePhase: 'idle',
+        gamePhase: isGameOver ? 'gameOver' : 'idle',
+        gameOver: isGameOver,
+        winner: finalWinner,
+        victoryCondition: finalCondition,
+        scoreSettlement: finalScoreSettlement,
         hands: nextHands,
         cooldowns: nextCooldowns,
         energy: nextEnergy,
@@ -1251,7 +1325,7 @@ function createGameState() {
         lastStatusMessages: statusMessages,
         lastMoraleChanges: dotKilled ? moraleChanges : state.lastMoraleChanges,
         actionLogs: newActionLogs,
-        lastActionLog: turnEndLog,
+        lastActionLog: isGameOver ? newActionLogs[newActionLogs.length - 1].actions[newActionLogs[newActionLogs.length - 1].actions.length - 1] : turnEndLog,
         tileEffects: newTileEffects,
         roundSnapshots: [...state.roundSnapshots, snapshot],
         turnDamageDealt: { red: 0, blue: 0 },
@@ -1263,13 +1337,15 @@ function createGameState() {
      * @param {string} condition
      */
     setVictory: (winner, condition) => update(state => {
-      const winnerName = winner === 'red' ? '红方' : '蓝方';
-      const victoryDesc = `${winnerName}胜利！${condition}`;
+      const isDraw = winner === 'draw';
+      const winnerName = isDraw ? '平局' : (winner === 'red' ? '红方' : '蓝方');
+      const victoryDesc = isDraw ? condition : `${winnerName}胜利！${condition}`;
 
+      const logFaction = isDraw ? state.currentFaction : winner;
       const victoryLog = {
         id: `log_${Date.now()}_victory_${Math.random().toString(36).slice(2, 6)}`,
         turn: state.turn,
-        faction: winner,
+        faction: logFaction,
         type: /** @type {ActionLogType} */ ('victory'),
         description: victoryDesc,
         details: { winner, condition },
@@ -1278,7 +1354,7 @@ function createGameState() {
 
       const newActionLogs = [...state.actionLogs];
       const lastTurnLog = newActionLogs[newActionLogs.length - 1];
-      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === winner) {
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === logFaction) {
         newActionLogs[newActionLogs.length - 1] = {
           ...lastTurnLog,
           actions: [...lastTurnLog.actions, victoryLog]
@@ -1286,7 +1362,7 @@ function createGameState() {
       } else {
         newActionLogs.push({
           turn: state.turn,
-          faction: winner,
+          faction: logFaction,
           actions: [victoryLog]
         });
       }
@@ -1295,7 +1371,7 @@ function createGameState() {
       let units = state.units;
       /** @type {string[]} */
       const winXpMsgs = [];
-      if (winXp > 0) {
+      if (!isDraw && winXp > 0) {
         units = units.map(u => {
           if (u.faction === winner) {
             const result = grantXPToUnit(u, winXp, '胜利');
@@ -1342,7 +1418,8 @@ function createGameState() {
         victoryCondition: condition,
         gamePhase: 'gameOver',
         actionLogs: newActionLogs,
-        lastActionLog: victoryLog
+        lastActionLog: victoryLog,
+        scoreSettlement: isDraw ? calculateScoreSettlement(state.units, state.bases, state.killCounts) : state.scoreSettlement
       };
     }),
     /**
