@@ -135,26 +135,114 @@ function evaluateMovePosition(unit, pos, state, threatMap, enemyUnits) {
     }
   }
 
-  let attackCoverage = 0;
   const tempUnit = { ...unit, x: pos.x, y: pos.y };
-  const unitConfigData = unitConfig[/** @type {keyof typeof unitConfig} */ (unit.type)];
-  const attackRange = unitConfigData.attackRange;
-  for (const enemy of enemyUnits) {
-    const dist = Math.abs(enemy.x - pos.x) + Math.abs(enemy.y - pos.y);
-    if (dist <= attackRange && dist > 0) {
-      attackCoverage++;
-      const counterInfo = getCounterInfo(unit.type, enemy.type);
-      if (counterInfo.isAdvantage) {
-        score += 15;
+  const attackableTargets = getAttackRange(tempUnit, state.units);
+  let attackCoverage = attackableTargets.length;
+  let totalAttackValue = 0;
+  let hasKillOpportunity = false;
+  let hasCounterDanger = false;
+  let hasAdvantageTarget = false;
+  let maxDamage = 0;
+
+  for (const tile of attackableTargets) {
+    const enemy = tile.target;
+    if (!enemy) continue;
+
+    const defTerrain = getTerrain(enemy.x, enemy.y, layout);
+    const atkTerrain = terrain || undefined;
+    const preview = calculateCombatPreview(tempUnit, enemy, defTerrain || undefined, atkTerrain);
+
+    let targetScore = 0;
+
+    targetScore += preview.estimatedDamage * 1.0;
+    if (preview.estimatedDamage > maxDamage) {
+      maxDamage = preview.estimatedDamage;
+    }
+
+    if (preview.willKill) {
+      targetScore += 45;
+      hasKillOpportunity = true;
+      tags.push('可击杀');
+    }
+
+    if (preview.shieldBlocked) {
+      targetScore -= 20;
+    }
+
+    const counterInfo = getCounterInfo(tempUnit.type, enemy.type);
+    if (counterInfo.isAdvantage) {
+      targetScore += 20;
+      hasAdvantageTarget = true;
+      if (!tags.includes('克制位')) {
         tags.push('克制位');
         reasons.push('可攻击克制目标');
-      } else {
-        score += 5;
       }
     }
+    const reverseCounter = getCounterInfo(enemy.type, tempUnit.type);
+    if (reverseCounter.isAdvantage) {
+      targetScore -= 10;
+    }
+
+    if (preview.willCounter) {
+      targetScore -= preview.counterDamage * 0.7;
+      if (preview.counterWillKill) {
+        targetScore -= 50;
+        hasCounterDanger = true;
+        if (!tags.includes('反杀风险')) {
+          tags.push('反杀风险');
+        }
+      }
+    } else {
+      targetScore += 8;
+    }
+
+    const defenderHpRatio = enemy.currentHp / enemy.maxHp;
+    if (defenderHpRatio <= 0.3 && !preview.willKill) {
+      targetScore += 12;
+    }
+
+    if (enemy.buffs && enemy.buffs.length > 0) {
+      const hasAttackBoost = enemy.buffs.some(b => b.type === 'attackBoost');
+      const hasDoubleAttack = enemy.buffs.some(b => b.type === 'doubleAttack');
+      if (hasAttackBoost) targetScore += 10;
+      if (hasDoubleAttack) targetScore += 12;
+    }
+
+    const enemyCfg = unitConfig[/** @type {keyof typeof unitConfig} */ (enemy.type)];
+    if (enemyCfg.attack >= 35) {
+      targetScore += 6;
+    }
+
+    const enemyBase = state.bases.find(b => b.faction !== tempUnit.faction);
+    if (enemyBase) {
+      const distToBase = Math.abs(enemy.x - enemyBase.x) + Math.abs(enemy.y - enemyBase.y);
+      if (distToBase <= 2) {
+        targetScore += 8;
+      }
+    }
+
+    totalAttackValue += targetScore;
   }
+
   if (attackCoverage > 0) {
-    score += attackCoverage * 3;
+    score += totalAttackValue * 0.6;
+    score += attackCoverage * 2;
+
+    if (hasKillOpportunity && !reasons.includes('存在击杀机会')) {
+      reasons.push('存在击杀机会');
+    }
+    if (hasCounterDanger && !reasons.includes('需注意反击')) {
+      reasons.push('需注意反击');
+    }
+    if (maxDamage > 0) {
+      reasons.push(`最高可造成${maxDamage}伤害`);
+    }
+    if (!hasAdvantageTarget && attackCoverage >= 2) {
+      if (!tags.includes('火力位')) {
+        tags.push('火力位');
+      }
+      reasons.push(`可覆盖${attackCoverage}个目标`);
+    }
   }
 
   let isCaptureOpportunity = false;
