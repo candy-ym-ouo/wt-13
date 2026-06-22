@@ -1824,7 +1824,7 @@
       return;
     }
 
-    const effects = applyCardEffect(card, state, selectedUnitData, targetUnit, { x: tx, y: ty });
+    const effects = applyCardEffect(card, state, selectedUnitData, targetUnit, { x: tx, y: ty }, state.weather?.currentWeather || 'sunny');
 
     if (effects.length === 0) {
       gameState.setMessage('卡牌效果未产生作用，请检查目标是否正确');

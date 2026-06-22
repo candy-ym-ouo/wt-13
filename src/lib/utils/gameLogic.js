@@ -2,6 +2,7 @@ import { boardConfig, tileEffectConfig, TILE_EFFECT_TYPES } from '$lib/config/bo
 import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO, UNIT_COUNTER_TYPE } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { equipmentConfig, EQUIPMENT_SETS, getRarityInfo } from '$lib/config/equipmentConfig';
+import { WEATHER_CONFIG, WEATHER_TRANSITION_RULES, getWeatherConfig, WEATHER_TYPES, WEATHER_CARD_TAGS } from '$lib/config/weatherConfig.js';
 
 /**
  * @typedef {import('./cardSystem').Unit} Unit
@@ -3026,4 +3027,280 @@ export function getEffectiveSightRange(unit, unitType, boardLayout) {
 
   return Math.max(1, effectiveSight);
 }
+
+/**
+ * @typedef {object} TerrainEffect
+ * @property {number} [moveCostAdd]
+ * @property {boolean} [passable]
+ */
+
+/**
+ * @typedef {object} WeatherConfigType
+ * @property {string} name
+ * @property {string} icon
+ * @property {string} color
+ * @property {string} bgColor
+ * @property {string} description
+ * @property {number} moveCostModifier
+ * @property {number} attackRangeModifier
+ * @property {number} hitChanceModifier
+ * @property {number} visibilityRange
+ * @property {number} [damagePerTurn]
+ * @property {Record<string, number>} cardEffectModifiers
+ * @property {string[] | null} allowedCardTypes
+ * @property {Record<string, TerrainEffect>} terrainEffects
+ * @property {number} probabilityWeight
+ * @property {number} minDuration
+ * @property {number} maxDuration
+ */
+
+/**
+ * @typedef {object} WeatherState
+ * @property {string} currentWeather
+ * @property {number} remainingDuration
+ * @property {string} previousWeather
+ * @property {boolean} weatherJustChanged
+ * @property {string[]} weatherHistory
+ */
+
+/**
+ * @param {WeatherState} weatherState
+ * @returns {{ weather: WeatherState; changed: boolean; messages: string[] }}
+ */
+export function tickWeather(weatherState) {
+  const messages = [];
+  let newWeather = { ...weatherState };
+  let changed = false;
+
+  newWeather.weatherJustChanged = false;
+
+  const newDuration = weatherState.remainingDuration - 1;
+
+  if (newDuration <= 0) {
+    const currentConfig = getWeatherConfig(weatherState.currentWeather);
+    const possibleTransitions = WEATHER_TRANSITION_RULES[weatherState.currentWeather] || [WEATHER_TYPES.SUNNY];
+
+    const weightedPool = possibleTransitions.map(weatherType => {
+      const config = getWeatherConfig(weatherType);
+      return { weatherType, weight: config.probabilityWeight };
+    });
+
+    const totalWeight = weightedPool.reduce((sum, item) => sum + item.weight, 0);
+    let roll = Math.random() * totalWeight;
+    let selectedWeather = weightedPool[0].weatherType;
+
+    for (const item of weightedPool) {
+      roll -= item.weight;
+      if (roll <= 0) {
+        selectedWeather = item.weatherType;
+        break;
+      }
+    }
+
+    const newConfig = getWeatherConfig(selectedWeather);
+    const duration = newConfig.minDuration + Math.floor(Math.random() * (newConfig.maxDuration - newConfig.minDuration + 1));
+
+    const oldName = currentConfig.name;
+    const newName = newConfig.name;
+    messages.push(`【天气变化】${oldName} → ${newName} ${newConfig.icon} - ${newConfig.description}`);
+
+    newWeather = {
+      ...newWeather,
+      previousWeather: weatherState.currentWeather,
+      currentWeather: selectedWeather,
+      remainingDuration: duration,
+      weatherJustChanged: true,
+      weatherHistory: [...weatherState.weatherHistory, selectedWeather]
+    };
+    changed = true;
+  } else {
+    newWeather.remainingDuration = newDuration;
+  }
+
+  return { weather: newWeather, changed, messages };
+}
+
+/**
+ * @param {string} weatherType
+ * @param {string} terrainType
+ * @returns {number}
+ */
+export function getWeatherMoveCostModifier(weatherType, terrainType) {
+  const config = getWeatherConfig(weatherType);
+  let modifier = config.moveCostModifier || 0;
+
+  if (config.terrainEffects && config.terrainEffects[terrainType]) {
+    modifier += config.terrainEffects[terrainType].moveCostAdd || 0;
+  }
+
+  return modifier;
+}
+
+/**
+ * @param {string} weatherType
+ * @returns {number}
+ */
+export function getWeatherAttackRangeModifier(weatherType) {
+  const config = getWeatherConfig(weatherType);
+  return config.attackRangeModifier || 0;
+}
+
+/**
+ * @param {string} weatherType
+ * @returns {number}
+ */
+export function getWeatherHitChanceModifier(weatherType) {
+  const config = getWeatherConfig(weatherType);
+  return config.hitChanceModifier || 0;
+}
+
+/**
+ * @param {string} weatherType
+ * @returns {number}
+ */
+export function getWeatherVisibilityModifier(weatherType) {
+  const config = getWeatherConfig(weatherType);
+  return config.visibilityRange || 0;
+}
+
+/**
+ * @param {string} weatherType
+ * @param {string} terrainType
+ * @returns {boolean}
+ */
+export function isTerrainPassableInWeather(weatherType, terrainType) {
+  const config = getWeatherConfig(weatherType);
+  if (config.terrainEffects && config.terrainEffects[terrainType]) {
+    const terrainEffect = config.terrainEffects[terrainType];
+    if (terrainEffect.passable === false) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * @param {Unit[]} units
+ * @param {string} weatherType
+ * @returns {{ results: { unitId: string; damage: number; messages: string[] }[]; updatedUnits: Unit[] }}
+ */
+export function processWeatherDamage(units, weatherType) {
+  const config = getWeatherConfig(weatherType);
+  const damagePerTurn = config.damagePerTurn || 0;
+
+  /** @type {{ unitId: string; damage: number; messages: string[] }[]} */
+  const results = [];
+
+  if (damagePerTurn <= 0) {
+    return { results, updatedUnits: units };
+  }
+
+  const updatedUnits = units.map(unit => {
+    const unitName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+    const factionName = unit.faction === 'red' ? '红方' : '蓝方';
+    const messages = [];
+
+    messages.push(`${factionName}${unitName} 受【${config.name}】天气影响，受到 ${damagePerTurn} 点伤害`);
+
+    results.push({
+      unitId: unit.id,
+      damage: damagePerTurn,
+      messages
+    });
+
+    return {
+      ...unit,
+      currentHp: Math.max(0, unit.currentHp - damagePerTurn)
+    };
+  });
+
+  return { results, updatedUnits };
+}
+
+/**
+ * @param {string} weatherType
+ * @param {string} cardId
+ * @returns {number}
+ */
+export function getWeatherCardEffectModifier(weatherType, cardId) {
+  const config = getWeatherConfig(weatherType);
+  if (!config.cardEffectModifiers) return 1.0;
+
+  for (const [tag, modifier] of Object.entries(config.cardEffectModifiers)) {
+    const cardIds = WEATHER_CARD_TAGS[tag] || [];
+    if (cardIds.includes(cardId)) {
+      return modifier;
+    }
+  }
+
+  return 1.0;
+}
+
+/**
+ * @param {string} weatherType
+ * @param {number} x
+ * @param {number} y
+ * @param {Record<string, string> | null} [tileEffects]
+ * @param {string[][] | null} [boardLayout]
+ * @returns {number}
+ */
+export function getEffectiveMoveCostWithWeather(weatherType, x, y, tileEffects, boardLayout) {
+  const terrain = getTerrain(x, y, boardLayout);
+  if (!terrain) return 99;
+
+  let cost = getEffectiveMoveCost(x, y, tileEffects, boardLayout);
+
+  const weatherModifier = getWeatherMoveCostModifier(weatherType, terrain.type);
+  cost += weatherModifier;
+
+  return Math.max(1, cost);
+}
+
+/**
+ * @param {string} weatherType
+ * @param {Unit} unit
+ * @param {UnitType} unitType
+ * @returns {number}
+ */
+export function getEffectiveAttackRangeWithWeather(weatherType, unit, unitType) {
+  const config = unitConfig[unitType];
+  let attackRange = config.attackRange;
+
+  if (unit.specialization) {
+    const spec = SPECIALIZATION_CONFIG[unitType]?.find(s => s.id === unit.specialization);
+    /** @type {any} */ const bonuses = spec?.bonuses;
+    if (bonuses?.attackRange) attackRange += bonuses.attackRange;
+  }
+
+  const weatherModifier = getWeatherAttackRangeModifier(weatherType);
+  attackRange += weatherModifier;
+
+  return Math.max(1, attackRange);
+}
+
+/**
+ * @param {string} weatherType
+ * @param {number} baseDamage
+ * @returns {{ damage: number; hitChance: number }}
+ */
+export function getWeatherAdjustedAttack(weatherType, baseDamage) {
+  const hitChanceMod = getWeatherHitChanceModifier(weatherType);
+  const hitChance = Math.max(0.1, Math.min(1.0, 1.0 + hitChanceMod));
+
+  return {
+    damage: baseDamage,
+    hitChance
+  };
+}
+
+/**
+ * @param {string} weatherType
+ * @param {number} baseSight
+ * @returns {number}
+ */
+export function getWeatherAdjustedSight(weatherType, baseSight) {
+  const modifier = getWeatherVisibilityModifier(weatherType);
+  return Math.max(1, baseSight + modifier);
+}
+
 

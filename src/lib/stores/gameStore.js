@@ -5,6 +5,7 @@ import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
 import { shopItems, shopConfig } from '$lib/config/shopConfig';
 import { techConfig, getTechById } from '$lib/config/techTreeConfig.js';
+import { WEATHER_TYPES, getWeatherConfig } from '$lib/config/weatherConfig.js';
 import { debouncedAutoSave, cancelPendingAutoSave } from '$lib/utils/storageSave';
 import { replayStore } from '$lib/stores/replayStore';
 import {
@@ -49,7 +50,14 @@ import {
   getCapturePointAt,
   calculateFactionVision,
   updateEnemyMarkers,
-  getSightRange
+  getSightRange,
+  tickWeather,
+  getWeatherMoveCostModifier,
+  getWeatherAttackRangeModifier,
+  getWeatherHitChanceModifier,
+  getWeatherVisibilityModifier,
+  processWeatherDamage,
+  isTerrainPassableInWeather
 } from '$lib/utils/gameLogic';
 import {
   startResearch,
@@ -132,6 +140,15 @@ import {
  */
 
 /**
+ * @typedef {object} WeatherState
+ * @property {string} currentWeather
+ * @property {number} remainingDuration
+ * @property {string} previousWeather
+ * @property {boolean} weatherJustChanged
+ * @property {string[]} weatherHistory
+ */
+
+/**
  * @typedef {object} GameState
  * @property {Unit[]} units
  * @property {string} currentFaction
@@ -176,6 +193,7 @@ import {
  * @property {Record<string, number>} shopPurchaseCounts
  * @property {EconomyNotification[]} economyNotifications
  * @property {TechTreeState} techTree
+ * @property {WeatherState} weather
  */
 
 /**
@@ -469,6 +487,13 @@ function createInitialState() {
       unlockedUnits: { red: [], blue: [] },
       unlockedSpecializations: { red: [], blue: [] },
       unlockedSpells: { red: [], blue: [] }
+    },
+    weather: {
+      currentWeather: WEATHER_TYPES.SUNNY,
+      remainingDuration: 3,
+      previousWeather: WEATHER_TYPES.SUNNY,
+      weatherJustChanged: false,
+      weatherHistory: [WEATHER_TYPES.SUNNY]
     }
   };
 }
@@ -1691,6 +1716,58 @@ function createGameState() {
 
       const newTileEffects = tickTileEffectsLogic(state.tileEffects);
 
+      const weatherResult = tickWeather(state.weather);
+      let newWeather = weatherResult.weather;
+      if (weatherResult.messages.length > 0) {
+        statusMessages.push(...weatherResult.messages);
+      }
+
+      const weatherDamageResult = processWeatherDamage(units, newWeather.currentWeather);
+      if (weatherDamageResult.results.length > 0) {
+        for (const result of weatherDamageResult.results) {
+          statusMessages.push(...result.messages);
+        }
+        units = weatherDamageResult.updatedUnits;
+
+        units = units.filter(u => {
+          if (u.currentHp <= 0) {
+            const unitName = unitConfig[/** @type {UnitType} */ (u.type)].name;
+            const factionName = u.faction === 'red' ? '红方' : '蓝方';
+            statusMessages.push(`${factionName}${unitName} 因天气伤害阵亡`);
+            dotKilled = true;
+
+            const allyFaction = u.faction;
+            moraleChanges.push(...units
+              .filter(x => x.faction === allyFaction && x.id !== u.id && x.currentHp > 0)
+              .map(x => {
+                const before = x.morale;
+                const delta = -gameRules.morale.onAllyDeath;
+                const after = clampMorale(before + delta);
+                return {
+                  unitId: x.id,
+                  unitName: unitConfig[/** @type {UnitType} */ (x.type)].name,
+                  faction: x.faction,
+                  before,
+                  after,
+                  delta: after - before,
+                  reason: `友军${unitName}因天气伤害阵亡`
+                };
+              })
+            );
+            return false;
+          }
+          return true;
+        });
+
+        units = units.map(u => {
+          const mc = moraleChanges.find(m => m.unitId === u.id);
+          if (mc) {
+            return { ...u, morale: mc.after, winStreak: 0 };
+          }
+          return u;
+        });
+      }
+
       let newRevealTurns = state.revealTurns ? state.revealTurns - 1 : 0;
       if (nextFaction === state.currentFaction) {
         newRevealTurns = state.revealTurns ? state.revealTurns : 0;
@@ -2125,7 +2202,8 @@ function createGameState() {
         killGoldEarnedThisTurn: { red: 0, blue: 0 },
         shopPurchaseCounts: resetShopCounts,
         economyNotifications: [...state.economyNotifications, ...econNotifications].slice(-30),
-        techTree: newTechTree
+        techTree: newTechTree,
+        weather: newWeather
       };
       replayStore.recorder.recordFrame('turn', turnEndDesc, newState, turnEndLog.details);
       if (isGameOver) {

@@ -1,6 +1,6 @@
 import { eventCards, cardConfig, CARD_CATEGORY, CARD_RARITY, cardRarityConfig } from '$lib/config/eventCardConfig';
 import { STATUS_EFFECT_TYPES, unitConfig } from '$lib/config/unitConfig';
-import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
+import { checkSummonFeasibility, findSummonPosition, getWeatherCardEffectModifier } from './gameLogic';
 
 /**
  * @typedef {'instant' | 'sustain' | 'counter'} CardCategory
@@ -49,6 +49,7 @@ import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
  * @property {number} duration
  * @property {number} [value]
  * @property {string} [source]
+ * @property {number} [weatherModifier]
  */
 
 /**
@@ -93,6 +94,7 @@ import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
  * @property {boolean} [resisted]
  * @property {string} [tileEffectType]
  * @property {number} [radius]
+ * @property {number} [weatherModifier]
  */
 
 /**
@@ -323,15 +325,25 @@ export function canUseSummonCard(card, gameState) {
  * @param {Unit | null | undefined} selectedUnit
  * @param {Unit | null | undefined} targetUnit
  * @param {{x: number, y: number} | null | undefined} targetPos
+ * @param {string} [weatherType='sunny']
  * @returns {AppliedEffect[]}
  */
-export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targetPos) {
+export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targetPos, weatherType = 'sunny') {
   /** @type {AppliedEffect[]} */
   const effects = [];
   const currentFaction = /** @type {string} */ (gameState.currentFaction);
   const effectType = card.effect.type;
 
+  const weatherModifier = getWeatherCardEffectModifier(weatherType, card.id);
+  const weatherAffected = weatherModifier !== 1.0;
+
   const isStatusDebuff = Object.values(STATUS_EFFECT_TYPES).includes(effectType);
+
+  function adjustValue(baseValue) {
+    if (baseValue === undefined || baseValue === null) return baseValue;
+    const adjusted = Math.round(baseValue * weatherModifier);
+    return adjusted;
+  }
 
   if (isStatusDebuff) {
     if (targetUnit && targetUnit.faction !== currentFaction) {
@@ -341,8 +353,9 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
         statusEffect: {
           type: effectType,
           duration: card.effect.duration ?? 2,
-          value: card.effect.value,
-          source: card.id
+          value: adjustValue(card.effect.value),
+          source: card.id,
+          weatherModifier
         }
       });
     }
@@ -355,7 +368,7 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
         ? selectedUnit
         : (targetUnit && targetUnit.faction === currentFaction ? targetUnit : null);
       if (friendlyUnit) {
-        effects.push({ type: 'heal', unitId: friendlyUnit.id, value: card.effect.value });
+        effects.push({ type: 'heal', unitId: friendlyUnit.id, value: adjustValue(card.effect.value), weatherModifier });
         if (card.id === 'divine_heal') {
           effects.push({ type: 'cleanse', unitId: friendlyUnit.id });
         }
@@ -370,7 +383,7 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
         effects.push({
           type: 'addBuff',
           unitId: friendlyUnit.id,
-          buff: { type: 'attackBoost', value: card.effect.value, duration: card.effect.duration }
+          buff: { type: 'attackBoost', value: adjustValue(card.effect.value), duration: card.effect.duration, weatherModifier }
         });
       }
       break;
@@ -383,7 +396,7 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
         effects.push({
           type: 'addBuff',
           unitId: friendlyUnit.id,
-          buff: { type: 'defenseBoost', value: card.effect.value, duration: card.effect.duration }
+          buff: { type: 'defenseBoost', value: adjustValue(card.effect.value), duration: card.effect.duration, weatherModifier }
         });
         if (card.id === 'fortress') {
           effects.push({
@@ -410,7 +423,7 @@ export function applyCardEffect(card, gameState, selectedUnit, targetUnit, targe
     }
     case 'damage':
       if (targetUnit && targetUnit.faction !== currentFaction) {
-        effects.push({ type: 'damage', unitId: targetUnit.id, value: card.effect.value });
+        effects.push({ type: 'damage', unitId: targetUnit.id, value: adjustValue(card.effect.value), weatherModifier });
         if (card.id === 'meteor_strike') {
           effects.push({
             type: 'stun',

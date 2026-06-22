@@ -5,7 +5,8 @@
   import { unitConfig, STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO } from '$lib/config/unitConfig';
   import { gameRules } from '$lib/config/gameRules';
   import { cardConfig, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, CARD_RARITY_LABELS, CARD_RARITY_COLORS, CARD_RARITY_BG, CARD_RARITY_ICONS, cardRarityConfig, eventCards } from '$lib/config/eventCardConfig';
-  import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview, calculateMaintenanceCost } from '$lib/utils/gameLogic';
+  import { getTerrain, getMoraleTier, settleBases, checkVictory, hasStatusEffect, getStatusEffect, isHardCC, calculateCombatPreview, calculateMaintenanceCost, getWeatherConfig, getWeatherAttackRangeModifier, getWeatherHitChanceModifier, getWeatherMoveCostModifier } from '$lib/utils/gameLogic';
+import { WEATHER_TYPES, getWeatherIcon, getWeatherName, getWeatherColor } from '$lib/config/weatherConfig.js';
   import { drawCard, drawInitialHand, canAffordCard } from '$lib/utils/cardSystem';
   import { saveGameRecord, getGameRecords, clearGameRecords, formatDate } from '$lib/utils/storage';
   import { seasonStore } from '$lib/stores/seasonStore.js';
@@ -132,6 +133,16 @@
   $: enemyUnitCount = getEnemyUnitCount();
   $: totalEnemyPower = getTotalEnemyPower();
 
+  $: currentWeather = state?.weather?.currentWeather || WEATHER_TYPES.SUNNY;
+  $: weatherConfig = getWeatherConfig(currentWeather);
+  $: weatherIcon = getWeatherIcon(currentWeather);
+  $: weatherName = getWeatherName(currentWeather);
+  $: weatherColor = getWeatherColor(currentWeather);
+  $: weatherDuration = state?.weather?.remainingDuration || 0;
+  $: weatherJustChanged = state?.weather?.weatherJustChanged || false;
+  $: weatherEffects = getWeatherEffects(currentWeather);
+  $: weatherHint = getWeatherHint(currentWeather);
+
   /** @returns {import('../stores/gameStore').EnemyMarker[]} */
   function getCurrentEnemyMarkers() {
     if (!state) return [];
@@ -165,6 +176,94 @@
         const cfg = unitConfig[/** @type {import('../stores/gameStore').UnitType} */ (u.type)];
         return sum + (cfg?.attack || 0);
       }, 0);
+  }
+
+  /**
+   * @param {string} weatherType
+   * @returns {{icon: string, label: string, value: number, positive: boolean}[]}
+   */
+  function getWeatherEffects(weatherType) {
+    const config = getWeatherConfig(weatherType);
+    const effects = [];
+
+    if (config.moveCostModifier !== 0) {
+      effects.push({
+        icon: '👟',
+        label: '移动消耗',
+        value: config.moveCostModifier,
+        positive: config.moveCostModifier < 0
+      });
+    }
+
+    const rangeMod = getWeatherAttackRangeModifier(weatherType);
+    if (rangeMod !== 0) {
+      effects.push({
+        icon: '🎯',
+        label: '攻击射程',
+        value: rangeMod,
+        positive: rangeMod > 0
+      });
+    }
+
+    const hitMod = getWeatherHitChanceModifier(weatherType);
+    if (hitMod !== 0) {
+      effects.push({
+        icon: '💥',
+        label: '命中概率',
+        value: hitMod,
+        positive: hitMod > 0
+      });
+    }
+
+    if (config.visibilityRange !== 0) {
+      effects.push({
+        icon: '👁️',
+        label: '视野范围',
+        value: config.visibilityRange,
+        positive: config.visibilityRange > 0
+      });
+    }
+
+    return effects;
+  }
+
+  /**
+   * @param {string} weatherType
+   * @returns {string}
+   */
+  function getWeatherHint(weatherType) {
+    const config = getWeatherConfig(weatherType);
+    const hints = [];
+
+    if (config.moveCostModifier > 0) {
+      hints.push('移动消耗增加');
+    } else if (config.moveCostModifier < 0) {
+      hints.push('移动消耗减少');
+    }
+
+    if (config.attackRangeModifier > 0) {
+      hints.push('攻击射程增加');
+    } else if (config.attackRangeModifier < 0) {
+      hints.push('攻击射程减少');
+    }
+
+    if (config.hitChanceModifier > 0) {
+      hints.push('命中概率提升');
+    } else if (config.hitChanceModifier < 0) {
+      hints.push('命中概率降低');
+    }
+
+    if (config.visibilityRange > 0) {
+      hints.push('视野范围扩大');
+    } else if (config.visibilityRange < 0) {
+      hints.push('视野范围缩小');
+    }
+
+    if (hints.length === 0) {
+      return '战斗条件正常';
+    }
+
+    return hints.join('，');
   }
 
   /**
@@ -1186,6 +1285,30 @@
         <span class="replay-mode-tag">🎬 回放模式</span>
       {/if}
     </div>
+
+    <div class="weather-panel" class:weather-changed={weatherJustChanged} style="border-color: {weatherColor}">
+      <div class="weather-icon" style="color: {weatherColor}">{weatherIcon}</div>
+      <div class="weather-info">
+        <div class="weather-name-row">
+          <span class="weather-name" style="color: {weatherColor}">{weatherName}</span>
+          <span class="weather-duration">剩余 {weatherDuration} 回合</span>
+        </div>
+        <div class="weather-description">{weatherConfig?.description || ''}</div>
+        {#if weatherEffects.length > 0}
+          <div class="weather-effects">
+            {#each weatherEffects as effect (effect.label)}
+              <span class="weather-effect" class:positive={effect.positive} class:negative={!effect.positive}>
+                {effect.icon} {effect.label} {effect.value > 0 ? '+' : ''}{effect.value}
+              </span>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      {#if weatherJustChanged}
+        <div class="weather-change-indicator">⚠️ 天气变化</div>
+      {/if}
+    </div>
+
     <div class="faction-info">
       <span
         class="current-faction"
@@ -1268,6 +1391,15 @@
           {getCardNameById(cd.cardId)} ({cd.remainingCooldown})
         </span>
       {/each}
+    </div>
+  {/if}
+
+  {#if currentWeather !== WEATHER_TYPES.SUNNY}
+    <div class="weather-hint-bar" style="background-color: {weatherColor}20; border-left-color: {weatherColor}">
+      <span class="weather-hint-icon">{weatherIcon}</span>
+      <span class="weather-hint-text">
+        <strong>{weatherName}：</strong>{weatherHint}
+      </span>
     </div>
   {/if}
 
@@ -2805,6 +2937,121 @@
   .top-bar-deploy {
     opacity: 0.6;
     pointer-events: none;
+  }
+
+  .weather-panel {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid;
+    border-radius: 8px;
+    position: relative;
+    transition: all 0.3s ease;
+  }
+
+  .weather-panel.weather-changed {
+    animation: weatherPulse 1.5s ease-in-out;
+  }
+
+  @keyframes weatherPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+    50% { box-shadow: 0 0 20px 5px rgba(255, 255, 255, 0.3); }
+  }
+
+  .weather-icon {
+    font-size: 36px;
+    line-height: 1;
+  }
+
+  .weather-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .weather-name-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .weather-name {
+    font-size: 16px;
+    font-weight: bold;
+  }
+
+  .weather-duration {
+    font-size: 12px;
+    color: #888;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .weather-description {
+    font-size: 12px;
+    color: #aaa;
+  }
+
+  .weather-effects {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+
+  .weather-effect {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.3);
+  }
+
+  .weather-effect.positive {
+    color: #4ade80;
+  }
+
+  .weather-effect.negative {
+    color: #f87171;
+  }
+
+  .weather-change-indicator {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: #f59e0b;
+    color: white;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: bold;
+    animation: bounce 0.6s ease-in-out infinite;
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+
+  .weather-hint-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    border-left: 4px solid;
+    margin: 5px 20px 0;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+
+  .weather-hint-icon {
+    font-size: 20px;
+  }
+
+  .weather-hint-text {
+    color: #ddd;
   }
 
   .turn-info {
