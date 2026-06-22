@@ -307,14 +307,21 @@ export function getMoveSkillForUnit(unit, unitType) {
  * @param {string[][] | null} [boardLayout]
  * @param {string} [moveSkill]
  * @param {number} [pathStep]
+ * @param {string} [weatherType='sunny']
  * @returns {number}
  */
-export function getEffectiveMoveCostWithSkill(x, y, tileEffects, boardLayout, moveSkill, pathStep) {
+export function getEffectiveMoveCostWithSkill(x, y, tileEffects, boardLayout, moveSkill, pathStep, weatherType = 'sunny') {
+  const terrain = getTerrain(x, y, boardLayout);
+  const terrainType = terrain?.type || 'plain';
   let cost = getEffectiveMoveCost(x, y, tileEffects, boardLayout);
-  if (!moveSkill) return cost;
+
+  const weatherMoveMod = getWeatherMoveCostModifier(weatherType, terrainType);
+  cost += weatherMoveMod;
+
+  if (!moveSkill) return Math.max(1, cost);
 
   const skillInfo = MOVE_SKILL_INFO[moveSkill];
-  if (!skillInfo) return cost;
+  if (!skillInfo) return Math.max(1, cost);
 
   if (moveSkill === MOVE_SKILL_TYPES.CHARGE) {
     if (pathStep === 0 && skillInfo.firstTileExtraCost) {
@@ -334,7 +341,7 @@ export function getEffectiveMoveCostWithSkill(x, y, tileEffects, boardLayout, mo
     }
   }
 
-  return cost;
+  return Math.max(1, cost);
 }
 
 /**
@@ -500,9 +507,10 @@ export function isPassable(x, y, boardLayout) {
  * @param {Unit[]} units
  * @param {string[][] | null} [boardLayout]
  * @param {Record<string, TileEffect> | null} [tileEffects]
+ * @param {string} [weatherType='sunny']
  * @returns {MoveTile[]}
  */
-export function getMoveRange(unit, units, boardLayout, tileEffects) {
+export function getMoveRange(unit, units, boardLayout, tileEffects, weatherType = 'sunny') {
   const moveRange = getEffectiveMoveRange(unit, /** @type {UnitType} */ (unit.type));
   const moveSkill = getMoveSkillForUnit(unit, /** @type {UnitType} */ (unit.type));
   const isCharge = moveSkill === MOVE_SKILL_TYPES.CHARGE;
@@ -531,7 +539,7 @@ export function getMoveRange(unit, units, boardLayout, tileEffects) {
     for (const neighbor of neighbors) {
       if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
 
-      const newCost = current.cost + getEffectiveMoveCostWithSkill(neighbor.x, neighbor.y, tileEffects || null, boardLayout, moveSkill, current.step);
+      const newCost = current.cost + getEffectiveMoveCostWithSkill(neighbor.x, neighbor.y, tileEffects || null, boardLayout, moveSkill, current.step, weatherType);
 
       if (newCost > moveRange) continue;
 
@@ -568,17 +576,11 @@ export function getMoveRange(unit, units, boardLayout, tileEffects) {
 /**
  * @param {Unit} unit
  * @param {Unit[]} units
+ * @param {string} [weatherType='sunny']
  * @returns {AttackTile[]}
  */
-export function getAttackRange(unit, units) {
-  const config = unitConfig[/** @type {UnitType} */ (unit.type)];
-  let attackRange = config.attackRange;
-
-  if (unit.specialization) {
-    const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
-    /** @type {any} */ const bonuses = spec?.bonuses;
-    if (bonuses?.attackRange) attackRange += bonuses.attackRange;
-  }
+export function getAttackRange(unit, units, weatherType = 'sunny') {
+  let attackRange = getEffectiveAttackRangeWithWeather(weatherType, unit, /** @type {UnitType} */ (unit.type));
 
   /** @type {AttackTile[]} */
   const result = [];
@@ -608,17 +610,11 @@ export function getAttackRange(unit, units) {
 
 /**
  * @param {Unit} unit
+ * @param {string} [weatherType='sunny']
  * @returns {{x: number, y: number}[]}
  */
-export function getAttackRangeTiles(unit) {
-  const config = unitConfig[/** @type {UnitType} */ (unit.type)];
-  let attackRange = config.attackRange;
-
-  if (unit.specialization) {
-    const spec = SPECIALIZATION_CONFIG[unit.type]?.find(s => s.id === unit.specialization);
-    /** @type {any} */ const bonuses = spec?.bonuses;
-    if (bonuses?.attackRange) attackRange += bonuses.attackRange;
-  }
+export function getAttackRangeTiles(unit, weatherType = 'sunny') {
+  let attackRange = getEffectiveAttackRangeWithWeather(weatherType, unit, /** @type {UnitType} */ (unit.type));
 
   /** @type {{x: number, y: number}[]} */
   const result = [];
@@ -932,9 +928,10 @@ export function getCounterTypeForDefender(attacker, defender) {
  * @param {TerrainInfo | null} attackerTerrain
  * @param {boolean} defenderWillDie
  * @param {boolean} [isPreview=false] - 是否为预览模式（预览模式下状态效果按配置概率展示，不做随机）
+ * @param {string} [weatherType='sunny']
  * @returns {CounterAttackResult}
  */
-export function resolveCounterAttack(attacker, defender, attackerTerrain, defenderWillDie, isPreview = false) {
+export function resolveCounterAttack(attacker, defender, attackerTerrain, defenderWillDie, isPreview = false, weatherType = 'sunny') {
   const rawCounterType = getCounterTypeForDefender(attacker, defender);
   const counterType = normalizeCounterType(rawCounterType);
   const typeInfo = getCounterTypeInfo(counterType);
@@ -956,8 +953,9 @@ export function resolveCounterAttack(attacker, defender, attackerTerrain, defend
 
   const damageRatio = typeRules.damageRatio;
 
-  const fullCounterDamage = calculateDamage(defender, attacker, attackerTerrain);
-  let counterDamage = Math.max(1, Math.floor(fullCounterDamage * damageRatio));
+  const rawCounterDamage = calculateDamage(defender, attacker, attackerTerrain);
+  const weatherAdjusted = getWeatherAdjustedAttack(weatherType, rawCounterDamage);
+  let counterDamage = Math.max(1, Math.floor(weatherAdjusted.damage * damageRatio));
 
   const attackerHasShield = attacker.buffs?.some(b => b.type === 'shield');
   let counterShieldBlocked = false;
@@ -1358,9 +1356,10 @@ export function calculateDamage(attacker, defender, terrain) {
  * @param {Unit} unit
  * @param {string[][] | null} [boardLayout]
  * @param {Record<string, TileEffect> | null} [tileEffects]
+ * @param {string} [weatherType='sunny']
  * @returns {PathResult | null}
  */
-export function findPath(start, end, units, unit, boardLayout, tileEffects) {
+export function findPath(start, end, units, unit, boardLayout, tileEffects, weatherType = 'sunny') {
   const moveRange = getEffectiveMoveRange(unit, /** @type {UnitType} */ (unit.type));
   const moveSkill = getMoveSkillForUnit(unit, /** @type {UnitType} */ (unit.type));
   const isCharge = moveSkill === MOVE_SKILL_TYPES.CHARGE;
@@ -1428,7 +1427,7 @@ export function findPath(start, end, units, unit, boardLayout, tileEffects) {
     for (const neighbor of neighbors) {
       if (!isPassable(neighbor.x, neighbor.y, boardLayout)) continue;
 
-      const tentativeG = (gScore.get(currentKey) ?? Infinity) + getEffectiveMoveCostWithSkill(neighbor.x, neighbor.y, tileEffects || null, boardLayout, moveSkill, currentStep);
+      const tentativeG = (gScore.get(currentKey) ?? Infinity) + getEffectiveMoveCostWithSkill(neighbor.x, neighbor.y, tileEffects || null, boardLayout, moveSkill, currentStep, weatherType);
 
       if (tentativeG > moveRange) continue;
 
@@ -1493,6 +1492,8 @@ function heuristic(a, b) {
  * @property {boolean} counterStatusApplied
  * @property {string | null} counterStatusType
  * @property {number} counterStatusDuration
+ * @property {number} hitChance
+ * @property {CombatPreviewModifier[]} weatherModifiers
  */
 
 /**
@@ -1500,17 +1501,22 @@ function heuristic(a, b) {
  * @param {Unit} defender
  * @param {TerrainInfo | null} [defenderTerrain]
  * @param {TerrainInfo | null} [attackerTerrain]
+ * @param {string} [weatherType='sunny']
  * @returns {CombatPreview}
  */
-export function calculateCombatPreview(attacker, defender, defenderTerrain, attackerTerrain) {
+export function calculateCombatPreview(attacker, defender, defenderTerrain, attackerTerrain, weatherType = 'sunny') {
   const rawDamage = calculateDamage(attacker, defender, defenderTerrain);
   const hasShield = defender.buffs?.some(b => b.type === 'shield');
   const shieldBlocked = !!hasShield;
-  const estimatedDamage = shieldBlocked ? 0 : rawDamage;
+
+  const weatherAdjusted = getWeatherAdjustedAttack(weatherType, rawDamage);
+  const estimatedDamage = shieldBlocked ? 0 : weatherAdjusted.damage;
+  const hitChance = weatherAdjusted.hitChance;
+
   const willKill = !shieldBlocked && defender.currentHp - estimatedDamage <= 0;
   const defenderRemainingHp = shieldBlocked ? defender.currentHp : Math.max(0, defender.currentHp - estimatedDamage);
 
-  const counterResult = resolveCounterAttack(attacker, defender, attackerTerrain || null, willKill, true);
+  const counterResult = resolveCounterAttack(attacker, defender, attackerTerrain || null, willKill, true, weatherType);
   const counterType = normalizeCounterType(counterResult.counterType);
   const counterTypeInfo = getCounterTypeInfo(counterType);
   const counterTypeRules = getCounterTypeRules(counterType);
@@ -1594,6 +1600,43 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
       label: '护盾抵消',
       value: '伤害归零',
       color: '#3498db'
+    });
+  }
+
+  /** @type {CombatPreviewModifier[]} */
+  const weatherModifiers = [];
+  const weatherConfig = getWeatherConfig(weatherType);
+  const weatherName = weatherConfig.name;
+  const weatherIcon = weatherConfig.icon;
+  const weatherColor = weatherConfig.color;
+
+  const weatherHitMod = getWeatherHitChanceModifier(weatherType);
+  if (weatherHitMod !== 0) {
+    const isPositive = weatherHitMod > 0;
+    weatherModifiers.push({
+      label: `${weatherIcon}${weatherName}·命中`,
+      value: `${isPositive ? '+' : ''}${Math.round(weatherHitMod * 100)}%`,
+      color: isPositive ? '#4caf50' : '#ef5350'
+    });
+  }
+
+  const weatherRangeMod = getWeatherAttackRangeModifier(weatherType);
+  if (weatherRangeMod !== 0) {
+    const isPositive = weatherRangeMod > 0;
+    weatherModifiers.push({
+      label: `${weatherIcon}${weatherName}·射程`,
+      value: `${isPositive ? '+' : ''}${weatherRangeMod}`,
+      color: isPositive ? '#4caf50' : '#ef5350'
+    });
+  }
+
+  const weatherMoveMod = getWeatherMoveCostModifier(weatherType, 'plain');
+  if (weatherMoveMod !== 0) {
+    const isPositive = weatherMoveMod < 0;
+    weatherModifiers.push({
+      label: `${weatherIcon}${weatherName}·移动`,
+      value: `${isPositive ? '' : '+'}${weatherMoveMod}`,
+      color: isPositive ? '#4caf50' : '#ef5350'
     });
   }
 
@@ -1688,7 +1731,9 @@ export function calculateCombatPreview(attacker, defender, defenderTerrain, atta
     counterTypeIcon: counterTypeInfo.icon,
     counterStatusApplied,
     counterStatusType,
-    counterStatusDuration
+    counterStatusDuration,
+    hitChance,
+    weatherModifiers
   };
 }
 

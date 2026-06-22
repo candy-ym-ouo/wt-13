@@ -1142,9 +1142,10 @@ function createGameState() {
       const atkTerrain = attacker ? getTerrain(attacker.x, attacker.y, layout) : null;
       const defTerrain = defender ? getTerrain(defender.x, defender.y, layout) : null;
 
+      const weatherType = state.weather?.currentWeather || 'sunny';
       const defenderWillDie = !hasShield && defender && defender.currentHp - finalDamage <= 0;
       const rawCounterResult = (attacker && defender)
-        ? resolveCounterAttack(attacker, defender, atkTerrain, !!defenderWillDie)
+        ? resolveCounterAttack(attacker, defender, atkTerrain, !!defenderWillDie, false, weatherType)
         : null;
       const counterResult = rawCounterResult || {
         counterType: COUNTER_TYPES.NONE,

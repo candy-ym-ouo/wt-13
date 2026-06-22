@@ -38,8 +38,10 @@
   getDeploymentZoneTiles,
   getValidDeploymentPositions,
   calculateFactionVision,
-  getSightRange
+  getSightRange,
+  getWeatherAdjustedAttack
 } from '$lib/utils/gameLogic';
+import { getWeatherName } from '$lib/config/weatherConfig.js';
   import { canUseCard, applyCardEffect, canAffordCard, canUseSummonCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
 
@@ -1263,7 +1265,8 @@
     const ccLocked = isHardCC(selectedUnitData);
 
     if (!selectedUnitData.hasMoved && !ccLocked) {
-      const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
+      const weatherType = state.weather?.currentWeather || 'sunny';
+      const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects, weatherType);
       const selMoveSkill = getMoveSkillForUnit(selectedUnitData, /** @type {UnitType} */ (selectedUnitData.type));
       const selSkillInfo = MOVE_SKILL_INFO[selMoveSkill];
       const moveHighlightColor = selMoveSkill === MOVE_SKILL_TYPES.CHARGE ? 0xff9900
@@ -1422,7 +1425,8 @@
     }
 
     if (!selectedUnitData.hasAttacked && !ccLocked && !hasAttackedTwice) {
-      const attackRange = getAttackRange(selectedUnitData, state.units);
+      const weatherType = state.weather?.currentWeather || 'sunny';
+      const attackRange = getAttackRange(selectedUnitData, state.units, weatherType);
       for (const tile of attackRange) {
         const counterInfo = getCounterInfo(selectedUnitData.type, tile.target.type);
         let fillColor = 0xff0000;
@@ -1484,11 +1488,13 @@
 
         const defTerrain = getTerrain(tile.target.x, tile.target.y, layout);
         const atkTerrain = getTerrain(selectedUnitData.x, selectedUnitData.y, layout);
+        const weatherType = state.weather?.currentWeather || 'sunny';
         const preview = calculateCombatPreview(
           selectedUnitData,
           tile.target,
           defTerrain || undefined,
-          atkTerrain || undefined
+          atkTerrain || undefined,
+          weatherType
         );
         const counterType = normalizeCounterType(preview.counterType);
         const counterTypeInfo = getCounterTypeInfo(counterType);
@@ -1576,13 +1582,15 @@
     if (!selectedUnitData || !state) return;
 
     const layout = state.boardLayout || boardConfig.layout;
+    const weatherType = state.weather?.currentWeather || 'sunny';
     const result = findPath(
       { x: selectedUnitData.x, y: selectedUnitData.y },
       { x: targetX, y: targetY },
       state.units,
       selectedUnitData,
       layout,
-      state.tileEffects
+      state.tileEffects,
+      weatherType
     );
 
     if (!result) return;
@@ -1618,8 +1626,9 @@
     if (selectedUnitData && !selectedUnitData.hasMoved && state && !state.gameOver) {
       const layout = state.boardLayout || boardConfig.layout;
       const ccLocked = isHardCC(selectedUnitData);
+      const weatherType = state.weather?.currentWeather || 'sunny';
       if (!ccLocked) {
-        const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
+        const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects, weatherType);
         const inRange = moveRange.some(
           /** @param {any} t */
           t => t.x === tx && t.y === ty
@@ -1632,6 +1641,7 @@
 
     if (selectedUnitData && !selectedUnitData.hasAttacked && state && !state.gameOver) {
       const ccLocked = isHardCC(selectedUnitData);
+      const weatherType = state.weather?.currentWeather || 'sunny';
       const hasDoubleAttack = selectedUnitData.buffs?.some(
         /** @param {any} b */
         b => b.type === 'doubleAttack'
@@ -1639,7 +1649,7 @@
       const hasAttackedTwice = !!hasDoubleAttack && (selectedUnitData.attackCount || 0) >= 2;
 
       if (!ccLocked && !hasAttackedTwice) {
-        const attackRange = getAttackRange(selectedUnitData, state.units);
+        const attackRange = getAttackRange(selectedUnitData, state.units, weatherType);
         const targetTile = attackRange.find(
           /** @param {any} t */
           t => t.x === tx && t.y === ty
@@ -1727,10 +1737,11 @@
       );
       const hasAttackedTwice = !!hasDoubleAttack && (selectedUnitData.attackCount || 0) >= 2;
       const ccLocked = isHardCC(selectedUnitData);
+      const weatherType = state.weather?.currentWeather || 'sunny';
 
       if (clickedUnit && clickedUnit.faction !== state.currentFaction) {
         if (!selectedUnitData.hasAttacked && !ccLocked && !hasAttackedTwice) {
-          const attackRange = getAttackRange(selectedUnitData, state.units);
+          const attackRange = getAttackRange(selectedUnitData, state.units, weatherType);
           const canAttack = attackRange.some(
             /** @param {any} t */
             t => t.x === tx && t.y === ty
@@ -1760,7 +1771,7 @@
 
       if (!clickedUnit && !selectedUnitData.hasMoved && !ccLocked) {
         const layout = state.boardLayout || boardConfig.layout;
-        const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects);
+        const moveRange = getMoveRange(selectedUnitData, state.units, layout, state.tileEffects, weatherType);
         const canMove = moveRange.some(
           /** @param {any} t */
           t => t.x === tx && t.y === ty
@@ -2060,6 +2071,7 @@
     const layout = state.boardLayout || boardConfig.layout;
     const terrain = getTerrain(tx, ty, layout);
     const unitName = unitConfig[/** @type {UnitType} */ (unit.type)].name;
+    const weatherType = state.weather?.currentWeather || 'sunny';
 
     const pathResult = findPath(
       { x: unit.x, y: unit.y },
@@ -2067,7 +2079,8 @@
       state.units,
       unit,
       layout,
-      state.tileEffects
+      state.tileEffects,
+      weatherType
     );
     const pathTiles = pathResult ? pathResult.path : [];
     gameState.moveUnit(unit.id, tx, ty, pathTiles);
@@ -2107,7 +2120,17 @@
     const layout = state.boardLayout || boardConfig.layout;
     const defTerrain = getTerrain(defender.x, defender.y, layout);
     const atkTerrain = getTerrain(attacker.x, attacker.y, layout);
-    const damage = calculateDamage(attacker, defender, defTerrain || undefined);
+    const weatherType = state.weather?.currentWeather || 'sunny';
+    const rawDamage = calculateDamage(attacker, defender, defTerrain || undefined);
+    const weatherAdjusted = getWeatherAdjustedAttack(weatherType, rawDamage);
+    const damage = weatherAdjusted.damage;
+    const hitChance = weatherAdjusted.hitChance;
+
+    if (Math.random() > hitChance) {
+      gameState.setMessage(`【${weatherType === 'sunny' ? '晴天' : getWeatherName(weatherType)}】攻击未命中！命中概率 ${Math.round(hitChance * 100)}%`);
+      gameState.attack(attacker.id, defender.id, 0);
+      return;
+    }
 
     const attackerName = unitConfig[/** @type {UnitType} */ (attacker.type)].name;
     const defenderName = unitConfig[/** @type {UnitType} */ (defender.type)].name;
@@ -2124,7 +2147,7 @@
     const killOccurred = defender.currentHp - damage <= 0;
     const newStreak = killOccurred ? (attacker.winStreak || 0) + 1 : 0;
 
-    const preview = calculateCombatPreview(attacker, defender, defTerrain || undefined, atkTerrain || undefined);
+    const preview = calculateCombatPreview(attacker, defender, defTerrain || undefined, atkTerrain || undefined, weatherType);
     const willCounter = preview.willCounter;
     const counterType = normalizeCounterType(preview.counterType);
     const counterTypeInfo = getCounterTypeInfo(counterType);
