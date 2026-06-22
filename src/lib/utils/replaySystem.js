@@ -36,47 +36,12 @@ export function createReplayRecorder() {
 
   /**
    * @param {GameState} state
-   * @param {boolean} [isKeyFrame=false]
    * @returns {object}
    */
-  function createStateSnapshot(state, isKeyFrame = false) {
+  function createStateSnapshot(state) {
     if (!state) return {};
     
-    if (isKeyFrame) {
-      return {
-        units: JSON.parse(JSON.stringify(state.units || [])),
-        currentFaction: state.currentFaction,
-        turn: state.turn,
-        gamePhase: state.gamePhase,
-        gameOver: state.gameOver,
-        winner: state.winner,
-        bases: JSON.parse(JSON.stringify(state.bases || [])),
-        hands: {
-          red: (state.hands?.red || []).map(c => ({ id: c.id, name: c.name, cost: c.cost })),
-          blue: (state.hands?.blue || []).map(c => ({ id: c.id, name: c.name, cost: c.cost }))
-        },
-        energy: { ...state.energy },
-        gold: { ...state.gold },
-        tileEffects: JSON.parse(JSON.stringify(state.tileEffects || {})),
-        capturePoints: JSON.parse(JSON.stringify(state.capturePoints || [])),
-        killCounts: { ...state.killCounts },
-        selectedUnitId: state.selectedUnitId
-      };
-    }
-    
-    return {
-      units: JSON.parse(JSON.stringify(state.units || [])),
-      currentFaction: state.currentFaction,
-      turn: state.turn,
-      gamePhase: state.gamePhase,
-      gameOver: state.gameOver,
-      winner: state.winner,
-      bases: JSON.parse(JSON.stringify(state.bases || [])),
-      energy: { ...state.energy },
-      gold: { ...state.gold },
-      killCounts: { ...state.killCounts },
-      selectedUnitId: state.selectedUnitId
-    };
+    return JSON.parse(JSON.stringify(state));
   }
 
   return {
@@ -101,7 +66,7 @@ export function createReplayRecorder() {
           faction: initialState.currentFaction || 'red',
           type: 'deployment',
           description: '游戏开始',
-          stateSnapshot: createStateSnapshot(initialState, true),
+          stateSnapshot: createStateSnapshot(initialState),
           timestamp: Date.now()
         });
         frameIndex = 1;
@@ -117,8 +82,7 @@ export function createReplayRecorder() {
     recordFrame(type, description, state, actionDetails) {
       if (!isRecording) return;
 
-      const isKeyFrame = frameIndex % KEYFRAME_EVERY_N_FRAMES === 0;
-      const snapshot = createStateSnapshot(state, isKeyFrame);
+      const snapshot = createStateSnapshot(state);
 
       /** @type {ReplayFrame} */
       const frame = {

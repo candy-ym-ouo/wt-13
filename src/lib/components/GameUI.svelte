@@ -87,6 +87,9 @@
   /** @type {GameRecord[]} */
   let records = [];
   let isDeploying = false;
+  let isReplayMode = false;
+  /** @type {(() => void) | undefined} */
+  let unsubscribeReplayMode;
 
   /** @type {(() => void) | undefined} */
   let unsubscribe;
@@ -366,6 +369,9 @@
     unsubscribeDeploy = isDeploymentPhase.subscribe(/** @param {boolean} d */ d => {
       isDeploying = d;
     });
+    unsubscribeReplayMode = gameState.isReplayMode.subscribe(/** @param {boolean} r */ r => {
+      isReplayMode = r;
+    });
     records = /** @type {GameRecord[]} */ (getGameRecords());
 
     if (hasAutoSave()) {
@@ -401,6 +407,7 @@
     if (unsubscribePityCounter) unsubscribePityCounter();
     if (unsubscribePreview) unsubscribePreview();
     if (unsubscribeDeploy) unsubscribeDeploy();
+    if (unsubscribeReplayMode) unsubscribeReplayMode();
   });
 
   function initHands() {
@@ -1129,6 +1136,9 @@
       <span class="turn-number">{state?.turn || 1}</span>
       {#if (state?.revealTurns ?? 0) > 0}
         <span class="reveal-tag">👁️ 侦查中</span>
+      {/if}
+      {#if isReplayMode}
+        <span class="replay-mode-tag">🎬 回放模式</span>
       {/if}
     </div>
     <div class="faction-info">
@@ -2750,6 +2760,21 @@
     border-radius: 12px;
     font-size: 12px;
     font-weight: bold;
+  }
+
+  .replay-mode-tag {
+    background: linear-gradient(135deg, #e74c3c, #c0392b);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: bold;
+    animation: pulse 1.5s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
   }
 
   .faction-info {

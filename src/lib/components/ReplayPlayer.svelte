@@ -7,6 +7,7 @@
     isReplayPlaying,
     replayProgress
   } from '$lib/stores/replayStore';
+  import { gameState } from '$lib/stores/gameStore';
   import { formatDate } from '$lib/utils/storage';
 
   /**
@@ -56,6 +57,8 @@
   let unsubProgress;
   /** @type {(() => void) | undefined} */
   let unsubList;
+  /** @type {(() => void) | undefined} */
+  let unsubReplayState;
 
   const FRAME_TYPE_LABELS = {
     move: { icon: '🚶', name: '移动', color: '#3498db' },
@@ -94,6 +97,12 @@
       replays = r;
     });
 
+    unsubReplayState = currentReplayState.subscribe(s => {
+      if (s && s.units) {
+        gameState.setReplayState(/** @type {any} */ (s));
+      }
+    });
+
     replayStore.list.refresh();
   });
 
@@ -103,6 +112,8 @@
     if (unsubPlaying) unsubPlaying();
     if (unsubProgress) unsubProgress();
     if (unsubList) unsubList();
+    if (unsubReplayState) unsubReplayState();
+    gameState.exitReplayMode();
     replayStore.player.unloadReplay();
   });
 
@@ -110,6 +121,7 @@
    * @param {ReplayData} replay
    */
   function handleLoadReplay(replay) {
+    gameState.enterReplayMode();
     replayStore.player.loadReplay(replay);
     showReplayList = false;
   }
@@ -165,6 +177,7 @@
   }
 
   function handleBackToList() {
+    gameState.exitReplayMode();
     replayStore.player.unloadReplay();
     showReplayList = true;
   }

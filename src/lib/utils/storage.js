@@ -155,7 +155,7 @@ export function formatDate(isoString) {
 }
 
 const REPLAY_STORAGE_KEY = 'tactical_board_game_replays';
-const MAX_REPLAYS = 20;
+const MAX_REPLAYS = 10;
 
 /**
  * @typedef {object} ReplayFrame

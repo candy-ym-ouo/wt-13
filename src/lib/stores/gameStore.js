@@ -444,9 +444,16 @@ function createInitialState() {
 }
 
 function createGameState() {
-  const { subscribe, set, update } = writable(createInitialState());
+  const internal = writable(createInitialState());
+  const { subscribe: internalSubscribe, set: internalSet, update: internalUpdate } = internal;
+
+  /** @type {import('svelte/store').Writable<GameState | null>} */
+  const replayState = writable(null);
+  /** @type {import('svelte/store').Writable<boolean>} */
+  const isReplayMode = writable(false);
 
   let autoSaveEnabled = false;
+  let _isReplayMode = false;
 
   function enableAutoSave() {
     autoSaveEnabled = true;
@@ -457,11 +464,51 @@ function createGameState() {
     cancelPendingAutoSave();
   }
 
-  subscribe(state => {
-    if (autoSaveEnabled && state && !state.gameOver) {
+  internalSubscribe(state => {
+    if (autoSaveEnabled && state && !state.gameOver && !_isReplayMode) {
       debouncedAutoSave(state);
     }
   });
+
+  function subscribe(run, invalidate) {
+    let currentReplayState = null;
+    let currentRealState = null;
+
+    const updateSubscriber = () => {
+      if (_isReplayMode && currentReplayState) {
+        run(currentReplayState);
+      } else if (currentRealState) {
+        run(currentRealState);
+      }
+    };
+
+    const unsubReplay = replayState.subscribe(s => {
+      currentReplayState = s;
+      if (_isReplayMode) updateSubscriber();
+    });
+
+    const unsubInternal = internalSubscribe(s => {
+      currentRealState = s;
+      if (!_isReplayMode) updateSubscriber();
+    });
+
+    updateSubscriber();
+
+    return () => {
+      unsubReplay();
+      unsubInternal();
+    };
+  }
+
+  function set(value) {
+    if (_isReplayMode) return;
+    internalSet(value);
+  }
+
+  function update(updater) {
+    if (_isReplayMode) return;
+    internalUpdate(updater);
+  }
 
   /**
    * @param {{ type: ActionLogType; description: string; details?: object; factionOverride?: string; unitId?: string }} logData
@@ -531,6 +578,25 @@ function createGameState() {
     enableAutoSave,
     disableAutoSave,
     addActionLog,
+    enterReplayMode: () => {
+      _isReplayMode = true;
+      isReplayMode.set(true);
+      cancelPendingAutoSave();
+    },
+    exitReplayMode: () => {
+      _isReplayMode = false;
+      isReplayMode.set(false);
+      replayState.set(null);
+    },
+    /**
+     * @param {GameState} state
+     */
+    setReplayState: (state) => {
+      replayState.set(state);
+    },
+    isReplayMode: {
+      subscribe: isReplayMode.subscribe
+    },
     /**
      * @param {string | null} unitId
      */
