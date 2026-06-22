@@ -21,6 +21,9 @@
   import AchievementToast from './AchievementToast.svelte';
   import AchievementPanel from './AchievementPanel.svelte';
   import TechTreePanel from './TechTreePanel.svelte';
+  import CardDeckPanel from './CardDeckPanel.svelte';
+  import { cardDeckStore } from '$lib/stores/cardDeckStore.js';
+  import { getCardsForDrawPool } from '$lib/utils/cardDeckSystem.js';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -177,6 +180,7 @@
   let showRoster = false;
   let rosterSaved = false;
   let showAchievementPanel = false;
+  let showCardDeck = false;
 
   /**
    * @param {Unit} unit
@@ -419,9 +423,13 @@
 
   function initHands() {
     const currentTurn = state?.turn || 1;
-    const unlockedCardIds = $legionStore.unlockedCards || [];
+    let unlockedCardIds = $legionStore.unlockedCards || [];
+    const activeDeck = $cardDeckStore.decks.find(d => d.id === $cardDeckStore.activeDeckId);
+    if (activeDeck && activeDeck.cardIds && activeDeck.cardIds.length > 0) {
+      unlockedCardIds = getCardsForDrawPool(activeDeck);
+    }
     const redHand = drawInitialHand(currentTurn, unlockedCardIds);
-    const blueHand = drawInitialHand(currentTurn, unlockedCardIds);
+    const blueHand = drawInitialHand(currentTurn, $legionStore.unlockedCards || []);
     for (const card of redHand) {
       gameState.addCard('red', card);
     }
@@ -514,8 +522,14 @@
     const nextTurn = nextFaction === 'red' ? state.turn + 1 : state.turn;
     const nextDrawHistory = state.drawHistory[nextFaction] || {};
     const nextPityCounter = state.pityCounter[nextFaction] || 0;
-    const unlockedCardIds = $legionStore.unlockedCards || [];
-    const newCard = drawCard(nextDrawHistory, nextPityCounter, nextTurn, unlockedCardIds);
+    let drawPool = $legionStore.unlockedCards || [];
+    if (nextFaction === 'red') {
+      const activeDeck = $cardDeckStore.decks.find(d => d.id === $cardDeckStore.activeDeckId);
+      if (activeDeck && activeDeck.cardIds && activeDeck.cardIds.length > 0) {
+        drawPool = getCardsForDrawPool(activeDeck);
+      }
+    }
+    const newCard = drawCard(nextDrawHistory, nextPityCounter, nextTurn, drawPool);
     gameState.addCard(nextFaction, newCard);
 
     const nextName = nextFaction === 'red' ? '红方' : '蓝方';
@@ -1227,6 +1241,9 @@
       </button>
       <button class="btn btn-secondary" on:click={() => window.location.href = '/legion'}>
         🏰 军团
+      </button>
+      <button class="btn btn-secondary" on:click={() => showCardDeck = true}>
+        🃏 卡组
       </button>
       <button class="btn btn-secondary" on:click={() => window.location.href = '/season'}>
         🏅 天梯
@@ -2740,6 +2757,16 @@
       <TechTreePanel on:close={() => showTechTree = false} />
     </div>
   {/if}
+  <CardDeckPanel
+    bind:show={showCardDeck}
+    mode={isDeploying ? 'battle' : 'manage'}
+    onDeckSelected={(result) => {
+      if (result && result.success) {
+        showCardDeck = false;
+      }
+    }}
+    onClose={() => { showCardDeck = false; }}
+  />
 </div>
 
 <style>
