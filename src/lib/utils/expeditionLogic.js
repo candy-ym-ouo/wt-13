@@ -68,7 +68,8 @@ export function resolveBattle(state, battleData, isBoss = false) {
 }
 
 function rollCard(minRarity = null) {
-  const rarities = minRarity 
+  const validRarities = Object.values(CARD_RARITY);
+  const rarities = minRarity && validRarities.includes(minRarity)
     ? [CARD_RARITY.LIMITED, CARD_RARITY.RARE]
     : [CARD_RARITY.LIMITED, CARD_RARITY.RARE, CARD_RARITY.BASIC];
   
@@ -76,7 +77,8 @@ function rollCard(minRarity = null) {
   for (const rarity of rarities) {
     const cards = eventCards.filter(c => c.rarity === rarity);
     const config = cardRarityConfig[rarity];
-    for (let i = 0; i < config.baseWeight; i++) {
+    const weight = config?.baseWeight || 1;
+    for (let i = 0; i < weight; i++) {
       pool.push(...cards);
     }
   }
@@ -85,7 +87,14 @@ function rollCard(minRarity = null) {
     pool = eventCards.filter(c => c.rarity === CARD_RARITY.BASIC);
   }
   
-  return { ...pickRandom(pool), instanceId: generateId() };
+  if (pool.length === 0 && eventCards.length > 0) {
+    pool = eventCards;
+  }
+  
+  const picked = pickRandom(pool);
+  if (!picked) return null;
+  
+  return { ...picked, instanceId: generateId() };
 }
 
 export function applySupplyReward(state, supplyType) {
@@ -118,10 +127,16 @@ export function applySupplyReward(state, supplyType) {
     case SUPPLY_TYPES.CARD: {
       const cards = [];
       for (let i = 0; i < 3; i++) {
-        cards.push(rollCard());
+        const card = rollCard();
+        if (card) cards.push(card);
       }
-      result.message = `获得 3 张卡牌：${cards.map(c => c.name).join('、')}`;
-      result.changes = { cards: [...(state.cards || []), ...cards] };
+      const validCards = cards.filter(Boolean);
+      if (validCards.length > 0) {
+        result.message = `获得 ${validCards.length} 张卡牌：${validCards.map(c => c.name).join('、')}`;
+      } else {
+        result.message = '卡包是空的...';
+      }
+      result.changes = { cards: [...(state.cards || []), ...validCards] };
       break;
     }
     

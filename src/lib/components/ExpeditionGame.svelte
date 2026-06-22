@@ -29,6 +29,27 @@
 		}
 	}
 
+	function formatColor(colorValue) {
+		if (!colorValue) return '888888';
+		if (typeof colorValue === 'number') {
+			return colorValue.toString(16).padStart(6, '0');
+		}
+		if (typeof colorValue === 'string') {
+			return colorValue.replace('#', '');
+		}
+		return '888888';
+	}
+
+	function getUnitColor(unitType) {
+		const config = unitConfig[unitType];
+		return formatColor(config?.color);
+	}
+
+	function getUnitName(unitType) {
+		const config = unitConfig[unitType];
+		return config?.name || '未知';
+	}
+
 	function startExpedition(difficulty) {
 		$expeditionStore.startExpedition(difficulty);
 	}
@@ -98,28 +119,18 @@
 							<div class="layer-label">第 {layerIdx + 1} 层</div>
 							<div class="layer-nodes">
 								{#each layer as node}
-									{@const info = EXPEDITION_EVENT_INFO[node.eventType]}
 									<button 
 										class="map-node {node.visited ? 'visited' : ''} {node.available ? 'available' : ''} {selectedNodeId === node.id ? 'selected' : ''}"
-										style="--node-color: {info?.color || '#666'}"
+										style="--node-color: {EXPEDITION_EVENT_INFO[node.eventType]?.color || '#666'}"
 										on:click={() => handleNodeClick(node)}
 										disabled={!node.available || node.visited}
 									>
-										<span class="node-icon">{info?.icon || '❓'}</span>
-										<span class="node-name">{info?.name || '未知'}</span>
+										<span class="node-icon">{EXPEDITION_EVENT_INFO[node.eventType]?.icon || '❓'}</span>
+										<span class="node-name">{EXPEDITION_EVENT_INFO[node.eventType]?.name || '未知'}</span>
 										{#if node.visited}
 											<span class="check-mark">✓</span>
 										{/if}
 									</button>
-									
-									{#each node.connections as connId}
-										{@const connNode = layer[layerIdx + 1]?.find(n => n.id === connId)}
-										{#if connNode}
-											<svg class="connection-line" preserveAspectRatio="none">
-												<line x1="50%" y1="100%" x2="50%" y2="0%" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
-											</svg>
-										{/if}
-									{/each}
 								{/each}
 							</div>
 						</div>
@@ -131,9 +142,8 @@
 				<h3 class="panel-title">🎖️ 军团名册</h3>
 				<div class="roster-list">
 					{#each $expeditionStore.roster as unit}
-						{@const config = unitConfig[unit.type]}
-						<div class="roster-unit {unit.currentHp <= 0 ? 'dead' : ''}" style="--unit-color: #{config?.color?.toString(16) || '888'}">
-							<div class="unit-icon">{config?.name?.[0] || '?'}</div>
+						<div class="roster-unit {unit.currentHp <= 0 ? 'dead' : ''}" style="--unit-color: #{getUnitColor(unit.type)}">
+							<div class="unit-icon">{getUnitName(unit.type)[0] || '?'}</div>
 							<div class="unit-info">
 								<div class="unit-name">{unit.name} <span class="unit-level">Lv.{unit.level}</span></div>
 								<div class="hp-bar">
@@ -180,9 +190,8 @@
 						<h3>敌军编队</h3>
 						<div class="enemy-list">
 							{#each currentEventData?.enemies || [] as enemy}
-								{@const eConfig = unitConfig[enemy.type]}
-								<div class="enemy-card {enemy.isBoss ? 'boss' : ''}" style="--e-color: #{eConfig?.color?.toString(16) || '888'}">
-									<div class="enemy-type-icon">{eConfig?.name?.[0] || '?'}</div>
+								<div class="enemy-card {enemy.isBoss ? 'boss' : ''}" style="--e-color: #{getUnitColor(enemy.type)}">
+									<div class="enemy-type-icon">{getUnitName(enemy.type)[0] || '?'}</div>
 									<div class="enemy-info">
 										<div class="enemy-name">{enemy.name} {enemy.isBoss ? '👑' : ''}</div>
 										<div class="enemy-stats">
@@ -213,11 +222,10 @@
 					<h3>选择一份补给</h3>
 					<div class="supply-options">
 						{#each currentEventData?.options || [] as option}
-							{@const supplyInfo = SUPPLY_INFO[option.type]}
 							<button class="supply-card" on:click={() => $expeditionStore.selectSupply(option.type)}>
-								<div class="supply-icon">{supplyInfo?.icon || '🎁'}</div>
-								<h4>{supplyInfo?.name || option.type}</h4>
-								<p>{supplyInfo?.description || ''}</p>
+								<div class="supply-icon">{SUPPLY_INFO[option.type]?.icon || '🎁'}</div>
+								<h4>{SUPPLY_INFO[option.type]?.name || option.type}</h4>
+								<p>{SUPPLY_INFO[option.type]?.description || ''}</p>
 							</button>
 						{/each}
 					</div>
@@ -270,11 +278,10 @@
 					{/if}
 					<div class="shop-items">
 						{#each currentEventData?.availableItems || [] as item}
-							{@const price = Math.floor(item.price * ($expeditionStore.shopDiscount < 1 ? $expeditionStore.shopDiscount : (currentEventData?.discount || 1)))}
 							<button 
 								class="shop-item {item.purchased ? 'sold' : ''}" 
 								on:click={() => $expeditionStore.purchaseShopItem(item.id)}
-								disabled={item.purchased || $expeditionStore.gold < price}
+								disabled={item.purchased || $expeditionStore.gold < Math.floor(item.price * ($expeditionStore.shopDiscount < 1 ? $expeditionStore.shopDiscount : (currentEventData?.discount || 1)))}
 							>
 								<div class="item-type">{item.type === 'heal' ? '🧪' : item.type === 'buff' ? '📜' : item.type === 'card' ? '🃏' : '🎁'}</div>
 								<div class="item-name">
@@ -283,7 +290,7 @@
 									 item.type === 'card' ? '神秘卡牌' : '装备宝箱'}
 								</div>
 								<div class="item-price {item.purchased ? 'sold' : ''}">
-									{item.purchased ? '已售' : `💰 ${price}`}
+									{item.purchased ? '已售' : `💰 ${Math.floor(item.price * ($expeditionStore.shopDiscount < 1 ? $expeditionStore.shopDiscount : (currentEventData?.discount || 1)))}`}
 								</div>
 							</button>
 						{/each}

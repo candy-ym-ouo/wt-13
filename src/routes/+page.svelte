@@ -32,10 +32,6 @@
 		window.location.href = '/season';
 	}
 
-	function enterExpedition() {
-		window.location.href = '/expedition';
-	}
-
 	function goBackToMenu() {
 		viewMode = 'menu';
 	}
@@ -73,9 +69,6 @@
 				</button>
 				<button class="menu-btn multiplayer" on:click={enterMultiplayer}>
 					⚔️ 多人对战
-				</button>
-				<button class="menu-btn expedition" on:click={enterExpedition}>
-					🗺️ 随机远征
 				</button>
 				<button class="menu-btn secondary" on:click={enterLegion}>
 					🏰 军团养成
@@ -352,17 +345,6 @@
 	.menu-btn.multiplayer:hover {
 		transform: translateY(-3px);
 		box-shadow: 0 10px 30px rgba(155, 89, 182, 0.6);
-	}
-
-	.menu-btn.expedition {
-		background: linear-gradient(135deg, #1abc9c, #16a085);
-		color: white;
-		box-shadow: 0 6px 20px rgba(26, 188, 156, 0.4);
-	}
-
-	.menu-btn.expedition:hover {
-		transform: translateY(-3px);
-		box-shadow: 0 10px 30px rgba(26, 188, 156, 0.6);
 	}
 
 	.multiplayer-screen {

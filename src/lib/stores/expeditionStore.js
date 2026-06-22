@@ -24,6 +24,8 @@ import { unitConfig, initialUnits } from '$lib/config/unitConfig.js';
 import { gameRules } from '$lib/config/gameRules.js';
 import { eventCards as _eventCards, CARD_RARITY as _CARD_RARITY } from '$lib/config/eventCardConfig.js';
 import { generateLoot as _generateLoot, DROP_SOURCES as _DROP_SOURCES } from '$lib/utils/lootSystem.js';
+import { legionStore } from '$lib/stores/legionStore.js';
+import { addExpToUnit } from '$lib/utils/legionSystem.js';
 
 function generateId() {
   return 'exp_store_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -111,6 +113,68 @@ function createExpeditionStore() {
       ...state,
       logs: [newLog, ...state.logs].slice(0, 100)
     };
+  }
+
+  function syncRewardsToLegion(state) {
+    try {
+      const legion = get(legionStore);
+      if (!legion) return;
+
+      if (state.gold > 0) {
+        legionStore.addGold(state.gold);
+      }
+
+      if (state.equipment && state.equipment.length > 0) {
+        for (const item of state.equipment) {
+          legionStore.addEquipment({ ...item, id: generateId() });
+        }
+      }
+
+      if (state.cards && state.cards.length > 0) {
+        const cardIds = state.cards.map(c => c.id).filter(Boolean);
+        if (cardIds.length > 0) {
+          legionStore.unlockCards(cardIds);
+        }
+      }
+
+      if (state.roster && state.roster.length > 0 && legion.units && legion.units.length > 0) {
+        const typeMap = new Map();
+        for (const unit of state.roster) {
+          if (!typeMap.has(unit.type)) {
+            typeMap.set(unit.type, { totalExp: 0, maxLevel: 1, maxStatPoints: 0, bestExp: 0 });
+          }
+          const data = typeMap.get(unit.type);
+          data.totalExp += unit.exp || 0;
+          data.maxLevel = Math.max(data.maxLevel, unit.level || 1);
+          data.maxStatPoints = Math.max(data.maxStatPoints, unit.statPoints || 0);
+          data.bestExp = Math.max(data.bestExp, unit.exp || 0);
+        }
+
+        for (const [unitType, data] of typeMap.entries()) {
+          const matchingUnits = legion.units.filter(u => u.type === unitType);
+          if (matchingUnits.length > 0 && data.bestExp > 0) {
+            const sortedUnits = [...matchingUnits].sort((a, b) => (b.exp || 0) - (a.exp || 0));
+            const expPerUnit = Math.floor(data.bestExp / Math.min(3, sortedUnits.length));
+            const unitsToUpdate = sortedUnits.slice(0, 3);
+            for (const unit of unitsToUpdate) {
+              const result = addExpToUnit(unit, expPerUnit);
+              if (result.unit) {
+                const unitIndex = legion.units.findIndex(u => u.id === unit.id);
+                if (unitIndex !== -1) {
+                  const newUnits = [...legion.units];
+                  newUnits[unitIndex] = result.unit;
+                  legionStore.update(s => ({ ...s, units: newUnits }));
+                }
+              }
+            }
+          }
+        }
+      }
+
+      addLog(state, `✅ 远征奖励已同步到军团：${state.gold}金币，${state.equipment?.length || 0}装备，${state.cards?.length || 0}卡牌`, 'success');
+    } catch (error) {
+      console.error('同步远征奖励到军团失败:', error);
+    }
   }
 
   return {
@@ -217,6 +281,7 @@ function createExpeditionStore() {
           map: { ...state.map, success: true, completed: true }
         };
         newState = addLog(newState, '🏆 远征胜利！首领已被击败！', 'success');
+        syncRewardsToLegion(newState);
       }
 
       if (newRoster.length === 0) {
@@ -228,6 +293,7 @@ function createExpeditionStore() {
           map: { ...state.map, success: false, completed: true }
         };
         newState = addLog(newState, '💀 远征失败！全军覆没...', 'error');
+        syncRewardsToLegion(newState);
       }
 
       return newState;
@@ -282,6 +348,7 @@ function createExpeditionStore() {
             map: { ...state.map, success: false, completed: true }
           };
           newState = addLog(newState, '💀 远征失败！全军覆没...', 'error');
+          syncRewardsToLegion(newState);
         }
       }
 
@@ -409,13 +476,16 @@ function createExpeditionStore() {
       }
 
       if (availableNodes.length === 0 && !state.map.completed) {
-        return {
+        let newState = {
           ...state,
           phase: 'defeat',
           completed: true,
           finalScore: calculateExpeditionScore(state),
           map: { ...state.map, success: false, completed: true }
         };
+        newState = addLog(newState, '💀 远征失败！无路可走...', 'error');
+        syncRewardsToLegion(newState);
+        return newState;
       }
 
       return {
@@ -442,6 +512,7 @@ function createExpeditionStore() {
       };
 
       newState = addLog(newState, '远征已放弃', 'warning');
+      syncRewardsToLegion(newState);
 
       return newState;
     }),
