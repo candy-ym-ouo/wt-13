@@ -1,10 +1,11 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { boardConfig, tileEffectConfig } from '$lib/config/boardConfig';
 import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO, UNIT_COUNTER_TYPE } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
 import { shopItems, shopConfig } from '$lib/config/shopConfig';
 import { debouncedAutoSave, cancelPendingAutoSave } from '$lib/utils/storageSave';
+import { replayStore } from '$lib/stores/replayStore';
 import {
   tickActiveCards,
   tickCooldowns,
@@ -518,11 +519,13 @@ function createGameState() {
     reset: () => {
       disableAutoSave();
       cancelPendingAutoSave();
+      replayStore.recorder.reset();
       set(createInitialState());
     },
     loadFromSave: (/** @type {GameState} */ savedState) => {
       disableAutoSave();
       cancelPendingAutoSave();
+      replayStore.recorder.reset();
       set(savedState);
     },
     enableAutoSave,
@@ -784,7 +787,7 @@ function createGameState() {
         faction: startFaction,
         actions: [initLog]
       });
-      return {
+      const newState = {
         ...state,
         gamePhase: /** @type {GamePhase} */ ('idle'),
         turn: 1,
@@ -796,6 +799,8 @@ function createGameState() {
         turnDamageDealt: { red: 0, blue: 0 },
         turnCardsUsed: { red: 0, blue: 0 }
       };
+      replayStore.recorder.startRecording(newState);
+      return newState;
     }),
     /**
      * @param {string} msg
@@ -979,7 +984,7 @@ function createGameState() {
       );
       updatedMarkers[enemyFaction] = enemyMarkerUpdate.markers;
 
-      return {
+      const newState = {
         ...state,
         units: filteredUnits,
         selectedUnitId: unitId,
@@ -989,6 +994,8 @@ function createGameState() {
         lastActionLog: moveLog,
         enemyMarkers: updatedMarkers
       };
+      replayStore.recorder.recordFrame('move', moveDesc, newState, moveLog.details);
+      return newState;
     }),
     /**
      * @param {string} attackerId
@@ -1382,7 +1389,7 @@ function createGameState() {
         });
       }
 
-      return {
+      const newState = {
         ...state,
         units: updatedUnits,
         selectedUnitId: attackerId,
@@ -1399,6 +1406,8 @@ function createGameState() {
         killGoldEarnedThisTurn: newKillGold,
         economyNotifications: newEconNotifications.slice(-20)
       };
+      replayStore.recorder.recordFrame('attack', attackDesc, newState, attackLog.details);
+      return newState;
     }),
     endTurn: () => update(state => {
       /** @type {'red' | 'blue'} */
@@ -1943,7 +1952,7 @@ function createGameState() {
         }
       }
 
-      return {
+      const newState = {
         ...state,
         currentFaction: nextFaction,
         turn: newTurn,
@@ -1978,6 +1987,13 @@ function createGameState() {
         shopPurchaseCounts: resetShopCounts,
         economyNotifications: [...state.economyNotifications, ...econNotifications].slice(-30)
       };
+      replayStore.recorder.recordFrame('turn', turnEndDesc, newState, turnEndLog.details);
+      if (isGameOver) {
+        const victoryDesc = finalCondition || (finalWinner === 'draw' ? '平局' : `${finalWinner === 'red' ? '红方' : '蓝方'}胜利`);
+        replayStore.recorder.recordFrame('victory', victoryDesc, newState, { winner: finalWinner, condition: finalCondition });
+        replayStore.recorder.stopRecording(newState);
+      }
+      return newState;
     }),
     /**
      * @param {string} winner
@@ -2057,7 +2073,7 @@ function createGameState() {
         }
       }
 
-      return {
+      const newState = {
         ...state,
         units,
         gameOver: true,
@@ -2068,6 +2084,9 @@ function createGameState() {
         lastActionLog: victoryLog,
         scoreSettlement: isDraw ? calculateScoreSettlement(state.units, state.bases, state.killCounts) : state.scoreSettlement
       };
+      replayStore.recorder.recordFrame('victory', victoryDesc, newState, victoryLog.details);
+      replayStore.recorder.stopRecording(newState);
+      return newState;
     }),
     /**
      * @param {'red' | 'blue'} faction
@@ -2213,7 +2232,7 @@ function createGameState() {
         });
       }
 
-      return {
+      const newState = {
         ...state,
         hands,
         cooldowns: newCooldowns,
@@ -2228,6 +2247,8 @@ function createGameState() {
           blue: state.turnCardsUsed.blue + (faction === 'blue' ? 1 : 0)
         }
       };
+      replayStore.recorder.recordFrame('card', cardDesc, newState, cardLog.details);
+      return newState;
     }),
     /**
      * @param {string} unitId
@@ -2601,12 +2622,14 @@ function createGameState() {
         });
       }
 
-      return {
+      const newState = {
         ...state,
         units: [...state.units, { ...unit, statusEffects: unit.statusEffects || [] }],
         actionLogs: newActionLogs,
         lastActionLog: summonLog
       };
+      replayStore.recorder.recordFrame('summon', summonDesc, newState, summonLog.details);
+      return newState;
     }),
     /**
      * @param {number} x

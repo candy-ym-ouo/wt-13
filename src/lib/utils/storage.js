@@ -153,3 +153,112 @@ export function formatDate(isoString) {
     minute: '2-digit'
   });
 }
+
+const REPLAY_STORAGE_KEY = 'tactical_board_game_replays';
+const MAX_REPLAYS = 20;
+
+/**
+ * @typedef {object} ReplayFrame
+ * @property {number} index
+ * @property {number} turn
+ * @property {string} faction
+ * @property {'move' | 'attack' | 'card' | 'turn' | 'victory' | 'deployment' | 'summon'} type
+ * @property {string} description
+ * @property {object} stateSnapshot
+ * @property {object} [actionDetails]
+ * @property {number} timestamp
+ */
+
+/**
+ * @typedef {object} ReplayData
+ * @property {number} id
+ * @property {string} date
+ * @property {string} winner
+ * @property {string} victoryCondition
+ * @property {number} totalTurns
+ * @property {ReplayFrame[]} frames
+ * @property {object} initialState
+ * @property {object} finalState
+ * @property {{red: number, blue: number}} killCounts
+ * @property {{red: number, blue: number}} totalDamage
+ */
+
+/**
+ * @param {ReplayData} replay
+ * @returns {boolean}
+ */
+export function saveReplay(replay) {
+  try {
+    const replays = getReplays();
+    const replayWithMeta = {
+      ...replay,
+      id: replay.id || Date.now(),
+      date: replay.date || new Date().toISOString()
+    };
+    replays.unshift(replayWithMeta);
+    if (replays.length > MAX_REPLAYS) {
+      replays.length = MAX_REPLAYS;
+    }
+    localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(replays));
+    return true;
+  } catch (e) {
+    console.error('保存录像失败:', e);
+    return false;
+  }
+}
+
+/**
+ * @returns {ReplayData[]}
+ */
+export function getReplays() {
+  try {
+    const data = localStorage.getItem(REPLAY_STORAGE_KEY);
+    return data ? /** @type {ReplayData[]} */ (JSON.parse(data)) : [];
+  } catch (e) {
+    console.error('读取录像列表失败:', e);
+    return [];
+  }
+}
+
+/**
+ * @param {number} replayId
+ * @returns {ReplayData | null}
+ */
+export function getReplayById(replayId) {
+  try {
+    const replays = getReplays();
+    return replays.find(r => r.id === replayId) || null;
+  } catch (e) {
+    console.error('读取录像失败:', e);
+    return null;
+  }
+}
+
+/**
+ * @param {number} replayId
+ * @returns {boolean}
+ */
+export function deleteReplay(replayId) {
+  try {
+    const replays = getReplays();
+    const filtered = replays.filter(r => r.id !== replayId);
+    localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(filtered));
+    return true;
+  } catch (e) {
+    console.error('删除录像失败:', e);
+    return false;
+  }
+}
+
+/**
+ * @returns {boolean}
+ */
+export function clearReplays() {
+  try {
+    localStorage.removeItem(REPLAY_STORAGE_KEY);
+    return true;
+  } catch (e) {
+    console.error('清除录像失败:', e);
+    return false;
+  }
+}

@@ -15,6 +15,7 @@
   import { shopItems, shopConfig } from '$lib/config/shopConfig';
   import TacticalHintPanel from './TacticalHintPanel.svelte';
   import DeploymentPanel from './DeploymentPanel.svelte';
+  import ReplayPlayer from './ReplayPlayer.svelte';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -66,6 +67,7 @@
   let showRecords = false;
   let showBattleLog = false;
   let showReplay = false;
+  let showReplayPlayer = false;
   let showRoundStats = false;
   let showSaveLoad = false;
   let showResumePrompt = false;
@@ -1173,6 +1175,9 @@
       <button class="btn btn-secondary" on:click={handleShowRecords}>
         📊 记录
       </button>
+      <button class="btn btn-secondary" on:click={() => showReplayPlayer = !showReplayPlayer}>
+        🎬 录像
+      </button>
       <button class="btn btn-secondary" on:click={handleShowRoster}>
         🏋️ 阵容
       </button>
@@ -2198,6 +2203,21 @@
             {/each}
           {/if}
         </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showReplayPlayer}
+    <div
+      class="records-overlay"
+      on:click|self={() => showReplayPlayer = false}
+      role="dialog"
+      aria-label="录像回放"
+      tabindex="0"
+      on:keydown={(e) => e.key === 'Escape' && (showReplayPlayer = false)}
+    >
+      <div class="records-panel replay-player-panel">
+        <ReplayPlayer />
       </div>
     </div>
   {/if}
@@ -3469,6 +3489,13 @@
     max-height: 80vh;
     display: flex;
     flex-direction: column;
+  }
+
+  .replay-player-panel {
+    width: 700px;
+    max-width: 95vw;
+    padding: 0;
+    overflow: hidden;
   }
 
   .records-header {
