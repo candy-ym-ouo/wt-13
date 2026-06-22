@@ -112,9 +112,10 @@ import { checkSummonFeasibility, findSummonPosition } from './gameLogic';
  * @param {Record<string, number>} drawHistory
  * @param {number} pityCounter
  * @param {number} currentTurn
+ * @param {string[]} [unlockedCardIds]
  * @returns {EventCard}
  */
-export function drawCard(drawHistory, pityCounter, currentTurn) {
+export function drawCard(drawHistory, pityCounter, currentTurn, unlockedCardIds) {
   if (!drawHistory) drawHistory = {};
   if (!pityCounter) pityCounter = 0;
   if (!currentTurn) currentTurn = 1;
@@ -125,8 +126,16 @@ export function drawCard(drawHistory, pityCounter, currentTurn) {
   /** @type {EventCard[]} */
   let pool = /** @type {EventCard[]} */ (eventCards.filter(card => {
     const rarityCfg = rarityCfgMap[card.rarity];
-    return currentTurn >= (rarityCfg?.minTurn || 1);
+    if (currentTurn < (rarityCfg?.minTurn || 1)) return false;
+    if (unlockedCardIds && unlockedCardIds.length > 0) {
+      return unlockedCardIds.includes(card.id);
+    }
+    return true;
   }));
+
+  if (pool.length === 0) {
+    pool = eventCards.filter(card => card.rarity === CARD_RARITY.BASIC).slice(0, 5);
+  }
 
   let forcedRarity = null;
   if (pityCounter >= cardRarityConfig.pityThreshold) {
@@ -175,16 +184,17 @@ export function drawCard(drawHistory, pityCounter, currentTurn) {
 
 /**
  * @param {number} currentTurn
+ * @param {string[]} [unlockedCardIds]
  * @returns {EventCard[]}
  */
-export function drawInitialHand(currentTurn) {
+export function drawInitialHand(currentTurn, unlockedCardIds) {
   if (!currentTurn) currentTurn = 1;
   /** @type {EventCard[]} */
   const hand = [];
   /** @type {Record<string, number>} */
   const tempHistory = {};
   for (let i = 0; i < cardConfig.initialHandSize; i++) {
-    const card = drawCard(tempHistory, 0, currentTurn);
+    const card = drawCard(tempHistory, 0, currentTurn, unlockedCardIds);
     tempHistory[card.id] = (tempHistory[card.id] || 0) + 1;
     hand.push({
       ...card,

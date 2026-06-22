@@ -4,6 +4,7 @@
   import { validateAllUnitsDeployed, canMulligan } from '$lib/utils/gameLogic';
   import { unitConfig } from '$lib/config/unitConfig';
   import { CARD_RARITY_COLORS, CARD_CATEGORY_LABELS } from '$lib/config/eventCardConfig';
+  import { legionStore } from '$lib/stores/legionStore.js';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -41,7 +42,8 @@
 
   function handleMulligan(/** @type {number} */ index) {
     if (!faction || !canMull) return;
-    gameState.deploymentMulligan(/** @type {'red' | 'blue'} */ (faction), index);
+    const unlockedCardIds = $legionStore.unlockedCards || [];
+    gameState.deploymentMulligan(/** @type {'red' | 'blue'} */ (faction), index, unlockedCardIds);
   }
 
   function handleStartGame() {

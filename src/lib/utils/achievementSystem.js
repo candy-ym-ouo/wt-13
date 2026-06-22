@@ -6,8 +6,103 @@ import {
 } from '$lib/config/achievementConfig.js';
 import { eventCards } from '$lib/config/eventCardConfig.js';
 
+/**
+ * @typedef {import('$lib/config/achievementConfig.js').Achievement} Achievement
+ * @typedef {import('$lib/config/achievementConfig.js').AchievementCondition} AchievementCondition
+ * @typedef {import('$lib/config/achievementConfig.js').AchievementRewards} AchievementRewards
+ */
+
+/**
+ * @typedef {Object} BattleStats
+ * @property {number} kills
+ * @property {number} damageDealt
+ * @property {number} cardsUsed
+ * @property {number} summons
+ * @property {number} counterKills
+ * @property {number} comboKills
+ * @property {number} deaths
+ * @property {string[]} unitIdsAtStart
+ * @property {number} turnsPlayed
+ * @property {number} bestComboKills
+ */
+
+/**
+ * @typedef {Object} AchievementStats
+ * @property {number} totalBattles
+ * @property {number} totalWins
+ * @property {number} totalLosses
+ * @property {number} totalDraws
+ * @property {number} currentWinStreak
+ * @property {number} bestWinStreak
+ * @property {number} totalKills
+ * @property {number} totalDamageDealt
+ * @property {number} totalGoldEarned
+ * @property {number} totalExpEarned
+ * @property {number} totalRecruits
+ * @property {number} totalCardsUsed
+ * @property {number} totalSummons
+ * @property {number} totalCounterKills
+ * @property {number} bestComboKills
+ * @property {string[]} collectedCards
+ * @property {any[]} battleHistory
+ */
+
+/**
+ * @typedef {Object} UnlockData
+ * @property {number} unlockedAt
+ * @property {number} [battleIndex]
+ */
+
+/**
+ * @typedef {Object} ClaimedRewardData
+ * @property {number} claimedAt
+ */
+
+/**
+ * @typedef {Object} AchievementState
+ * @property {Record<string, UnlockData>} unlocked
+ * @property {Record<string, any>} progress
+ * @property {AchievementStats} stats
+ * @property {BattleStats} battleStats
+ * @property {Record<string, ClaimedRewardData>} claimedRewards
+ */
+
+/**
+ * @typedef {Object} CheckResult
+ * @property {AchievementState} state
+ * @property {Achievement[]} newlyUnlocked
+ */
+
+/**
+ * @typedef {Object} ClaimResultSuccess
+ * @property {true} success
+ * @property {AchievementState} state
+ * @property {AchievementRewards} rewards
+ */
+
+/**
+ * @typedef {Object} ClaimResultFailure
+ * @property {false} success
+ * @property {string} reason
+ */
+
+/**
+ * @typedef {ClaimResultSuccess | ClaimResultFailure} ClaimResult
+ */
+
+/**
+ * @typedef {Object} ProgressData
+ * @property {number} current
+ * @property {number} target
+ * @property {number} percentage
+ * @property {boolean} completed
+ */
+
 const ACHIEVEMENT_STORAGE_KEY = 'tactical_board_achievements';
 
+/**
+ * @returns {AchievementState}
+ */
 export function createInitialAchievementState() {
   return {
     unlocked: {},
@@ -40,12 +135,16 @@ export function createInitialAchievementState() {
       comboKills: 0,
       deaths: 0,
       unitIdsAtStart: [],
-      turnsPlayed: 0
+      turnsPlayed: 0,
+      bestComboKills: 0
     },
     claimedRewards: {}
   };
 }
 
+/**
+ * @returns {AchievementState}
+ */
 export function loadAchievementState() {
   try {
     const data = localStorage.getItem(ACHIEVEMENT_STORAGE_KEY);
@@ -59,6 +158,11 @@ export function loadAchievementState() {
   return createInitialAchievementState();
 }
 
+/**
+ * @param {AchievementState} defaultState
+ * @param {any} savedState
+ * @returns {AchievementState}
+ */
 function mergeAchievementState(defaultState, savedState) {
   if (!savedState) return defaultState;
   return {
@@ -70,6 +174,10 @@ function mergeAchievementState(defaultState, savedState) {
   };
 }
 
+/**
+ * @param {AchievementState} state
+ * @returns {boolean}
+ */
 export function saveAchievementState(state) {
   try {
     localStorage.setItem(ACHIEVEMENT_STORAGE_KEY, JSON.stringify(state));
@@ -80,6 +188,9 @@ export function saveAchievementState(state) {
   }
 }
 
+/**
+ * @returns {boolean}
+ */
 export function clearAchievementState() {
   try {
     localStorage.removeItem(ACHIEVEMENT_STORAGE_KEY);
@@ -90,6 +201,10 @@ export function clearAchievementState() {
   }
 }
 
+/**
+ * @param {AchievementState} state
+ * @returns {AchievementState}
+ */
 export function resetBattleStats(state) {
   return {
     ...state,
@@ -102,11 +217,17 @@ export function resetBattleStats(state) {
       comboKills: 0,
       deaths: 0,
       unitIdsAtStart: [],
-      turnsPlayed: 0
+      turnsPlayed: 0,
+      bestComboKills: 0
     }
   };
 }
 
+/**
+ * @param {AchievementState} state
+ * @param {string[]} unitIds
+ * @returns {AchievementState}
+ */
 export function startBattleTracking(state, unitIds) {
   return {
     ...state,
@@ -120,11 +241,18 @@ export function startBattleTracking(state, unitIds) {
       comboKills: 0,
       deaths: 0,
       unitIdsAtStart: [...unitIds],
-      turnsPlayed: 0
+      turnsPlayed: 0,
+      bestComboKills: 0
     }
   };
 }
 
+/**
+ * @param {AchievementState} state
+ * @param {string} statType
+ * @param {number} [value]
+ * @returns {AchievementState}
+ */
 export function updateBattleStat(state, statType, value = 1) {
   const newBattleStats = { ...state.battleStats };
   const newStats = { ...state.stats };
@@ -171,6 +299,21 @@ export function updateBattleStat(state, statType, value = 1) {
   };
 }
 
+/**
+ * @typedef {Object} ConditionCheck
+ * @property {string} type
+ * @property {number} value
+ * @property {boolean} [requireValue]
+ * @property {boolean} [requireWin]
+ * @property {boolean} [isBattleScope]
+ */
+
+/**
+ * @param {AchievementState} state
+ * @param {string} battleResult
+ * @param {any} gameState
+ * @returns {CheckResult}
+ */
 export function checkBattleAchievements(state, battleResult, gameState) {
   const newlyUnlocked = [];
   let newState = { ...state };
@@ -191,6 +334,7 @@ export function checkBattleAchievements(state, battleResult, gameState) {
 
   newState.stats = stats;
 
+  /** @type {ConditionCheck[]} */
   const conditionsToCheck = [
     { type: CONDITION_TYPES.WIN_BATTLE, value: battleResult === 'win' ? 1 : 0, requireValue: battleResult === 'win' },
     { type: CONDITION_TYPES.TOTAL_BATTLES, value: stats.totalBattles },
@@ -213,7 +357,9 @@ export function checkBattleAchievements(state, battleResult, gameState) {
       const check = conditionsToCheck.find(c => c.type === condition.type);
       if (!check) return false;
 
-      if (condition.requireWin && !check.requireWin) return false;
+      /** @type {any} */
+      const condAny = condition;
+      if (condAny.requireWin && !check.requireWin) return false;
       if (check.requireValue !== undefined) {
         return check.requireValue;
       }
@@ -233,6 +379,11 @@ export function checkBattleAchievements(state, battleResult, gameState) {
   return { state: newState, newlyUnlocked };
 }
 
+/**
+ * @param {AchievementState} state
+ * @param {any} legionState
+ * @returns {CheckResult}
+ */
 export function checkProgressAchievements(state, legionState) {
   const newlyUnlocked = [];
   let newState = { ...state };
@@ -240,8 +391,9 @@ export function checkProgressAchievements(state, legionState) {
 
   if (legionState) {
     const unitCount = legionState.units?.length || 0;
-    const maxLevel = legionState.units?.reduce((max, u) => Math.max(max, u.level || 1), 1) || 1;
-    const hasPromotion = legionState.units?.some(u => (u.promotion || 0) > 0);
+    /** @type {number} */
+    const maxLevel = legionState.units?.reduce((/** @type {number} */ max, /** @type {any} */ u) => Math.max(max, u.level || 1), 1) || 1;
+    const hasPromotion = legionState.units?.some((/** @type {any} */ u) => (u.promotion || 0) > 0);
     const recruitCount = legionState.stats?.totalRecruits || 0;
     const goldEarned = legionState.currency?.gold || 0;
     const collectedCardIds = legionState.collectedCards || [];
@@ -252,6 +404,7 @@ export function checkProgressAchievements(state, legionState) {
 
     newState.stats = stats;
 
+    /** @type {ConditionCheck[]} */
     const conditionsToCheck = [
       { type: CONDITION_TYPES.COLLECT_UNITS, value: unitCount },
       { type: CONDITION_TYPES.COLLECT_CARDS, value: stats.collectedCards.length },
@@ -287,6 +440,11 @@ export function checkProgressAchievements(state, legionState) {
   return { state: newState, newlyUnlocked };
 }
 
+/**
+ * @param {AchievementState} state
+ * @param {Achievement} achievement
+ * @returns {ProgressData}
+ */
 export function getAchievementProgress(state, achievement) {
   if (state.unlocked[achievement.id]) {
     return { current: 1, target: 1, percentage: 100, completed: true };
@@ -380,6 +538,10 @@ export function getAchievementProgress(state, achievement) {
   };
 }
 
+/**
+ * @param {AchievementState} state
+ * @returns {number}
+ */
 export function calculateTotalPoints(state) {
   let total = 0;
   for (const achievementId of Object.keys(state.unlocked)) {
@@ -391,6 +553,10 @@ export function calculateTotalPoints(state) {
   return total;
 }
 
+/**
+ * @param {AchievementState} state
+ * @returns {string[]}
+ */
 export function getUnlockedCardIds(state) {
   const cardIds = [];
   for (const achievementId of Object.keys(state.unlocked)) {
@@ -405,6 +571,11 @@ export function getUnlockedCardIds(state) {
   return Array.from(new Set(cardIds));
 }
 
+/**
+ * @param {AchievementState} state
+ * @param {string} achievementId
+ * @returns {ClaimResult}
+ */
 export function claimAchievementReward(state, achievementId) {
   if (!state.unlocked[achievementId]) return { success: false, reason: '成就未解锁' };
   if (state.claimedRewards[achievementId]) return { success: false, reason: '奖励已领取' };
@@ -440,6 +611,10 @@ export function claimAchievementReward(state, achievementId) {
   };
 }
 
+/**
+ * @param {string[]} cardIds
+ * @returns {any[]}
+ */
 export function getCardData(cardIds) {
   return cardIds
     .map(id => eventCards.find(c => c.id === id))

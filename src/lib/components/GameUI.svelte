@@ -417,8 +417,9 @@
 
   function initHands() {
     const currentTurn = state?.turn || 1;
-    const redHand = drawInitialHand(currentTurn);
-    const blueHand = drawInitialHand(currentTurn);
+    const unlockedCardIds = $legionStore.unlockedCards || [];
+    const redHand = drawInitialHand(currentTurn, unlockedCardIds);
+    const blueHand = drawInitialHand(currentTurn, unlockedCardIds);
     for (const card of redHand) {
       gameState.addCard('red', card);
     }
@@ -511,7 +512,8 @@
     const nextTurn = nextFaction === 'red' ? state.turn + 1 : state.turn;
     const nextDrawHistory = state.drawHistory[nextFaction] || {};
     const nextPityCounter = state.pityCounter[nextFaction] || 0;
-    const newCard = drawCard(nextDrawHistory, nextPityCounter, nextTurn);
+    const unlockedCardIds = $legionStore.unlockedCards || [];
+    const newCard = drawCard(nextDrawHistory, nextPityCounter, nextTurn, unlockedCardIds);
     gameState.addCard(nextFaction, newCard);
 
     const nextName = nextFaction === 'red' ? '红方' : '蓝方';

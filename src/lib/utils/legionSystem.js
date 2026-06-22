@@ -360,6 +360,23 @@ function rollCardReward(rarityBoost = 0) {
   return null;
 }
 
+/**
+ * @param {any} defaultData
+ * @param {any} savedData
+ * @returns {any}
+ */
+function mergeLegionData(defaultData, savedData) {
+  if (!savedData) return defaultData;
+  return {
+    ...defaultData,
+    ...savedData,
+    currency: { ...defaultData.currency, ...(savedData.currency || {}) },
+    stats: { ...defaultData.stats, ...(savedData.stats || {}) },
+    collectedCards: savedData.collectedCards || defaultData.collectedCards,
+    unlockedCards: savedData.unlockedCards || defaultData.unlockedCards
+  };
+}
+
 export function saveLegionData(data) {
   try {
     localStorage.setItem(LEGION_STORAGE_KEY, JSON.stringify(data));
@@ -373,7 +390,12 @@ export function saveLegionData(data) {
 export function loadLegionData() {
   try {
     const data = localStorage.getItem(LEGION_STORAGE_KEY);
-    return data ? JSON.parse(data) : null;
+    if (data) {
+      const parsed = JSON.parse(data);
+      const defaultData = createInitialLegionData();
+      return mergeLegionData(defaultData, parsed);
+    }
+    return null;
   } catch (e) {
     console.error('加载军团数据失败:', e);
     return null;
@@ -432,6 +454,8 @@ export function createInitialLegionData() {
       expBook: CURRENCY_CONFIG.expBook.initial
     },
     recruitPity: 0,
+    collectedCards: [],
+    unlockedCards: ['heal', 'attack_boost', 'defense_boost', 'morale_boost', 'move_boost', 'rally', 'strike', 'weaken', 'slow', 'poison', 'freeze', 'stun', 'burn', 'lightning_strike'],
     stats: {
       totalBattles: 0,
       totalWins: 0,

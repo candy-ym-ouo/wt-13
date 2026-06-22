@@ -1,3 +1,32 @@
+/**
+ * @typedef {Object} AchievementCondition
+ * @property {string} type
+ * @property {number} target
+ * @property {boolean} [requireWin]
+ */
+
+/**
+ * @typedef {Object} AchievementRewards
+ * @property {number} gold
+ * @property {number} exp
+ * @property {string[]} cards
+ * @property {string[]} unlockCards
+ */
+
+/**
+ * @typedef {Object} Achievement
+ * @property {string} id
+ * @property {string} name
+ * @property {string} description
+ * @property {string} category
+ * @property {string} rarity
+ * @property {string} icon
+ * @property {AchievementCondition[]} conditions
+ * @property {AchievementRewards} rewards
+ * @property {boolean} [isHidden]
+ * @property {number} [stageOrder]
+ */
+
 export const ACHIEVEMENT_CATEGORY = {
   BATTLE: 'battle',
   COLLECTION: 'collection',
@@ -594,14 +623,25 @@ export const ACHIEVEMENTS = [
   }
 ];
 
+/**
+ * @param {string} id
+ * @returns {Achievement | undefined}
+ */
 export function getAchievementById(id) {
   return ACHIEVEMENTS.find(a => a.id === id);
 }
 
+/**
+ * @param {string} category
+ * @returns {Achievement[]}
+ */
 export function getAchievementsByCategory(category) {
   return ACHIEVEMENTS.filter(a => a.category === category);
 }
 
+/**
+ * @returns {Achievement[]}
+ */
 export function getStageAchievements() {
   return ACHIEVEMENTS
     .filter(a => a.category === ACHIEVEMENT_CATEGORY.STAGE)

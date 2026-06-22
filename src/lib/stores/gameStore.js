@@ -741,8 +741,9 @@ function createGameState() {
     /**
      * @param {Faction} faction
      * @param {number} cardIndex
+     * @param {string[]} [unlockedCardIds]
      */
-    deploymentMulligan: (faction, cardIndex) => update(state => {
+    deploymentMulligan: (faction, cardIndex, unlockedCardIds) => update(state => {
       const factionIdx = faction === 'red' ? 0 : 1;
       const maxMulligan = gameRules.deployment?.maxMulligan || 2;
       if (!state.deployment || state.deployment.mulliganUsed[factionIdx] >= maxMulligan) {
@@ -756,7 +757,8 @@ function createGameState() {
       const newCard = drawCard(
         state.drawHistory[faction],
         state.pityCounter[faction],
-        1
+        1,
+        unlockedCardIds
       );
       const newHand = [...hand];
       newHand[cardIndex] = {

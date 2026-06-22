@@ -430,6 +430,49 @@ function createLegionStore() {
       };
       
       return { ...state, units: newUnits };
+    }),
+    
+    addCollectedCards: (cardIds = []) => update(state => {
+      const newCollectedCards = Array.from(new Set([...(state.collectedCards || []), ...cardIds]));
+      return {
+        ...state,
+        collectedCards: newCollectedCards,
+        stats: {
+          ...state.stats,
+          totalCardsCollected: newCollectedCards.length
+        }
+      };
+    }),
+    
+    unlockCards: (cardIds = []) => update(state => {
+      const newUnlockedCards = Array.from(new Set([...(state.unlockedCards || []), ...cardIds]));
+      return {
+        ...state,
+        unlockedCards: newUnlockedCards
+      };
+    }),
+    
+    addExpToAllUnits: (expAmount = 0) => update(state => {
+      if (expAmount <= 0) return state;
+      
+      const newUnits = state.units.map(unit => {
+        const result = addExpToUnit(unit, expAmount);
+        return result.unit;
+      });
+      
+      return { ...state, units: newUnits };
+    }),
+    
+    addGold: (goldAmount = 0) => update(state => {
+      if (goldAmount <= 0) return state;
+      
+      return {
+        ...state,
+        currency: {
+          ...state.currency,
+          gold: (state.currency.gold || 0) + goldAmount
+        }
+      };
     })
   };
 }
