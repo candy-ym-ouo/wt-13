@@ -118,6 +118,11 @@ export const CONDITION_TYPES = {
   SUMMON_COUNT: 'summon_count',
   COUNTER_KILL: 'counter_kill',
   COMBO_KILL: 'combo_kill',
+  GUILD_MEMBER: 'guild_member',
+  GUILD_TASK_COMPLETED: 'guild_task_completed',
+  GUILD_BOSS_KILLED: 'guild_boss_killed',
+  GUILD_CONTRIBUTION: 'guild_contribution',
+  GUILD_DONATION: 'guild_donation',
   CUSTOM: 'custom'
 };
 
@@ -619,6 +624,179 @@ export const ACHIEVEMENTS = [
       exp: 4000,
       cards: [],
       unlockCards: ['meteor_strike', 'divine_heal']
+    }
+  },
+  {
+    id: 'guild_join',
+    name: '公会新血',
+    description: '加入一个公会',
+    category: ACHIEVEMENT_CATEGORY.PROGRESS,
+    rarity: ACHIEVEMENT_RARITY.COMMON,
+    icon: '🤝',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_MEMBER, target: 1 }
+    ],
+    rewards: {
+      gold: 500,
+      exp: 200,
+      cards: [],
+      unlockCards: []
+    }
+  },
+  {
+    id: 'guild_create',
+    name: '公会创始人',
+    description: '创建一个公会',
+    category: ACHIEVEMENT_CATEGORY.PROGRESS,
+    rarity: ACHIEVEMENT_RARITY.RARE,
+    icon: '🏰',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_MEMBER, target: 2 }
+    ],
+    rewards: {
+      gold: 2000,
+      exp: 1000,
+      cards: [],
+      unlockCards: ['rally']
+    }
+  },
+  {
+    id: 'guild_task_10',
+    name: '任务达人',
+    description: '完成 10 个公会任务',
+    category: ACHIEVEMENT_CATEGORY.PROGRESS,
+    rarity: ACHIEVEMENT_RARITY.RARE,
+    icon: '📋',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_TASK_COMPLETED, target: 10 }
+    ],
+    rewards: {
+      gold: 3000,
+      exp: 1500,
+      cards: [],
+      unlockCards: []
+    }
+  },
+  {
+    id: 'guild_task_50',
+    name: '任务大师',
+    description: '完成 50 个公会任务',
+    category: ACHIEVEMENT_CATEGORY.PROGRESS,
+    rarity: ACHIEVEMENT_RARITY.EPIC,
+    icon: '📜',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_TASK_COMPLETED, target: 50 }
+    ],
+    rewards: {
+      gold: 10000,
+      exp: 5000,
+      cards: [],
+      unlockCards: ['final_push']
+    }
+  },
+  {
+    id: 'guild_boss_1',
+    name: '猎龙者',
+    description: '击杀 1 个公会Boss',
+    category: ACHIEVEMENT_CATEGORY.BATTLE,
+    rarity: ACHIEVEMENT_RARITY.RARE,
+    icon: '👹',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_BOSS_KILLED, target: 1 }
+    ],
+    rewards: {
+      gold: 2000,
+      exp: 1000,
+      cards: [],
+      unlockCards: ['dragon_slayer']
+    }
+  },
+  {
+    id: 'guild_boss_10',
+    name: 'Boss猎手',
+    description: '击杀 10 个公会Boss',
+    category: ACHIEVEMENT_CATEGORY.BATTLE,
+    rarity: ACHIEVEMENT_RARITY.EPIC,
+    icon: '💀',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_BOSS_KILLED, target: 10 }
+    ],
+    rewards: {
+      gold: 15000,
+      exp: 8000,
+      cards: [],
+      unlockCards: ['execute', 'berserk']
+    }
+  },
+  {
+    id: 'guild_contribution_1000',
+    name: '慷慨解囊',
+    description: '累计获得 1000 贡献值',
+    category: ACHIEVEMENT_CATEGORY.PROGRESS,
+    rarity: ACHIEVEMENT_RARITY.RARE,
+    icon: '💎',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_CONTRIBUTION, target: 1000 }
+    ],
+    rewards: {
+      gold: 2000,
+      exp: 1000,
+      cards: [],
+      unlockCards: []
+    }
+  },
+  {
+    id: 'guild_contribution_10000',
+    name: '公会支柱',
+    description: '累计获得 10000 贡献值',
+    category: ACHIEVEMENT_CATEGORY.PROGRESS,
+    rarity: ACHIEVEMENT_RARITY.EPIC,
+    icon: '🏆',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_CONTRIBUTION, target: 10000 }
+    ],
+    rewards: {
+      gold: 20000,
+      exp: 10000,
+      cards: [],
+      unlockCards: ['inspiration', 'guardian']
+    }
+  },
+  {
+    id: 'guild_donation_10000',
+    name: '金主爸爸',
+    description: '累计捐献 10000 金币',
+    category: ACHIEVEMENT_CATEGORY.PROGRESS,
+    rarity: ACHIEVEMENT_RARITY.RARE,
+    icon: '💰',
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_DONATION, target: 10000 }
+    ],
+    rewards: {
+      gold: 5000,
+      exp: 2500,
+      cards: [],
+      unlockCards: ['gold_rush']
+    }
+  },
+  {
+    id: 'guild_legend',
+    name: '公会传奇',
+    description: '成为公会传奇，达成所有公会里程碑',
+    category: ACHIEVEMENT_CATEGORY.STAGE,
+    rarity: ACHIEVEMENT_RARITY.LEGENDARY,
+    icon: '👑',
+    stageOrder: 10,
+    conditions: [
+      { type: CONDITION_TYPES.GUILD_TASK_COMPLETED, target: 50 },
+      { type: CONDITION_TYPES.GUILD_BOSS_KILLED, target: 10 },
+      { type: CONDITION_TYPES.GUILD_CONTRIBUTION, target: 10000 }
+    ],
+    rewards: {
+      gold: 50000,
+      exp: 25000,
+      cards: [],
+      unlockCards: ['guild_war_cry', 'legendary_tactics']
     }
   }
 ];

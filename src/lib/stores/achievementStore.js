@@ -115,8 +115,8 @@ function createAchievementStore() {
       return result.state;
     }),
 
-    checkProgress: (/** @type {any} */ legionState) => update(state => {
-      const result = checkProgressAchievements(state, legionState);
+    checkProgress: (/** @type {any} */ legionState, /** @type {any} */ guildState) => update(state => {
+      const result = checkProgressAchievements(state, legionState, guildState);
       if (result.newlyUnlocked.length > 0) {
         pendingToasts.push(...result.newlyUnlocked);
       }

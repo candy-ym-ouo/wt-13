@@ -32,6 +32,10 @@
 		window.location.href = '/season';
 	}
 
+	function enterGuild() {
+		window.location.href = '/guild';
+	}
+
 	function goBackToMenu() {
 		viewMode = 'menu';
 	}
@@ -76,6 +80,9 @@
 				<button class="menu-btn season" on:click={enterSeason}>
 					🏅 赛季天梯
 				</button>
+				<button class="menu-btn guild" on:click={enterGuild}>
+					🏰 公会协作
+				</button>
 				<button class="menu-btn achievement" on:click={() => showAchievementPanel = true}>
 					🎖️ 成就中心
 				</button>
@@ -119,6 +126,11 @@
 					<span class="feature-icon">🏅</span>
 					<h3>赛季天梯</h3>
 					<p>积分对决、段位晋升、赛季重置，攀登巅峰</p>
+				</div>
+				<div class="feature">
+					<span class="feature-icon">🏰</span>
+					<h3>公会协作</h3>
+					<p>成员集结、共享任务、合作攻坚、贡献排行</p>
 				</div>
 			</div>
 		</div>
@@ -239,6 +251,17 @@
 	.menu-btn.achievement:hover {
 		transform: translateY(-3px);
 		box-shadow: 0 10px 30px rgba(233, 30, 99, 0.6);
+	}
+
+	.menu-btn.guild {
+		background: linear-gradient(135deg, #4caf50, #2e7d32);
+		color: white;
+		box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+	}
+
+	.menu-btn.guild:hover {
+		transform: translateY(-3px);
+		box-shadow: 0 10px 30px rgba(76, 175, 80, 0.6);
 	}
 
 	.achievement-badge {

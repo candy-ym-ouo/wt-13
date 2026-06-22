@@ -382,12 +382,16 @@ export function checkBattleAchievements(state, battleResult, gameState) {
 /**
  * @param {AchievementState} state
  * @param {any} legionState
+ * @param {any} [guildState]
  * @returns {CheckResult}
  */
-export function checkProgressAchievements(state, legionState) {
+export function checkProgressAchievements(state, legionState, guildState) {
   const newlyUnlocked = [];
   let newState = { ...state };
   const stats = { ...newState.stats };
+
+  /** @type {ConditionCheck[]} */
+  const conditionsToCheck = [];
 
   if (legionState) {
     const unitCount = legionState.units?.length || 0;
@@ -402,38 +406,64 @@ export function checkProgressAchievements(state, legionState) {
     stats.totalGoldEarned = Math.max(stats.totalGoldEarned, goldEarned);
     stats.collectedCards = Array.from(new Set([...stats.collectedCards, ...collectedCardIds]));
 
-    newState.stats = stats;
-
-    /** @type {ConditionCheck[]} */
-    const conditionsToCheck = [
+    conditionsToCheck.push(
       { type: CONDITION_TYPES.COLLECT_UNITS, value: unitCount },
       { type: CONDITION_TYPES.COLLECT_CARDS, value: stats.collectedCards.length },
       { type: CONDITION_TYPES.UNIT_LEVEL, value: maxLevel },
       { type: CONDITION_TYPES.UNIT_PROMOTION, value: hasPromotion ? 1 : 0, requireValue: hasPromotion },
       { type: CONDITION_TYPES.RECRUIT_COUNT, value: stats.totalRecruits },
       { type: CONDITION_TYPES.GOLD_EARNED, value: stats.totalGoldEarned }
-    ];
+    );
+  }
 
-    for (const achievement of ACHIEVEMENTS) {
-      if (newState.unlocked[achievement.id]) continue;
-      if (achievement.category !== 'collection' && achievement.category !== 'progress' && achievement.category !== 'stage') continue;
+  if (guildState && guildState.currentGuild) {
+    const guild = guildState.currentGuild;
+    const playerId = 'player_1';
+    const playerMember = guild.members?.find((/** @type {any} */ m) => m.id === playerId);
+    
+    const isInGuild = !!playerMember;
+    const isGuildLeader = playerMember?.role === 'leader';
+    const totalContribution = playerMember?.totalContribution || 0;
+    const totalGoldDonated = guild.stats?.totalGoldDonated || 0;
+    const totalTasksCompleted = guild.stats?.totalTasksCompleted || 0;
+    const totalBossKills = guild.stats?.totalBossKills || 0;
 
-      const allConditionsMet = achievement.conditions.every(condition => {
-        const check = conditionsToCheck.find(c => c.type === condition.type);
-        if (!check) return false;
+    stats.guildMembership = Math.max(stats.guildMembership || 0, isGuildLeader ? 2 : (isInGuild ? 1 : 0));
+    stats.guildTasksCompleted = Math.max(stats.guildTasksCompleted || 0, totalTasksCompleted);
+    stats.guildBossKills = Math.max(stats.guildBossKills || 0, totalBossKills);
+    stats.guildContribution = Math.max(stats.guildContribution || 0, totalContribution);
+    stats.guildDonation = Math.max(stats.guildDonation || 0, totalGoldDonated);
 
-        if (check.requireValue !== undefined) {
-          return check.requireValue;
-        }
-        return check.value >= condition.target;
-      });
+    conditionsToCheck.push(
+      { type: CONDITION_TYPES.GUILD_MEMBER, value: stats.guildMembership },
+      { type: CONDITION_TYPES.GUILD_TASK_COMPLETED, value: stats.guildTasksCompleted },
+      { type: CONDITION_TYPES.GUILD_BOSS_KILLED, value: stats.guildBossKills },
+      { type: CONDITION_TYPES.GUILD_CONTRIBUTION, value: stats.guildContribution },
+      { type: CONDITION_TYPES.GUILD_DONATION, value: stats.guildDonation }
+    );
+  }
 
-      if (allConditionsMet) {
-        newState.unlocked[achievement.id] = {
-          unlockedAt: Date.now()
-        };
-        newlyUnlocked.push(achievement);
+  newState.stats = stats;
+
+  for (const achievement of ACHIEVEMENTS) {
+    if (newState.unlocked[achievement.id]) continue;
+    if (achievement.category !== 'collection' && achievement.category !== 'progress' && achievement.category !== 'stage' && achievement.category !== 'battle') continue;
+
+    const allConditionsMet = achievement.conditions.every(condition => {
+      const check = conditionsToCheck.find(c => c.type === condition.type);
+      if (!check) return false;
+
+      if (check.requireValue !== undefined) {
+        return check.requireValue;
       }
+      return check.value >= condition.target;
+    });
+
+    if (allConditionsMet) {
+      newState.unlocked[achievement.id] = {
+        unlockedAt: Date.now()
+      };
+      newlyUnlocked.push(achievement);
     }
   }
 
@@ -517,6 +547,21 @@ export function getAchievementProgress(state, achievement) {
         break;
       case CONDITION_TYPES.COMBO_KILL:
         value = battleStats.comboKills;
+        break;
+      case CONDITION_TYPES.GUILD_MEMBER:
+        value = stats.guildMembership || 0;
+        break;
+      case CONDITION_TYPES.GUILD_TASK_COMPLETED:
+        value = stats.guildTasksCompleted || 0;
+        break;
+      case CONDITION_TYPES.GUILD_BOSS_KILLED:
+        value = stats.guildBossKills || 0;
+        break;
+      case CONDITION_TYPES.GUILD_CONTRIBUTION:
+        value = stats.guildContribution || 0;
+        break;
+      case CONDITION_TYPES.GUILD_DONATION:
+        value = stats.guildDonation || 0;
         break;
       default:
         value = 0;
