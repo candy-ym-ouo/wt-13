@@ -1,6 +1,7 @@
 <script>
   // @ts-nocheck
   import { legionStore, totalPower, activeLineupUnits } from '$lib/stores/legionStore.js';
+  import { achievementStore, totalAchievementPoints, unlockedCount, totalAchievementsCount } from '$lib/stores/achievementStore.js';
   import { CURRENCY_CONFIG, RARITY_CONFIG } from '$lib/config/legionConfig.js';
   import { unitConfig } from '$lib/config/unitConfig.js';
   import UnitCard from './UnitCard.svelte';
@@ -8,6 +9,8 @@
   import UnitDetailPanel from './UnitDetailPanel.svelte';
   import LineupPanel from './LineupPanel.svelte';
   import BattleResultPanel from './BattleResultPanel.svelte';
+  import AchievementPanel from './AchievementPanel.svelte';
+  import AchievementToast from './AchievementToast.svelte';
   
   let activeTab = 'units';
   let selectedUnitId = null;
@@ -15,11 +18,13 @@
   let filterRarity = 'all';
   let sortBy = 'level';
   let showBattleResult = false;
+  let showAchievementPanel = false;
   
   const tabs = [
     { id: 'units', name: '单位', icon: '👥' },
     { id: 'recruit', name: '招募', icon: '🎫' },
     { id: 'lineup', name: '阵容', icon: '⚔️' },
+    { id: 'achievements', name: '成就', icon: '🎖️' },
     { id: 'records', name: '记录', icon: '📊' }
   ];
   
@@ -57,6 +62,8 @@
   function simulateBattle(result) {
     const unitIds = $activeLineupUnits.map(u => u.id);
     legionStore.processBattleResult(result, unitIds, 1.0);
+    achievementStore.finishBattle(result, null);
+    achievementStore.checkProgress($legionStore);
     showBattleResult = true;
   }
   
@@ -89,6 +96,11 @@
           <span class="currency-value">{$legionStore.currency[type] || 0}</span>
         </div>
       {/each}
+      <div class="currency-item achievement-currency">
+        <span class="currency-icon">🎖️</span>
+        <span class="currency-name">成就点</span>
+        <span class="currency-value">{$totalAchievementPoints}</span>
+      </div>
     </div>
   </div>
   
@@ -186,6 +198,46 @@
       <LineupPanel />
     {/if}
     
+    {#if activeTab === 'achievements'}
+      <div class="achievements-tab">
+        <div class="stats-overview">
+          <h3>🎖️ 成就中心</h3>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-label">成就点数</span>
+              <span class="stat-value">{$totalAchievementPoints}</span>
+            </div>
+            <div class="stat-card win">
+              <span class="stat-label">已解锁</span>
+              <span class="stat-value">{$unlockedCount} / {$totalAchievementsCount}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">战斗场次</span>
+              <span class="stat-value">{$achievementStore.stats.totalBattles}</span>
+            </div>
+            <div class="stat-card draw">
+              <span class="stat-label">累计击杀</span>
+              <span class="stat-value">{$achievementStore.stats.totalKills}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">最高连胜</span>
+              <span class="stat-value">{$achievementStore.stats.bestWinStreak}</span>
+            </div>
+            <div class="stat-card lose">
+              <span class="stat-label">总伤害</span>
+              <span class="stat-value">{$achievementStore.stats.totalDamageDealt}</span>
+            </div>
+          </div>
+          
+          <div class="achievement-actions">
+            <button class="menu-btn achievement" on:click={() => showAchievementPanel = true}>
+              🎖️ 查看完整成就列表
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+    
     {#if activeTab === 'records'}
       <div class="records-tab">
         <div class="stats-overview">
@@ -249,6 +301,8 @@
   </div>
   
   <BattleResultPanel show={showBattleResult} />
+  <AchievementToast />
+  <AchievementPanel bind:show={showAchievementPanel} />
 </div>
 
 <style>
@@ -582,6 +636,46 @@
     background: rgba(244, 67, 54, 0.4);
   }
   
+  .achievement-currency {
+    border: 1px solid rgba(233, 30, 99, 0.3);
+    background: rgba(233, 30, 99, 0.1);
+  }
+
+  .achievement-currency .currency-value {
+    color: #e91e63;
+  }
+
+  .achievements-tab {
+    max-width: 900px;
+    margin: 0 auto;
+    overflow-y: auto;
+    height: 100%;
+    padding-right: 8px;
+  }
+
+  .achievement-actions {
+    margin-top: 24px;
+    text-align: center;
+  }
+
+  .achievement-actions .menu-btn {
+    padding: 14px 32px;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, #e91e63, #c2185b);
+    color: white;
+    box-shadow: 0 6px 20px rgba(233, 30, 99, 0.4);
+  }
+
+  .achievement-actions .menu-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 30px rgba(233, 30, 99, 0.6);
+  }
+
   @media (max-width: 1024px) {
     .units-tab {
       grid-template-columns: 1fr;

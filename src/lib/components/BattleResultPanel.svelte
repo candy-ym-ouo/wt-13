@@ -1,9 +1,11 @@
 <script>
   // @ts-nocheck
   import { legionStore } from '$lib/stores/legionStore.js';
+  import { achievementStore } from '$lib/stores/achievementStore.js';
   import { CURRENCY_CONFIG, RARITY_CONFIG } from '$lib/config/legionConfig.js';
   import { CARD_RARITY_COLORS, CARD_RARITY_LABELS } from '$lib/config/eventCardConfig.js';
   import { unitConfig } from '$lib/config/unitConfig.js';
+  import { ACHIEVEMENT_RARITY_CONFIG } from '$lib/config/achievementConfig.js';
   
   export let show = false;
   
@@ -13,6 +15,7 @@
   
   $: result = $legionStore.lastBattleResult;
   $: shouldShow = show && result;
+  $: battleStats = $achievementStore.battleStats;
   
   $: resultConfig = {
     win: { label: '胜利', color: '#4caf50', icon: '🏆' },
@@ -21,6 +24,61 @@
   };
   
   $: resultInfo = result ? resultConfig[result.result] || resultConfig.lose : null;
+
+  $: battleObjectives = [
+    {
+      id: 'win',
+      name: '赢得战斗',
+      icon: '🏆',
+      target: 1,
+      current: result?.result === 'win' ? 1 : 0,
+      completed: result?.result === 'win'
+    },
+    {
+      id: 'kills',
+      name: '击杀敌军',
+      icon: '💀',
+      target: 5,
+      current: battleStats.kills || 0,
+      completed: (battleStats.kills || 0) >= 5
+    },
+    {
+      id: 'damage',
+      name: '造成伤害',
+      icon: '💥',
+      target: 300,
+      current: battleStats.damageDealt || 0,
+      completed: (battleStats.damageDealt || 0) >= 300
+    },
+    {
+      id: 'noDeaths',
+      name: '无阵亡',
+      icon: '✨',
+      target: 1,
+      current: (battleStats.deaths || 0) === 0 ? 1 : 0,
+      completed: (battleStats.deaths || 0) === 0 && result?.result === 'win'
+    },
+    {
+      id: 'swift',
+      name: '速战速决(≤10回合)',
+      icon: '⚡',
+      target: 10,
+      current: battleStats.turnsPlayed || 0,
+      completed: (battleStats.turnsPlayed || 0) <= 10 && result?.result === 'win'
+    }
+  ];
+
+  $: newlyUnlockedInBattle = (() => {
+    const totalBattles = $achievementStore.stats.totalBattles;
+    const unlocked = [];
+    for (const [id, data] of Object.entries($achievementStore.unlocked)) {
+      if (data.battleIndex === totalBattles) {
+        const ach = { id, ...data };
+        unlocked.push(ach);
+      }
+    }
+    return unlocked;
+  })();
 </script>
 
 {#if shouldShow}
@@ -83,6 +141,49 @@
           </div>
         {/if}
       </div>
+
+      <div class="objectives-section">
+        <h3>🎯 战斗目标</h3>
+        <div class="objectives-list">
+          {#each battleObjectives as obj}
+            <div class="objective-item {obj.completed ? 'completed' : ''}">
+              <span class="obj-icon">{obj.completed ? '✅' : obj.icon}</span>
+              <span class="obj-name">{obj.name}</span>
+              <span class="obj-progress">
+                {#if obj.id === 'swift'}
+                  {obj.current}回合 / ≤{obj.target}回合
+                {:else if obj.id === 'noDeaths'}
+                  {obj.completed ? '已达成' : '未达成'}
+                {:else if obj.id === 'win'}
+                  {obj.completed ? '胜利' : '未胜利'}
+                {:else}
+                  {obj.current} / {obj.target}
+                {/if}
+              </span>
+            </div>
+          {/each}
+        </div>
+        <div class="battle-summary">
+          <span>💀 击杀: {battleStats.kills || 0}</span>
+          <span>💥 伤害: {battleStats.damageDealt || 0}</span>
+          <span>🃏 卡牌: {battleStats.cardsUsed || 0}</span>
+          <span>⏱️ 回合: {battleStats.turnsPlayed || 0}</span>
+        </div>
+      </div>
+
+      {#if newlyUnlockedInBattle.length > 0}
+        <div class="newly-unlocked-section">
+          <h3>🎊 新解锁成就</h3>
+          <div class="unlocked-list">
+            {#each newlyUnlockedInBattle as unlocked}
+              <div class="unlocked-achievement">
+                <span class="unlock-icon">🏆</span>
+                <span class="unlock-name">{unlocked.name || unlocked.id}</span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
       
       <div class="participating-units">
         <h4>⚔️ 参战单位</h4>
@@ -185,17 +286,134 @@
   }
   
   .rewards-section,
+  .objectives-section,
+  .newly-unlocked-section,
   .participating-units,
   .stats-update {
     margin-bottom: 24px;
   }
   
   .rewards-section h3,
+  .objectives-section h3,
+  .newly-unlocked-section h3,
   .participating-units h4 {
     margin: 0 0 16px 0;
     font-size: 18px;
     color: #fff;
     text-align: center;
+  }
+
+  .objectives-section {
+    background: rgba(255, 215, 0, 0.05);
+    border: 1px solid rgba(255, 215, 0, 0.2);
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  .objectives-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .objective-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    transition: all 0.3s;
+  }
+
+  .objective-item.completed {
+    background: rgba(46, 204, 113, 0.1);
+    border-color: rgba(46, 204, 113, 0.3);
+  }
+
+  .obj-icon {
+    font-size: 18px;
+    width: 24px;
+    text-align: center;
+  }
+
+  .obj-name {
+    flex: 1;
+    font-size: 13px;
+    color: #ccc;
+  }
+
+  .objective-item.completed .obj-name {
+    color: #2ecc71;
+    font-weight: 500;
+  }
+
+  .obj-progress {
+    font-size: 12px;
+    color: #888;
+    font-weight: 500;
+  }
+
+  .objective-item.completed .obj-progress {
+    color: #2ecc71;
+  }
+
+  .battle-summary {
+    display: flex;
+    justify-content: space-around;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .battle-summary span {
+    font-size: 12px;
+    color: #aaa;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+  }
+
+  .newly-unlocked-section {
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 152, 0, 0.05));
+    border: 2px solid rgba(255, 215, 0, 0.3);
+    border-radius: 12px;
+    padding: 16px;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 10px rgba(255, 215, 0, 0.2); }
+    50% { box-shadow: 0 0 20px rgba(255, 215, 0, 0.4); }
+  }
+
+  .unlocked-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .unlocked-achievement {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: rgba(255, 215, 0, 0.1);
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    border-radius: 8px;
+  }
+
+  .unlock-icon {
+    font-size: 20px;
+  }
+
+  .unlock-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #ffd700;
   }
   
   .rewards-grid {

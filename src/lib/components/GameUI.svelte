@@ -13,9 +13,13 @@
   import { saveRosterFromGame, getFactionRoster, clearRoster, loadRoster } from '$lib/utils/storageRoster';
   import { saveToSlot, loadFromSlot, deleteSlot, getAllSlotMetas, hasAutoSave, loadAutoSave, clearAutoSave, getManualSlots, getAutoSlot, autoSave } from '$lib/utils/storageSave';
   import { shopItems, shopConfig } from '$lib/config/shopConfig';
+  import { achievementStore } from '$lib/stores/achievementStore.js';
+  import { legionStore } from '$lib/stores/legionStore.js';
   import TacticalHintPanel from './TacticalHintPanel.svelte';
   import DeploymentPanel from './DeploymentPanel.svelte';
   import ReplayPlayer from './ReplayPlayer.svelte';
+  import AchievementToast from './AchievementToast.svelte';
+  import AchievementPanel from './AchievementPanel.svelte';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -170,6 +174,7 @@
   let recordSaved = false;
   let showRoster = false;
   let rosterSaved = false;
+  let showAchievementPanel = false;
 
   /**
    * @param {Unit} unit
@@ -460,6 +465,14 @@
     }
 
     updateSeasonPoints(state);
+
+    const battleResult = state.winner === 'draw' ? 'draw' : (state.winner === 'red' ? 'win' : 'lose');
+    const participatingUnitIds = !isDraw
+      ? state.units.filter(u => u.faction === state.winner).map(u => u.id)
+      : [];
+    legionStore.processBattleResult(battleResult, participatingUnitIds, 1.0);
+    achievementStore.finishBattle(battleResult, state);
+    achievementStore.checkProgress($legionStore);
   }
 
   function updateSeasonPoints(s) {
@@ -522,6 +535,20 @@
     recordSaved = false;
     rosterSaved = false;
     gameState.reset();
+    achievementStore.update(state => ({
+      ...state,
+      battleStats: {
+        kills: 0,
+        damageDealt: 0,
+        cardsUsed: 0,
+        summons: 0,
+        counterKills: 0,
+        comboKills: 0,
+        deaths: 0,
+        unitIdsAtStart: [],
+        turnsPlayed: 0
+      }
+    }));
     const roster = loadRoster();
     for (const faction of /** @type {('red' | 'blue')[]} */ (['red', 'blue'])) {
       const factionUnits = roster[faction]?.units || [];
@@ -1196,6 +1223,9 @@
       </button>
       <button class="btn btn-secondary" on:click={() => window.location.href = '/season'}>
         🏅 天梯
+      </button>
+      <button class="btn btn-secondary" on:click={() => showAchievementPanel = true}>
+        🎖️ 成就
       </button>
       <button class="btn btn-secondary" on:click={handleShowSaveLoad}>
         💾 存档
@@ -2696,6 +2726,8 @@
     </div>
   </div>
   {/if}
+  <AchievementToast />
+  <AchievementPanel bind:show={showAchievementPanel} />
 </div>
 
 <style>

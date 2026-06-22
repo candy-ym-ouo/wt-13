@@ -5,12 +5,16 @@
 	import RoomPanel from '$lib/components/RoomPanel.svelte';
 	import { seasonStore } from '$lib/stores/seasonStore.js';
 	import { roomStore, isInRoom, isPlaying } from '$lib/stores/roomStore.js';
+	import { achievementStore, totalAchievementPoints, unlockedCount, totalAchievementsCount } from '$lib/stores/achievementStore.js';
+	import AchievementPanel from '$lib/components/AchievementPanel.svelte';
+	import AchievementToast from '$lib/components/AchievementToast.svelte';
 	import { RANK_TIERS, RANK_SUB_TIERS } from '$lib/config/seasonConfig.js';
 	/** @typedef {import('$lib/config/seasonConfig.js').RankTier} RankTier */
 	/** @typedef {import('$lib/config/seasonConfig.js').RankSubTier} RankSubTier */
 	
 	/** @type {'menu' | 'solo' | 'multiplayer' | 'playing'} */
 	let viewMode = 'menu';
+	let showAchievementPanel = false;
 
 	function enterSoloGame() {
 		viewMode = 'solo';
@@ -72,6 +76,9 @@
 				<button class="menu-btn season" on:click={enterSeason}>
 					🏅 赛季天梯
 				</button>
+				<button class="menu-btn achievement" on:click={() => showAchievementPanel = true}>
+					🎖️ 成就中心
+				</button>
 			</div>
 
 			{#if $seasonStore}
@@ -81,6 +88,14 @@
 					{#if $seasonStore.winStreak >= 3}
 						<span class="badge-streak">🔥{$seasonStore.winStreak}连胜</span>
 					{/if}
+				</div>
+			{/if}
+			
+			{#if $achievementStore}
+				<div class="achievement-badge">
+					<span class="badge-icon">🎖️</span>
+					<span class="badge-points">{$totalAchievementPoints} 成就点</span>
+					<span class="badge-count">已解锁 {$unlockedCount}/{$totalAchievementsCount}</span>
 				</div>
 			{/if}
 			
@@ -126,6 +141,9 @@
 		<GameBoard />
 	</div>
 {/if}
+
+<AchievementToast />
+<AchievementPanel bind:show={showAchievementPanel} />
 
 <style>
 	.main-menu {
@@ -210,6 +228,44 @@
 	.menu-btn.season:hover {
 		transform: translateY(-3px);
 		box-shadow: 0 10px 30px rgba(255, 215, 0, 0.6);
+	}
+
+	.menu-btn.achievement {
+		background: linear-gradient(135deg, #e91e63, #c2185b);
+		color: white;
+		box-shadow: 0 6px 20px rgba(233, 30, 99, 0.4);
+	}
+
+	.menu-btn.achievement:hover {
+		transform: translateY(-3px);
+		box-shadow: 0 10px 30px rgba(233, 30, 99, 0.6);
+	}
+
+	.achievement-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 24px;
+		margin-bottom: 20px;
+		margin-left: 12px;
+		background: rgba(0, 0, 0, 0.3);
+		border: 1px solid #e91e63;
+		border-radius: 12px;
+	}
+
+	.achievement-badge .badge-icon {
+		font-size: 20px;
+	}
+
+	.achievement-badge .badge-points {
+		font-size: 16px;
+		font-weight: bold;
+		color: #e91e63;
+	}
+
+	.achievement-badge .badge-count {
+		font-size: 14px;
+		color: #ccc;
 	}
 
 	.season-badge {
