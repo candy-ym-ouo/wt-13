@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { DECK_SLOTS } from '$lib/config/cardDeckConfig';
 import {
   createDeck,
@@ -9,7 +9,7 @@ import {
   renameDeck,
   getDeckCardDetails,
   getDeckStats,
-  unlockCard,
+  unlockCard as unlockCardCore,
   selectDeckForBattle,
   getCardsForDrawPool,
   createInitialDeckData,
@@ -17,12 +17,35 @@ import {
   loadDeckData,
   getCardUnlockProgress
 } from '$lib/utils/cardDeckSystem';
+import { legionStore } from '$lib/stores/legionStore.js';
+
+function getCommanderLevelFromUnits(units) {
+  if (!units || units.length === 0) return 1;
+  let maxLevel = 1;
+  for (const u of units) {
+    if (u.level > maxLevel) maxLevel = u.level;
+  }
+  return maxLevel;
+}
+
+function getMergedUnlockedIds(cardDeckUnlocked, legionUnlocked) {
+  const merged = new Set([...(cardDeckUnlocked || [])]);
+  for (const id of (legionUnlocked || [])) {
+    merged.add(id);
+  }
+  return Array.from(merged);
+}
 
 function createCardDeckStore() {
   const saved = loadDeckData();
-  const initial = saved || createInitialDeckData();
+  const legionData = get(legionStore);
+  const mergedInitial = saved || createInitialDeckData();
+  mergedInitial.unlockedCardIds = getMergedUnlockedIds(
+    mergedInitial.unlockedCardIds,
+    legionData?.unlockedCards || []
+  );
 
-  const { subscribe, set, update } = writable(initial);
+  const { subscribe, set, update } = writable(mergedInitial);
 
   subscribe(state => {
     if (state) {
@@ -30,13 +53,19 @@ function createCardDeckStore() {
     }
   });
 
-  return {
+  /** @type {any} */
+  const store = {
     subscribe,
     set,
     update,
 
     reset: () => {
       const newData = createInitialDeckData();
+      const legionDataNow = get(legionStore);
+      newData.unlockedCardIds = getMergedUnlockedIds(
+        newData.unlockedCardIds,
+        legionDataNow?.unlockedCards || []
+      );
       set(newData);
       return newData;
     },
@@ -67,8 +96,9 @@ function createCardDeckStore() {
     }),
 
     addCard: (deckId, cardId) => update(state => {
+      const mergedUnlocked = getMergedUnlockedIds(state.unlockedCardIds, get(legionStore)?.unlockedCards || []);
       const newDecks = state.decks.map(d =>
-        d.id === deckId ? addCardToDeck(d, cardId, state.unlockedCardIds) : d
+        d.id === deckId ? addCardToDeck(d, cardId, mergedUnlocked) : d
       );
       return { ...state, decks: newDecks };
     }),
@@ -80,17 +110,35 @@ function createCardDeckStore() {
       return { ...state, decks: newDecks };
     }),
 
-    unlockCard: (cardId, playerLevel, playerWins, playerGold) => update(state => {
-      const result = unlockCard(state.unlockedCardIds, cardId, playerLevel, playerWins, playerGold);
-      if (!result.success) {
-        return { ...state, lastUnlockResult: { success: false, reason: result.reason } };
-      }
-      return {
-        ...state,
-        unlockedCardIds: result.newUnlocked,
-        lastUnlockResult: { success: true, cardId, goldCost: result.goldCost }
-      };
-    }),
+    unlockCard: (cardId) => {
+      const legionData = get(legionStore);
+      const playerLevel = getCommanderLevelFromUnits(legionData?.units || []);
+      const playerWinsCount = legionData?.stats?.totalWins || 0;
+      const playerGoldCount = legionData?.currency?.gold || 0;
+
+      let finalState = null;
+      update(state => {
+        const mergedUnlocked = getMergedUnlockedIds(state.unlockedCardIds, legionData?.unlockedCards || []);
+        const result = unlockCardCore(mergedUnlocked, cardId, playerLevel, playerWinsCount, playerGoldCount);
+        if (!result.success) {
+          finalState = { ...state, lastUnlockResult: { success: false, reason: result.reason } };
+          return finalState;
+        }
+
+        if (result.goldCost > 0) {
+          legionStore.addCurrency('gold', -result.goldCost);
+        }
+        legionStore.unlockCards([cardId]);
+
+        finalState = {
+          ...state,
+          unlockedCardIds: result.newUnlocked,
+          lastUnlockResult: { success: true, cardId, goldCost: result.goldCost }
+        };
+        return finalState;
+      });
+      return finalState?.lastUnlockResult;
+    },
 
     clearUnlockResult: () => update(state => ({
       ...state,
@@ -105,7 +153,8 @@ function createCardDeckStore() {
           result = { success: false, reason: '卡组不存在' };
           return state;
         }
-        result = selectDeckForBattle(deck, state.unlockedCardIds);
+        const mergedUnlocked = getMergedUnlockedIds(state.unlockedCardIds, get(legionStore)?.unlockedCards || []);
+        result = selectDeckForBattle(deck, mergedUnlocked);
         if (result.success) {
           return { ...state, activeDeckId: deckId };
         }
@@ -133,13 +182,42 @@ function createCardDeckStore() {
       return ids;
     }
   };
+
+  store.getMergedUnlockedCardIds = () => {
+    const selfUnlocked = store.getUnlockedCardIds();
+    const legionDataNow = get(legionStore);
+    return getMergedUnlockedIds(selfUnlocked, legionDataNow?.unlockedCards || []);
+  };
+
+  return store;
 }
 
 export const cardDeckStore = createCardDeckStore();
 
+export const commanderLevel = derived(legionStore, $legion => {
+  return getCommanderLevelFromUnits($legion?.units || []);
+});
+
+export const playerWins = derived(legionStore, $legion => {
+  return $legion?.stats?.totalWins || 0;
+});
+
+export const playerGold = derived(legionStore, $legion => {
+  return $legion?.currency?.gold || 0;
+});
+
+export const mergedUnlockedCardIds = derived(
+  [cardDeckStore, legionStore],
+  ([$deck, $legion]) => getMergedUnlockedIds($deck?.unlockedCardIds || [], $legion?.unlockedCards || [])
+);
+
 export const activeDeck = derived(cardDeckStore, $store => {
   if (!$store.activeDeckId) return null;
   return $store.decks.find(d => d.id === $store.activeDeckId) || null;
+});
+
+export const activeDeckCardPool = derived(activeDeck, $deck => {
+  return getCardsForDrawPool($deck || null);
 });
 
 export const activeDeckDetails = derived(activeDeck, $deck => {
@@ -152,12 +230,16 @@ export const activeDeckStats = derived(activeDeck, $deck => {
   return getDeckStats($deck);
 });
 
-export const activeDeckValidation = derived(cardDeckStore, $store => {
-  const deck = $store.decks.find(d => d.id === $store.activeDeckId);
-  if (!deck) return { valid: false, errors: ['未选择卡组'], warnings: [], stats: null };
-  return validateDeck(deck.cardIds, $store.unlockedCardIds);
-});
+export const activeDeckValidation = derived(
+  [cardDeckStore, mergedUnlockedCardIds],
+  ([$store, $merged]) => {
+    const deck = $store.decks.find(d => d.id === $store.activeDeckId);
+    if (!deck) return { valid: false, errors: ['未选择卡组'], warnings: [], stats: null };
+    return validateDeck(deck.cardIds, $merged);
+  }
+);
 
-export const unlockProgress = derived(cardDeckStore, $store => {
-  return getCardUnlockProgress($store.unlockedCardIds);
-});
+export const unlockProgress = derived(
+  [mergedUnlockedCardIds],
+  ([$merged]) => getCardUnlockProgress($merged)
+);

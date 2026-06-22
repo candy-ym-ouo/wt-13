@@ -6,7 +6,11 @@
     activeDeckDetails,
     activeDeckStats,
     activeDeckValidation,
-    unlockProgress
+    unlockProgress,
+    commanderLevel,
+    playerWins,
+    playerGold,
+    mergedUnlockedCardIds
   } from '$lib/stores/cardDeckStore.js';
   import { eventCards, CARD_CATEGORY, CARD_CATEGORY_LABELS, CARD_CATEGORY_COLORS, CARD_RARITY, CARD_RARITY_LABELS, CARD_RARITY_COLORS, CARD_RARITY_BG, CARD_RARITY_ICONS } from '$lib/config/eventCardConfig.js';
   import { DECK_RULES, DECK_SLOTS, UNLOCK_CONDITIONS, canUnlockCard } from '$lib/config/cardDeckConfig.js';
@@ -27,7 +31,7 @@
   $: editingDeck = editingDeckId ? $cardDeckStore.decks.find(d => d.id === editingDeckId) : null;
   $: editingDeckCardDetails = editingDeck ? getDeckCardDetails(editingDeck) : [];
   $: editingDeckStats = editingDeck ? getDeckStats(editingDeck) : null;
-  $: editingDeckValidation = editingDeck ? validateDeck(editingDeck.cardIds, $cardDeckStore.unlockedCardIds) : { valid: false, errors: [], warnings: [] };
+  $: editingDeckValidation = editingDeck ? validateDeck(editingDeck.cardIds, $mergedUnlockedCardIds) : { valid: false, errors: [], warnings: [] };
 
   $: filteredCards = eventCards.filter(card => {
     if (filterRarity !== 'all' && card.rarity !== filterRarity) return false;
@@ -35,7 +39,7 @@
     return true;
   });
 
-  $: unlockedSet = new Set($cardDeckStore.unlockedCardIds);
+  $: unlockedSet = new Set($mergedUnlockedCardIds);
 
   function selectDeck(deckId) {
     cardDeckStore.setActiveDeck(deckId);
@@ -86,10 +90,11 @@
   }
 
   function handleUnlockCard(cardId) {
-    const playerLevel = 10;
-    const playerWins = 25;
-    const playerGold = 5000;
-    cardDeckStore.unlockCard(cardId, playerLevel, playerWins, playerGold);
+    cardDeckStore.unlockCard(cardId);
+  }
+
+  function canUnlockUI(cardId) {
+    return canUnlockCard(cardId, $commanderLevel, $playerWins, $playerGold);
   }
 
   function getCardCountInDeck(cardId) {
@@ -114,6 +119,9 @@
       <div class="panel-header">
         <h2>🃏 军令卡组</h2>
         <div class="header-stats">
+          <span class="player-stat" title="指挥官等级">⭐ Lv.{$commanderLevel}</span>
+          <span class="player-stat" title="总胜场">🏆 {$playerWins}胜</span>
+          <span class="player-stat" title="金币">💰 {$playerGold}</span>
           <span class="deck-count">卡组: {$cardDeckStore.decks.length}/{DECK_SLOTS.maxDecks}</span>
           <span class="unlock-progress">解锁: {$unlockProgress.unlocked}/{$unlockProgress.total}</span>
         </div>
@@ -367,6 +375,7 @@
             {#each filteredCards as card}
               {@const isUnlocked = unlockedSet.has(card.id)}
               {@const unlockCost = UNLOCK_CONDITIONS[card.rarity]}
+              {@const unlockStatus = canUnlockUI(card.id)}
               <div
                 class="editor-card unlock-card {isUnlocked ? 'unlocked' : 'locked'}"
                 style="background: {CARD_RARITY_BG[card.rarity]}; border-left: 3px solid {CARD_CATEGORY_COLORS[card.category]}"
@@ -381,20 +390,24 @@
                   <span class="card-cost">⚡{card.cost}</span>
                   {#if isUnlocked}
                     <span class="status-badge unlocked">已解锁</span>
-                  {:else}
+                  {:else if unlockStatus.canUnlock}
                     <button
                       class="unlock-btn"
                       on:click={() => handleUnlockCard(card.id)}
                     >
                       🔓 {unlockCost.goldCost}💰
                     </button>
+                  {:else}
+                    <span class="status-badge locked" title={unlockStatus.reason}>🔒 未满足</span>
                   {/if}
                 </div>
                 {#if isUnlocked}
                   <div class="editor-card-desc">{card.description}</div>
                 {:else}
                   <div class="editor-card-desc locked-desc">
-                    需要 Lv.{unlockCost.requiredLevel} / {unlockCost.requiredWins}胜
+                    {unlockStatus.canUnlock
+                      ? `Lv.{$commanderLevel}/${unlockCost.requiredLevel} · {$playerWins}/${unlockCost.requiredWins}胜 · {$playerGold}/${unlockCost.goldCost}💰`
+                      : unlockStatus.reason}
                   </div>
                 {/if}
               </div>
@@ -458,6 +471,11 @@
     gap: 16px;
     font-size: 14px;
     color: #aaa;
+    flex-wrap: wrap;
+  }
+
+  .player-stat {
+    color: #ddd;
   }
 
   .close-btn {
@@ -1043,6 +1061,11 @@
   .status-badge.unlocked {
     background: rgba(76, 175, 80, 0.15);
     color: #4caf50;
+  }
+
+  .status-badge.locked {
+    background: rgba(231, 76, 60, 0.15);
+    color: #e74c3c;
   }
 
   .unlock-btn {

@@ -1,10 +1,12 @@
 <script>
+  // @ts-nocheck
   import { gameState, deploymentState, isDeploymentPhase, deployingFaction, currentHand, currentEnergy } from '$lib/stores/gameStore';
   import { gameRules } from '$lib/config/gameRules';
   import { validateAllUnitsDeployed, canMulligan } from '$lib/utils/gameLogic';
   import { unitConfig } from '$lib/config/unitConfig';
   import { CARD_RARITY_COLORS, CARD_CATEGORY_LABELS } from '$lib/config/eventCardConfig';
   import { legionStore } from '$lib/stores/legionStore.js';
+  import { cardDeckStore, activeDeckCardPool } from '$lib/stores/cardDeckStore.js';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -42,8 +44,14 @@
 
   function handleMulligan(/** @type {number} */ index) {
     if (!faction || !canMull) return;
-    const unlockedCardIds = $legionStore.unlockedCards || [];
-    gameState.deploymentMulligan(/** @type {'red' | 'blue'} */ (faction), index, unlockedCardIds);
+    let drawPool = $legionStore.unlockedCards || [];
+    if (faction === 'red') {
+      const deckPool = $activeDeckCardPool;
+      if (deckPool && deckPool.length > 0) {
+        drawPool = deckPool;
+      }
+    }
+    gameState.deploymentMulligan(/** @type {'red' | 'blue'} */ (faction), index, drawPool);
   }
 
   function handleStartGame() {

@@ -22,7 +22,7 @@
   import AchievementPanel from './AchievementPanel.svelte';
   import TechTreePanel from './TechTreePanel.svelte';
   import CardDeckPanel from './CardDeckPanel.svelte';
-  import { cardDeckStore } from '$lib/stores/cardDeckStore.js';
+  import { cardDeckStore, activeDeckCardPool } from '$lib/stores/cardDeckStore.js';
   import { getCardsForDrawPool } from '$lib/utils/cardDeckSystem.js';
 
   /**
@@ -423,13 +423,13 @@
 
   function initHands() {
     const currentTurn = state?.turn || 1;
-    let unlockedCardIds = $legionStore.unlockedCards || [];
-    const activeDeck = $cardDeckStore.decks.find(d => d.id === $cardDeckStore.activeDeckId);
-    if (activeDeck && activeDeck.cardIds && activeDeck.cardIds.length > 0) {
-      unlockedCardIds = getCardsForDrawPool(activeDeck);
+    let redDrawPool = $activeDeckCardPool;
+    if (!redDrawPool || redDrawPool.length === 0) {
+      redDrawPool = $legionStore.unlockedCards || [];
     }
-    const redHand = drawInitialHand(currentTurn, unlockedCardIds);
-    const blueHand = drawInitialHand(currentTurn, $legionStore.unlockedCards || []);
+    const blueDrawPool = $legionStore.unlockedCards || [];
+    const redHand = drawInitialHand(currentTurn, redDrawPool);
+    const blueHand = drawInitialHand(currentTurn, blueDrawPool);
     for (const card of redHand) {
       gameState.addCard('red', card);
     }
@@ -524,9 +524,9 @@
     const nextPityCounter = state.pityCounter[nextFaction] || 0;
     let drawPool = $legionStore.unlockedCards || [];
     if (nextFaction === 'red') {
-      const activeDeck = $cardDeckStore.decks.find(d => d.id === $cardDeckStore.activeDeckId);
-      if (activeDeck && activeDeck.cardIds && activeDeck.cardIds.length > 0) {
-        drawPool = getCardsForDrawPool(activeDeck);
+      const deckPool = $activeDeckCardPool;
+      if (deckPool && deckPool.length > 0) {
+        drawPool = deckPool;
       }
     }
     const newCard = drawCard(nextDrawHistory, nextPityCounter, nextTurn, drawPool);
