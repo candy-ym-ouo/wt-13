@@ -12,8 +12,16 @@
   import { 
     canPromote, 
     canSetSpecialization,
-    getAvailableSpecializations
+    getAvailableSpecializations,
+    getUnitEquipmentStats,
+    getUnitSetBonuses,
+    getUnitSpecialEffects
   } from '$lib/utils/legionSystem.js';
+  import { 
+    EQUIPMENT_SLOT_INFO,
+    getRarityInfo
+  } from '$lib/config/equipmentConfig.js';
+  import EquipmentPanel from './EquipmentPanel.svelte';
   
   export let unit;
   
@@ -27,6 +35,10 @@
   $: nextPromotion = unit.promotion + 1;
   $: nextPromoConfig = PROMOTION_CONFIG[nextPromotion];
   $: colorHex = '#' + baseConfig.color?.toString(16).padStart(6, '0') || '#888888';
+  
+  $: equipStats = getUnitEquipmentStats(unit);
+  $: setBonuses = getUnitSetBonuses(unit);
+  $: specialEffects = getUnitSpecialEffects(unit);
   
   function handleAddExp(amount) {
     legionStore.addExpToUnit(unit.id, amount);
@@ -54,6 +66,16 @@
     hp: `+${(STAT_GROWTH.hp.perLevel * 10).toFixed(0)} 生命`,
     move: `+${(STAT_GROWTH.move.perLevel * 10).toFixed(1)} 移动`
   };
+  
+  $: totalStats = {
+    attack: (unit.stats?.attack || 0) + (equipStats?.attack || 0),
+    defense: (unit.stats?.defense || 0) + (equipStats?.defense || 0),
+    maxHp: (unit.stats?.maxHp || 0) + (equipStats?.maxHp || 0),
+    moveRange: (unit.stats?.moveRange || 0) + (equipStats?.moveRange || 0),
+    attackRange: (unit.stats?.attackRange || 0) + (equipStats?.attackRange || 0)
+  };
+  
+  $: equipmentList = unit.equipment || [];
 </script>
 
 <div class="unit-detail-panel" style="--unit-color: {colorHex}; --rarity-color: {rarityInfo.color};">
@@ -96,38 +118,94 @@
         <span class="stat-icon">⚔️</span>
         <div class="stat-info">
           <span class="stat-name">攻击力</span>
-          <span class="stat-value">{unit.stats?.attack || 0}</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{totalStats.attack}</span>
+            {#if equipStats?.attack > 0}
+              <span class="equip-bonus">+{equipStats.attack}</span>
+            {/if}
+          </div>
         </div>
       </div>
       <div class="stat-item">
         <span class="stat-icon">🛡️</span>
         <div class="stat-info">
           <span class="stat-name">防御力</span>
-          <span class="stat-value">{unit.stats?.defense || 0}</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{totalStats.defense}</span>
+            {#if equipStats?.defense > 0}
+              <span class="equip-bonus">+{equipStats.defense}</span>
+            {/if}
+          </div>
         </div>
       </div>
       <div class="stat-item">
         <span class="stat-icon">❤️</span>
         <div class="stat-info">
           <span class="stat-name">最大生命</span>
-          <span class="stat-value">{unit.stats?.maxHp || 0}</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{totalStats.maxHp}</span>
+            {#if equipStats?.maxHp > 0}
+              <span class="equip-bonus">+{equipStats.maxHp}</span>
+            {/if}
+          </div>
         </div>
       </div>
       <div class="stat-item">
         <span class="stat-icon">👟</span>
         <div class="stat-info">
           <span class="stat-name">移动力</span>
-          <span class="stat-value">{unit.stats?.moveRange || 0}</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{totalStats.moveRange}</span>
+            {#if equipStats?.moveRange > 0}
+              <span class="equip-bonus">+{equipStats.moveRange}</span>
+            {/if}
+          </div>
         </div>
       </div>
       <div class="stat-item">
         <span class="stat-icon">🎯</span>
         <div class="stat-info">
           <span class="stat-name">攻击距离</span>
-          <span class="stat-value">{unit.stats?.attackRange || 0}</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{totalStats.attackRange}</span>
+            {#if equipStats?.attackRange > 0}
+              <span class="equip-bonus">+{equipStats.attackRange}</span>
+            {/if}
+          </div>
         </div>
       </div>
     </div>
+  </div>
+  
+  <div class="equipment-preview-section">
+    <h3>装备栏 ({equipmentList.length}/4)</h3>
+    <div class="equip-slots-mini">
+      {#each Object.entries(EQUIPMENT_SLOT_INFO) as [slot, info]}
+        {@const equipped = equipmentList.find(e => e.slot === slot)}
+        <div 
+          class="equip-slot-mini {equipped ? 'filled' : 'empty'}"
+          style="--slot-color: {equipped ? getRarityInfo(equipped.rarity).color : info.color}"
+          title="{equipped ? equipped.name : info.name}"
+        >
+          {#if equipped}
+            <span class="mini-icon">{info.icon}</span>
+            <span class="mini-name">{equipped.name}</span>
+          {:else}
+            <span class="mini-icon">{info.icon}</span>
+            <span class="mini-empty">空</span>
+          {/if}
+        </div>
+      {/each}
+    </div>
+    
+    {#if setBonuses?.bonuses?.length > 0}
+      <div class="set-bonus-mini">
+        <span class="set-label">套装效果:</span>
+        {#each setBonuses.bonuses as bonus}
+          <span class="set-tag" style="--set-color: {bonus.setColor}">{bonus.label}</span>
+        {/each}
+      </div>
+    {/if}
   </div>
   
   <div class="stat-allocation-section">
@@ -658,5 +736,102 @@
     font-size: 24px;
     font-weight: bold;
     color: #fff;
+  }
+  
+  .stat-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  
+  .equip-bonus {
+    font-size: 12px;
+    color: #4caf50;
+    font-weight: normal;
+  }
+  
+  .equipment-preview-section {
+    margin-bottom: 20px;
+  }
+  
+  .equipment-preview-section h3 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    color: #fff;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--rarity-color);
+  }
+  
+  .equip-slots-mini {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  
+  .equip-slot-mini {
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid transparent;
+    border-radius: 8px;
+    padding: 8px 6px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+  }
+  
+  .equip-slot-mini.filled {
+    border-color: var(--slot-color, #666);
+    background: rgba(255, 255, 255, 0.08);
+  }
+  
+  .equip-slot-mini.empty {
+    border-color: rgba(255, 255, 255, 0.1);
+    opacity: 0.6;
+  }
+  
+  .mini-icon {
+    font-size: 20px;
+  }
+  
+  .mini-name {
+    font-size: 10px;
+    color: #fff;
+    font-weight: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  
+  .mini-empty {
+    font-size: 10px;
+    color: #666;
+  }
+  
+  .set-bonus-mini {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+  }
+  
+  .set-label {
+    font-size: 12px;
+    color: #aaa;
+  }
+  
+  .set-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--set-color, #666);
+    border-radius: 10px;
+    color: var(--set-color, #fff);
   }
 </style>

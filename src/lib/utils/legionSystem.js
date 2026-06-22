@@ -18,6 +18,18 @@ import {
   getRecruitPoolForRarity
 } from '$lib/config/legionConfig.js';
 import { unitConfig, SPECIALIZATION_CONFIG } from '$lib/config/unitConfig.js';
+import { 
+  createEquipmentInstance, 
+  calculateEquipmentStats, 
+  calculateSetBonuses,
+  getAllSpecialEffects,
+  equipItem,
+  unequipItem,
+  rollRandomEquipment,
+  getEquipmentPower,
+  getUnitEquipPower,
+  canEquip
+} from '$lib/utils/equipmentSystem.js';
 
 export function generateUnitId() {
   return `legion_unit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -41,6 +53,7 @@ export function createLegionUnit(unitType, rarity) {
     statPoints: 0,
     allocatedStats: { atk: 0, def: 0, hp: 0, move: 0 },
     specialization: null,
+    equipment: [],
     stats: calculateUnitStats({ type: unitType }, 1, rarity, 0, { atk: 0, def: 0, hp: 0, move: 0 }, null),
     acquiredAt: Date.now(),
     battleCount: 0,
@@ -373,7 +386,8 @@ function mergeLegionData(defaultData, savedData) {
     currency: { ...defaultData.currency, ...(savedData.currency || {}) },
     stats: { ...defaultData.stats, ...(savedData.stats || {}) },
     collectedCards: savedData.collectedCards || defaultData.collectedCards,
-    unlockedCards: savedData.unlockedCards || defaultData.unlockedCards
+    unlockedCards: savedData.unlockedCards || defaultData.unlockedCards,
+    equipment: savedData.equipment || defaultData.equipment
   };
 }
 
@@ -441,10 +455,19 @@ export function createInitialLegionData() {
     createLegionUnit('tank', 'COMMON')
   ].filter(Boolean);
   
+  const initialEquipment = [
+    createEquipmentInstance('iron_sword'),
+    createEquipmentInstance('leather_armor'),
+    createEquipmentInstance('simple_ring'),
+    createEquipmentInstance('power_crystal'),
+    createEquipmentInstance('health_pendant')
+  ].filter(Boolean);
+  
   const initialLineup = createLineup('初始阵容', initialUnits.slice(0, 6).map(u => u.id));
   
   return {
     units: initialUnits,
+    equipment: initialEquipment,
     lineups: [initialLineup],
     activeLineupId: initialLineup.id,
     currency: {
@@ -462,7 +485,95 @@ export function createInitialLegionData() {
       totalLosses: 0,
       totalDraws: 0,
       totalRecruits: 0,
-      totalCardsCollected: 0
+      totalCardsCollected: 0,
+      totalEquipmentObtained: initialEquipment.length
     }
   };
 }
+
+export function equipItemToUnit(unit, item) {
+  if (!unit || !item) return { success: false, reason: '无效的单位或装备' };
+  
+  const result = equipItem(unit, unit.equipment || [], item);
+  if (!result.success) {
+    return result;
+  }
+  
+  const updatedUnit = {
+    ...unit,
+    equipment: result.equippedItems
+  };
+  
+  return {
+    success: true,
+    unit: updatedUnit,
+    unequipped: result.unequipped
+  };
+}
+
+export function unequipItemFromUnit(unit, slot) {
+  if (!unit) return { success: false, reason: '无效的单位' };
+  
+  const result = unequipItem(unit.equipment || [], slot);
+  if (!result.success) {
+    return result;
+  }
+  
+  const updatedUnit = {
+    ...unit,
+    equipment: result.equippedItems
+  };
+  
+  return {
+    success: true,
+    unit: updatedUnit,
+    unequipped: result.unequipped
+  };
+}
+
+export function getUnitEquipmentStats(unit) {
+  if (!unit) return { attack: 0, defense: 0, maxHp: 0, moveRange: 0, attackRange: 0 };
+  return calculateEquipmentStats(unit, unit.equipment || []);
+}
+
+export function getUnitSetBonuses(unit) {
+  if (!unit) return { bonuses: [], activeSets: {} };
+  return calculateSetBonuses(unit.equipment || []);
+}
+
+export function getUnitSpecialEffects(unit) {
+  if (!unit) return [];
+  return getAllSpecialEffects(unit.equipment || []);
+}
+
+export function addEquipmentToInventory(inventory, item) {
+  if (!item) return inventory;
+  return [...inventory, item];
+}
+
+export function removeEquipmentFromInventory(inventory, itemId) {
+  return inventory.filter(item => item.id !== itemId);
+}
+
+export function rollEquipmentReward(options = {}) {
+  const { rarity = null, slot = null, isRelic = false } = options;
+  return rollRandomEquipment({ rarity, slot, isRelic });
+}
+
+export function getEquipmentListByRarity(inventory, rarity) {
+  return inventory.filter(item => item.rarity?.toUpperCase() === rarity.toUpperCase());
+}
+
+export function getEquipmentListBySlot(inventory, slot) {
+  return inventory.filter(item => item.slot === slot);
+}
+
+export function getTotalEquipmentPower(inventory) {
+  return inventory.reduce((sum, item) => sum + getEquipmentPower(item), 0);
+}
+
+export function canUnitEquipItem(unitType, item) {
+  return canEquip(unitType, item);
+}
+
+export { getEquipmentPower, getUnitEquipPower };

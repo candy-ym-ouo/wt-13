@@ -1,6 +1,7 @@
 import { boardConfig, tileEffectConfig, TILE_EFFECT_TYPES } from '$lib/config/boardConfig';
 import { unitConfig, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_RELATIONSHIPS, COUNTER_LABELS, SYNERGY_CONFIG, SPECIALIZATION_CONFIG, MOVE_SKILL_TYPES, MOVE_SKILL_INFO, COUNTER_TYPES, COUNTER_TYPE_INFO, UNIT_COUNTER_TYPE } from '$lib/config/unitConfig';
 import { gameRules } from '$lib/config/gameRules';
+import { equipmentConfig, EQUIPMENT_SETS, getRarityInfo } from '$lib/config/equipmentConfig';
 
 /**
  * @typedef {import('./cardSystem').Unit} Unit
@@ -1101,6 +1102,129 @@ export function calculateAllSynergies(units, faction) {
   return { allBuffs, messages };
 }
 
+export function calculateUnitEquipmentStats(unit) {
+  const baseStats = { attack: 0, defense: 0, maxHp: 0, moveRange: 0, attackRange: 0 };
+  if (!unit.equipment || unit.equipment.length === 0) return baseStats;
+  
+  for (const item of unit.equipment) {
+    if (!item || !item.baseStats) continue;
+    const rarityMult = getRarityInfo(item.rarity || 'COMMON').statMultiplier;
+    const levelBonus = 1 + (item.level - 1) * 0.05;
+    const enhanceBonus = 1 + (item.enhancement || 0) * 0.02;
+    const totalMult = rarityMult * levelBonus * enhanceBonus;
+    
+    if (item.baseStats.attack) baseStats.attack += Math.floor(item.baseStats.attack * totalMult);
+    if (item.baseStats.defense) baseStats.defense += Math.floor(item.baseStats.defense * totalMult);
+    if (item.baseStats.maxHp) baseStats.maxHp += Math.floor(item.baseStats.maxHp * totalMult);
+    if (item.baseStats.moveRange) baseStats.moveRange += Math.floor(item.baseStats.moveRange * totalMult * 10) / 10;
+    if (item.baseStats.attackRange) baseStats.attackRange += item.baseStats.attackRange;
+  }
+  
+  return baseStats;
+}
+
+export function calculateUnitSetBonuses(unit) {
+  const result = { sets: {}, bonuses: [] };
+  if (!unit.equipment || unit.equipment.length === 0) return result;
+  
+  for (const item of unit.equipment) {
+    if (item.set) {
+      if (!result.sets[item.set]) {
+        result.sets[item.set] = { count: 0, items: [] };
+      }
+      result.sets[item.set].count++;
+      result.sets[item.set].items.push(item.id);
+    }
+  }
+  
+  for (const [setId, setInfo] of Object.entries(result.sets)) {
+    const setConfig = EQUIPMENT_SETS[setId];
+    if (!setConfig) continue;
+    
+    for (const bonus of setConfig.bonuses) {
+      if (setInfo.count >= bonus.pieces) {
+        result.bonuses.push({
+          ...bonus,
+          setId,
+          setName: setConfig.name,
+          setColor: setConfig.color
+        });
+      }
+    }
+  }
+  
+  return result;
+}
+
+export function getUnitSpecialEffects(unit) {
+  const effects = [];
+  if (!unit.equipment) return effects;
+  
+  for (const item of unit.equipment) {
+    if (item.specialEffects && item.specialEffects.length > 0) {
+      effects.push(...item.specialEffects.map(e => ({
+        ...e,
+        source: item.name,
+        rarity: item.rarity
+      })));
+    }
+  }
+  
+  const setBonuses = calculateUnitSetBonuses(unit);
+  for (const bonus of setBonuses.bonuses) {
+    if (bonus.effects) {
+      effects.push(...bonus.effects.map(e => ({
+        ...e,
+        source: bonus.setName + '套装',
+        isSetBonus: true
+      })));
+    }
+  }
+  
+  return effects;
+}
+
+function applyEquipmentSpecialEffects(attacker, defender, damage, isCounter = false) {
+  let finalDamage = damage;
+  const atkEffects = getUnitSpecialEffects(attacker);
+  const defEffects = getUnitSpecialEffects(defender);
+  
+  for (const effect of atkEffects) {
+    switch (effect.type) {
+      case 'damageBoost':
+        finalDamage = Math.floor(finalDamage * (1 + effect.value));
+        break;
+      case 'criticalChance':
+        if (Math.random() < effect.value) {
+          const critMult = effect.critMultiplier || 1.5;
+          finalDamage = Math.floor(finalDamage * critMult);
+        }
+        break;
+      case 'counterBoost':
+        if (isCounter) {
+          finalDamage = Math.floor(finalDamage * (1 + effect.value));
+        }
+        break;
+      case 'ignoreDefense':
+        break;
+      case 'lifeSteal':
+        break;
+    }
+  }
+  
+  for (const effect of defEffects) {
+    switch (effect.type) {
+      case 'damageReduction':
+        finalDamage = Math.floor(finalDamage * (1 - effect.value));
+        break;
+      case 'thorns':
+        break;
+    }
+  }
+  
+  return finalDamage;
+}
+
 /**
  * @param {Unit} attacker
  * @param {Unit} defender
@@ -1120,6 +1244,34 @@ export function calculateDamage(attacker, defender, terrain) {
 
   attack += atkAllocated.atk * growth.atk;
   defense += (defAllocated.def || 0) * growth.def;
+  
+  const atkEquipStats = calculateUnitEquipmentStats(attacker);
+  const defEquipStats = calculateUnitEquipmentStats(defender);
+  attack += atkEquipStats.attack;
+  defense += defEquipStats.defense;
+  
+  const atkSetBonuses = calculateUnitSetBonuses(attacker);
+  const defSetBonuses = calculateUnitSetBonuses(defender);
+  
+  for (const bonus of atkSetBonuses.bonuses) {
+    if (bonus.statType === 'attack' && bonus.value) {
+      if (bonus.isPercent) {
+        attack *= (1 + bonus.value);
+      } else {
+        attack += bonus.value;
+      }
+    }
+  }
+  
+  for (const bonus of defSetBonuses.bonuses) {
+    if (bonus.statType === 'defense' && bonus.value) {
+      if (bonus.isPercent) {
+        defense *= (1 + bonus.value);
+      } else {
+        defense += bonus.value;
+      }
+    }
+  }
 
   if (attacker.specialization) {
     const spec = SPECIALIZATION_CONFIG[attacker.type]?.find(s => s.id === attacker.specialization);
@@ -1192,6 +1344,8 @@ export function calculateDamage(attacker, defender, terrain) {
   if (frozen) {
     damage = Math.floor(damage * gameRules.statusEffects.freeze.extraDamageMultiplier);
   }
+  
+  damage = applyEquipmentSpecialEffects(attacker, defender, damage, false);
 
   return Math.max(1, damage);
 }

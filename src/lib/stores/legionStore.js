@@ -22,7 +22,17 @@ import {
   addUnitToLineup,
   removeUnitFromLineup,
   calculateBattleRewards,
-  saveBattleRecord
+  saveBattleRecord,
+  equipItemToUnit,
+  unequipItemFromUnit,
+  getUnitEquipmentStats,
+  getUnitSetBonuses,
+  getUnitSpecialEffects,
+  rollEquipmentReward,
+  getEquipmentListByRarity,
+  getEquipmentListBySlot,
+  getTotalEquipmentPower,
+  canUnitEquipItem
 } from '$lib/utils/legionSystem.js';
 
 function createLegionStore() {
@@ -473,7 +483,126 @@ function createLegionStore() {
           gold: (state.currency.gold || 0) + goldAmount
         }
       };
-    })
+    }),
+    
+    equipItem: (unitId, itemId) => update(state => {
+      const unitIndex = state.units.findIndex(u => u.id === unitId);
+      if (unitIndex === -1) return state;
+      
+      const item = state.equipment.find(e => e.id === itemId);
+      if (!item) return state;
+      
+      const unit = state.units[unitIndex];
+      if (!canUnitEquipItem(unit.type, item)) {
+        return { ...state, lastEquipResult: { success: false, reason: '该单位无法装备此物品' } };
+      }
+      
+      const result = equipItemToUnit(unit, item);
+      if (!result.success) {
+        return { ...state, lastEquipResult: { success: false, reason: result.reason } };
+      }
+      
+      const newUnits = [...state.units];
+      newUnits[unitIndex] = result.unit;
+      
+      let newEquipment = state.equipment.filter(e => e.id !== itemId);
+      if (result.unequipped) {
+        newEquipment = [...newEquipment, result.unequipped];
+      }
+      
+      return {
+        ...state,
+        units: newUnits,
+        equipment: newEquipment,
+        lastEquipResult: { success: true, unitId, itemId }
+      };
+    }),
+    
+    unequipItem: (unitId, slot) => update(state => {
+      const unitIndex = state.units.findIndex(u => u.id === unitId);
+      if (unitIndex === -1) return state;
+      
+      const unit = state.units[unitIndex];
+      const result = unequipItemFromUnit(unit, slot);
+      if (!result.success) {
+        return { ...state, lastEquipResult: { success: false, reason: result.reason } };
+      }
+      
+      const newUnits = [...state.units];
+      newUnits[unitIndex] = result.unit;
+      
+      let newEquipment = [...state.equipment];
+      if (result.unequipped) {
+        newEquipment = [...newEquipment, result.unequipped];
+      }
+      
+      return {
+        ...state,
+        units: newUnits,
+        equipment: newEquipment,
+        lastEquipResult: { success: true, unitId, slot }
+      };
+    }),
+    
+    addEquipment: (item) => update(state => {
+      if (!item) return state;
+      
+      return {
+        ...state,
+        equipment: [...state.equipment, item],
+        stats: {
+          ...state.stats,
+          totalEquipmentObtained: (state.stats.totalEquipmentObtained || 0) + 1
+        }
+      };
+    }),
+    
+    addMultipleEquipment: (items) => update(state => {
+      if (!items || items.length === 0) return state;
+      
+      return {
+        ...state,
+        equipment: [...state.equipment, ...items],
+        stats: {
+          ...state.stats,
+          totalEquipmentObtained: (state.stats.totalEquipmentObtained || 0) + items.length
+        }
+      };
+    }),
+    
+    removeEquipment: (itemId) => update(state => {
+      return {
+        ...state,
+        equipment: state.equipment.filter(e => e.id !== itemId)
+      };
+    }),
+    
+    rollAndAddEquipment: (options = {}) => update(state => {
+      const item = rollEquipmentReward(options);
+      if (!item) {
+        return { ...state, lastEquipmentReward: { success: false, reason: '生成装备失败' } };
+      }
+      
+      return {
+        ...state,
+        equipment: [...state.equipment, item],
+        stats: {
+          ...state.stats,
+          totalEquipmentObtained: (state.stats.totalEquipmentObtained || 0) + 1
+        },
+        lastEquipmentReward: { success: true, item }
+      };
+    }),
+    
+    clearLastEquipResult: () => update(state => ({
+      ...state,
+      lastEquipResult: null
+    })),
+    
+    clearLastEquipmentReward: () => update(state => ({
+      ...state,
+      lastEquipmentReward: null
+    }))
   };
 }
 
