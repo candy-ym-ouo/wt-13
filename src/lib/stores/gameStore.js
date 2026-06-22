@@ -6,8 +6,27 @@ import { cardConfig } from '$lib/config/eventCardConfig';
 import { shopItems, shopConfig } from '$lib/config/shopConfig';
 import { techConfig, getTechById } from '$lib/config/techTreeConfig.js';
 import { WEATHER_TYPES, getWeatherConfig } from '$lib/config/weatherConfig.js';
+import { getBossConfig, BOSS_VICTORY_CONDITION } from '$lib/config/bossConfig.js';
 import { debouncedAutoSave, cancelPendingAutoSave } from '$lib/utils/storageSave';
 import { replayStore } from '$lib/stores/replayStore';
+import {
+  createInitialBossState,
+  checkBossVictoryCondition,
+  checkBossDefeatCondition,
+  getBossEffectiveAttack,
+  getBossEffectiveDefense,
+  getBossEffectiveMoveRange,
+  getBossEffectiveAttackRange,
+  applyBossDamageReduction,
+  getCircleAOETiles,
+  getLineAOETiles,
+  getFanAOETiles
+} from '$lib/utils/bossLogic.js';
+import {
+  executeBossAITurn,
+  calculateBossDamageTaken,
+  onUnitKilled
+} from '$lib/utils/bossAI.js';
 import {
   tickActiveCards,
   tickCooldowns,
@@ -149,6 +168,19 @@ import {
  */
 
 /**
+ * @typedef {object} BossState
+ * @property {string} bossId
+ * @property {string} unitId
+ * @property {number} currentPhaseId
+ * @property {Record<string, number>} skillCooldowns
+ * @property {Record<string, {skillId: string, targetX: number, targetY: number, remainingTurns: number}>} skillWarnings
+ * @property {number} summonKillCount
+ * @property {number} bossTurnCount
+ * @property {boolean} isInvulnerable
+ * @property {string[]} phaseHistory
+ */
+
+/**
  * @typedef {object} GameState
  * @property {Unit[]} units
  * @property {string} currentFaction
@@ -194,6 +226,8 @@ import {
  * @property {EconomyNotification[]} economyNotifications
  * @property {TechTreeState} techTree
  * @property {WeatherState} weather
+ * @property {string | null} activeBossId
+ * @property {BossState | null} bossState
  */
 
 /**
@@ -494,7 +528,9 @@ function createInitialState() {
       previousWeather: WEATHER_TYPES.SUNNY,
       weatherJustChanged: false,
       weatherHistory: [WEATHER_TYPES.SUNNY]
-    }
+    },
+    activeBossId: null,
+    bossState: null
   };
 }
 
@@ -1132,11 +1168,25 @@ function createGameState() {
         /** @param {any} b */ b => b.type === 'doubleAttack'
       );
       const attackerName = attacker ? unitConfig[/** @type {UnitType} */ (attacker.type)].name : '';
-      const defenderName = defender ? unitConfig[/** @type {UnitType} */ (defender.type)].name : '';
+      let defenderName = defender ? unitConfig[/** @type {UnitType} */ (defender.type)].name : '';
       const attackerFaction = attacker?.faction || state.currentFaction;
       const defenderFaction = defender?.faction || '';
       const hasShield = defender?.buffs?.some(/** @param {any} b */ b => b.type === 'shield');
-      const finalDamage = hasShield ? 0 : damage;
+
+      let actualDamage = damage;
+      if (state.bossState && state.activeBossId && defender && defender.id === state.bossState.unitId) {
+        const bossConfig = getBossConfig(state.activeBossId);
+        if (bossConfig) {
+          actualDamage = calculateBossDamageTaken(defender, damage, state.bossState, bossConfig);
+
+          if (state.bossState.isInvulnerable) {
+            defenderName = bossConfig.name;
+            actualDamage = 0;
+          }
+        }
+      }
+
+      const finalDamage = hasShield ? 0 : actualDamage;
 
       const layout = state.boardLayout || null;
       const atkTerrain = attacker ? getTerrain(attacker.x, attacker.y, layout) : null;
@@ -1227,6 +1277,15 @@ function createGameState() {
       const attackerDeadFromCounter = updatedAttacker && updatedAttacker.currentHp <= 0;
 
       if (defenderDead && attacker && defenderFaction) {
+        let newBossState = state.bossState;
+        if (newBossState && state.activeBossId && defender && defender.isSummon) {
+          const bossConfig = getBossConfig(state.activeBossId);
+          if (bossConfig && defender.faction === bossConfig.faction) {
+            onUnitKilled(defender, newBossState, bossConfig);
+            newBossState = { ...newBossState };
+          }
+        }
+
         updatedUnits = updatedUnits.map(/** @param {Unit} u */ u => {
           if (u.id === attackerId) {
             const before = u.morale;
@@ -1266,6 +1325,10 @@ function createGameState() {
           }
           return u;
         });
+
+        if (newBossState !== state.bossState) {
+          state = { ...state, bossState: newBossState };
+        }
       } else if (attacker && attackerFaction) {
         updatedUnits = updatedUnits.map(/** @param {Unit} u */ u => {
           if (u.id === attackerId) {
@@ -2169,6 +2232,95 @@ function createGameState() {
         });
       }
 
+      let bossGameOver = isGameOver;
+      let bossFinalWinner = finalWinner;
+      let bossFinalCondition = finalCondition;
+      let bossMessages = [...statusMessages];
+
+      if (state.bossState && state.activeBossId && !isGameOver) {
+        const bossConfig = getBossConfig(state.activeBossId);
+        if (bossConfig && nextFaction === bossConfig.faction) {
+          const bossUnit = units.find(u => u.id === state.bossState?.unitId);
+          if (bossUnit && bossUnit.currentHp > 0) {
+            const layout = state.boardLayout || boardConfig.layout;
+            const bossTurnResult = executeBossAITurn(
+              bossUnit,
+              units,
+              layout,
+              state.bossState,
+              bossConfig,
+              newTurn,
+              state.tileEffects
+            );
+
+            bossMessages.push(...bossTurnResult.messages);
+
+            if (bossTurnResult.phaseChanged) {
+              const phaseLog = {
+                id: `log_${Date.now()}_boss_phase_${Math.random().toString(36).slice(2, 6)}`,
+                turn: newTurn,
+                faction: nextFaction,
+                type: /** @type {ActionLogType} */ ('status'),
+                description: bossTurnResult.messages[0] || '首领阶段变化',
+                details: { bossPhaseChange: true, newPhaseId: bossTurnResult.newPhaseId },
+                timestamp: Date.now()
+              };
+
+              const lastPhaseLog = newActionLogs[newActionLogs.length - 1];
+              if (lastPhaseLog && lastPhaseLog.turn === newTurn && lastPhaseLog.faction === nextFaction) {
+                newActionLogs[newActionLogs.length - 1] = {
+                  ...lastPhaseLog,
+                  actions: [...lastPhaseLog.actions, phaseLog]
+                };
+              } else {
+                newActionLogs.push({
+                  turn: newTurn,
+                  faction: nextFaction,
+                  actions: [phaseLog]
+                });
+              }
+            }
+
+            if (bossTurnResult.gameOver) {
+              bossGameOver = true;
+              if (bossTurnResult.gameResult === 'victory') {
+                bossFinalWinner = bossConfig.faction === 'red' ? 'blue' : 'red';
+                bossFinalCondition = 'boss_defeated';
+              } else {
+                bossFinalWinner = bossConfig.faction;
+                bossFinalCondition = 'boss_victory';
+              }
+            }
+
+            units = units.map(u => {
+              const updated = bossTurnResult.skillResults
+                .flatMap(r => r.damagedUnits)
+                .find(du => du.id === u.id);
+              return updated || u;
+            });
+
+            units = [...units, ...bossTurnResult.skillResults.flatMap(r => r.summonedUnits)];
+            units = units.filter(u => u.currentHp > 0);
+
+            if (bossTurnResult.moveResult) {
+              units = units.map(u =>
+                u.id === bossUnit.id
+                  ? { ...u, x: bossTurnResult.moveResult!.toX, y: bossTurnResult.moveResult!.toY, hasMoved: true }
+                  : u
+              );
+            }
+
+            if (bossTurnResult.attackResult) {
+              units = units.map(u =>
+                u.id === bossTurnResult.attackResult!.targetId
+                  ? { ...u, currentHp: Math.max(0, u.currentHp - bossTurnResult.attackResult!.damage) }
+                  : u
+              );
+            }
+          }
+        }
+      }
+
       const newState = {
         ...state,
         currentFaction: nextFaction,
@@ -2176,10 +2328,10 @@ function createGameState() {
         units,
         selectedUnitId: null,
         selectedCardId: null,
-        gamePhase: isGameOver ? 'gameOver' : 'idle',
-        gameOver: isGameOver,
-        winner: finalWinner,
-        victoryCondition: finalCondition,
+        gamePhase: bossGameOver ? 'gameOver' : 'idle',
+        gameOver: bossGameOver,
+        winner: bossFinalWinner,
+        victoryCondition: bossFinalCondition,
         scoreSettlement: finalScoreSettlement,
         hands: nextHands,
         cooldowns: nextCooldowns,
@@ -2188,10 +2340,10 @@ function createGameState() {
         revealedAreas: tickedRevealedAreas,
         enemyMarkers: tickedMarkers,
         turnHistory: [...state.turnHistory, { turn: state.turn, faction: state.currentFaction }],
-        lastStatusMessages: statusMessages,
+        lastStatusMessages: bossMessages,
         lastMoraleChanges: dotKilled || moraleChanges.length > 0 ? moraleChanges : state.lastMoraleChanges,
         actionLogs: newActionLogs,
-        lastActionLog: isGameOver ? newActionLogs[newActionLogs.length - 1].actions[newActionLogs[newActionLogs.length - 1].actions.length - 1] : turnEndLog,
+        lastActionLog: bossGameOver ? newActionLogs[newActionLogs.length - 1].actions[newActionLogs[newActionLogs.length - 1].actions.length - 1] : turnEndLog,
         tileEffects: newTileEffects,
         roundSnapshots: [...state.roundSnapshots, snapshot],
         turnDamageDealt: { red: 0, blue: 0 },
@@ -2318,6 +2470,133 @@ function createGameState() {
         actionLogs: newActionLogs,
         lastActionLog: cancelLog,
         message: `⏸️ 取消研究：${tech?.name || techId}，返还 ${result.refundGold} 金币`
+      };
+    }),
+    /**
+     * @param {string} bossId
+     */
+    startBossBattle: (bossId) => update(state => {
+      const bossCfg = getBossConfig(bossId);
+      if (!bossCfg) {
+        return {
+          ...state,
+          message: `❌ 无法找到首领配置：${bossId}`
+        };
+      }
+
+      const bossUnitId = `boss_${bossId}_${Date.now()}`;
+      const bossUnit = {
+        id: bossUnitId,
+        type: /** @type {any} */ (bossCfg.type),
+        faction: bossCfg.faction,
+        x: bossCfg.x,
+        y: bossCfg.y,
+        currentHp: bossCfg.maxHp,
+        maxHp: bossCfg.maxHp,
+        hasMoved: false,
+        hasAttacked: false,
+        attackCount: 0,
+        buffs: [],
+        stunned: 0,
+        morale: 100,
+        winStreak: 0,
+        statusEffects: [],
+        isBoss: true,
+        bossId: bossCfg.id,
+        bossName: bossCfg.name,
+        exp: 0,
+        level: 1,
+        statPoints: 0,
+        allocatedStats: { atk: 0, def: 0, hp: 0, move: 0 },
+        specialization: null
+      };
+
+      const newUnits = state.units.filter(u =>
+        !(u.faction === bossCfg.faction && u.isBoss)
+      );
+      newUnits.push(bossUnit);
+
+      const bossState = createInitialBossState(bossCfg, bossUnitId);
+
+      const startLog = {
+        id: `log_${Date.now()}_boss_start_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: state.currentFaction,
+        type: /** @type {ActionLogType} */ ('status'),
+        description: `⚔️ 首领战开始！${bossCfg.name}降临！`,
+        details: { bossBattleStart: true, bossId, bossName: bossCfg.name },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === state.currentFaction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, startLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: state.currentFaction,
+          actions: [startLog]
+        });
+      }
+
+      const newState = {
+        ...state,
+        units: newUnits,
+        activeBossId: bossId,
+        bossState,
+        actionLogs: newActionLogs,
+        lastActionLog: startLog,
+        message: `⚔️ 首领战开始！${bossCfg.name}降临！`
+      };
+
+      replayStore.recorder.recordFrame('boss_start', `首领战：${bossCfg.name}`, newState, startLog.details);
+      return newState;
+    }),
+    /**
+     */
+    endBossBattle: () => update(state => {
+      if (!state.activeBossId) {
+        return state;
+      }
+
+      const newUnits = state.units.filter(u => !u.isBoss && !u.isSummon);
+
+      const endLog = {
+        id: `log_${Date.now()}_boss_end_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction: state.currentFaction,
+        type: /** @type {ActionLogType} */ ('status'),
+        description: '首领战结束',
+        details: { bossBattleEnd: true, bossId: state.activeBossId },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === state.currentFaction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, endLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction: state.currentFaction,
+          actions: [endLog]
+        });
+      }
+
+      return {
+        ...state,
+        units: newUnits,
+        activeBossId: null,
+        bossState: null,
+        actionLogs: newActionLogs,
+        lastActionLog: endLog
       };
     }),
     /**

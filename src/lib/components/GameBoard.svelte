@@ -44,6 +44,8 @@
 import { getWeatherName } from '$lib/config/weatherConfig.js';
   import { canUseCard, applyCardEffect, canAffordCard, canUseSummonCard } from '$lib/utils/cardSystem';
   import { STATUS_EFFECT_INFO, STATUS_EFFECT_TYPES, getStatusInfo } from '$lib/config/unitConfig';
+  import { getBossSkill, BOSS_SKILL_TYPES } from '$lib/config/bossConfig.js';
+  import { getCircleAOETiles, getLineAOETiles, getFanAOETiles } from '$lib/utils/bossLogic.js';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -865,6 +867,91 @@ import { getWeatherName } from '$lib/config/weatherConfig.js';
     }
   }
 
+  function drawBossSkillWarnings() {
+    if (!overlayLayer || !state || !state.bossState || !state.activeBossId) return;
+
+    const warnings = state.bossState.skillWarnings || {};
+    const bossUnit = state.units.find(u => u.id === state.bossState?.unitId);
+    const layout = state.boardLayout || boardConfig.layout;
+
+    for (const warning of Object.values(warnings)) {
+      const skill = getBossSkill(warning.skillId);
+      if (!skill) continue;
+
+      let tiles = [];
+      let color = skill.color ? parseInt(skill.color.replace('#', ''), 16) : 0xe74c3c;
+
+      switch (skill.type) {
+        case BOSS_SKILL_TYPES.AOE_CIRCLE:
+        case BOSS_SKILL_TYPES.DEBUFF_AREA:
+          tiles = getCircleAOETiles(warning.targetX, warning.targetY, skill.aoeRadius || 2, layout);
+          break;
+        case BOSS_SKILL_TYPES.AOE_LINE:
+          if (bossUnit) {
+            tiles = getLineAOETiles(bossUnit.x, bossUnit.y, warning.targetX, warning.targetY, skill.lineLength || 5, skill.lineWidth || 1, layout);
+          }
+          break;
+        case BOSS_SKILL_TYPES.AOE_FAN:
+          if (bossUnit) {
+            tiles = getFanAOETiles(bossUnit.x, bossUnit.y, warning.targetX, warning.targetY, skill.aoeRadius || 3, skill.fanAngle || 90, layout);
+          }
+          break;
+        default:
+          tiles = [{ x: warning.targetX, y: warning.targetY }];
+      }
+
+      const urgency = 1 - (warning.remainingTurns / (skill.warningTurns || 2));
+      const baseAlpha = 0.2 + urgency * 0.3;
+      const pulseSpeed = 300 + (1 - urgency) * 400;
+
+      for (const tile of tiles) {
+        if (tile.x < 0 || tile.x >= boardConfig.width || tile.y < 0 || tile.y >= boardConfig.height) continue;
+
+        const overlay = new PIXI.Graphics();
+
+        const pulseAlpha = baseAlpha + Math.sin(Date.now() / pulseSpeed + tile.x + tile.y) * 0.1;
+        overlay.beginFill(color, Math.max(0.1, pulseAlpha));
+        overlay.drawRect(
+          tile.x * boardConfig.tileSize,
+          tile.y * boardConfig.tileSize,
+          boardConfig.tileSize,
+          boardConfig.tileSize
+        );
+        overlay.endFill();
+
+        overlay.lineStyle(2, color, 0.5 + urgency * 0.4);
+        overlay.drawRect(
+          tile.x * boardConfig.tileSize + 2,
+          tile.y * boardConfig.tileSize + 2,
+          boardConfig.tileSize - 4,
+          boardConfig.tileSize - 4
+        );
+
+        overlayLayer.addChild(overlay);
+
+        if (tile.x === warning.targetX && tile.y === warning.targetY) {
+          const iconText = new PIXI.Text(skill.icon || '⚠️', { fontSize: 20 });
+          iconText.anchor.set(0.5);
+          iconText.x = tile.x * boardConfig.tileSize + boardConfig.tileSize / 2;
+          iconText.y = tile.y * boardConfig.tileSize + boardConfig.tileSize / 2;
+          overlayLayer.addChild(iconText);
+
+          const turnText = new PIXI.Text(`${warning.remainingTurns}`, {
+            fontSize: 14,
+            fill: 0xffffff,
+            stroke: 0x000000,
+            strokeThickness: 3,
+            fontWeight: 'bold'
+          });
+          turnText.anchor.set(1, 0);
+          turnText.x = tile.x * boardConfig.tileSize + boardConfig.tileSize - 4;
+          turnText.y = tile.y * boardConfig.tileSize + 4;
+          overlayLayer.addChild(turnText);
+        }
+      }
+    }
+  }
+
   function renderBoard() {
     drawBoard();
     drawBaseStatus();
@@ -872,6 +959,7 @@ import { getWeatherName } from '$lib/config/weatherConfig.js';
     drawRevealedAreas();
     drawEnemyMarkers();
     drawScoutPreview();
+    drawBossSkillWarnings();
   }
 
   function renderUnits() {

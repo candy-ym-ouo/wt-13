@@ -24,7 +24,8 @@ import { WEATHER_TYPES, getWeatherIcon, getWeatherName, getWeatherColor } from '
   import TechTreePanel from './TechTreePanel.svelte';
   import CardDeckPanel from './CardDeckPanel.svelte';
   import { cardDeckStore, activeDeckCardPool } from '$lib/stores/cardDeckStore.js';
-  import { getCardsForDrawPool } from '$lib/utils/cardDeckSystem.js';
+import { getCardsForDrawPool } from '$lib/utils/cardDeckSystem.js';
+import BossPanel from './BossPanel.svelte';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -1420,6 +1421,8 @@ import { WEATHER_TYPES, getWeatherIcon, getWeatherName, getWeatherColor } from '
   {/if}
 
   <TacticalHintPanel />
+
+  <BossPanel />
 
   {#if state?.bases && state.bases.length > 0 && !state.gameOver}
     <div class="base-status-panel">
