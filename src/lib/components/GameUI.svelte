@@ -20,6 +20,7 @@
   import ReplayPlayer from './ReplayPlayer.svelte';
   import AchievementToast from './AchievementToast.svelte';
   import AchievementPanel from './AchievementPanel.svelte';
+  import TechTreePanel from './TechTreePanel.svelte';
 
   /**
    * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -76,6 +77,7 @@
   let showSaveLoad = false;
   let showResumePrompt = false;
   let showShop = false;
+  let showTechTree = false;
   let showEconomyPanel = true;
   let activeShopTab = 'unit';
   let lastPurchaseMessage = '';
@@ -1203,6 +1205,9 @@
       {#if state && gameRules.economy.enabled && state.turn >= 2}
         <button class="btn btn-shop" on:click={() => showShop = !showShop}>
           🛒 商店
+        </button>
+        <button class="btn btn-secondary" on:click={() => showTechTree = !showTechTree}>
+          🔬 科技
         </button>
       {/if}
       <button class="btn btn-secondary" on:click={() => showRoundStats = !showRoundStats}>
@@ -2730,6 +2735,11 @@
   {/if}
   <AchievementToast />
   <AchievementPanel bind:show={showAchievementPanel} />
+  {#if showTechTree && state && !state.gameOver}
+    <div class="modal-overlay" on:click|self={() => showTechTree = false}>
+      <TechTreePanel on:close={() => showTechTree = false} />
+    </div>
+  {/if}
 </div>
 
 <style>

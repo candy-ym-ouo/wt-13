@@ -4,6 +4,7 @@ import { unitConfig, initialUnits, STATUS_EFFECT_TYPES, getStatusInfo, COUNTER_R
 import { gameRules } from '$lib/config/gameRules';
 import { cardConfig } from '$lib/config/eventCardConfig';
 import { shopItems, shopConfig } from '$lib/config/shopConfig';
+import { techConfig, getTechById } from '$lib/config/techTreeConfig.js';
 import { debouncedAutoSave, cancelPendingAutoSave } from '$lib/utils/storageSave';
 import { replayStore } from '$lib/stores/replayStore';
 import {
@@ -50,6 +51,14 @@ import {
   updateEnemyMarkers,
   getSightRange
 } from '$lib/utils/gameLogic';
+import {
+  startResearch,
+  cancelResearch,
+  tickResearch,
+  calculateTechBonuses,
+  applyTechBonusesToUnit,
+  getResearchProgress
+} from '$lib/utils/techTreeSystem.js';
 
 /**
  * @typedef {import('../utils/cardSystem').Unit} Unit
@@ -166,6 +175,18 @@ import {
  * @property {{red: number, blue: number}} killGoldEarnedThisTurn
  * @property {Record<string, number>} shopPurchaseCounts
  * @property {EconomyNotification[]} economyNotifications
+ * @property {TechTreeState} techTree
+ */
+
+/**
+ * @typedef {object} TechTreeState
+ * @property {string[]} researchedTechs
+ * @property {string | null} researchInProgress
+ * @property {number} researchProgress
+ * @property {string[]} researchQueue
+ * @property {{red: string[], blue: string[]}} unlockedUnits
+ * @property {{red: string[], blue: string[]}} unlockedSpecializations
+ * @property {{red: string[], blue: string[]}} unlockedSpells
  */
 
 /**
@@ -439,7 +460,16 @@ function createInitialState() {
     maintenanceDiscountNextTurn: { red: false, blue: false },
     killGoldEarnedThisTurn: { red: 0, blue: 0 },
     shopPurchaseCounts: {},
-    economyNotifications: []
+    economyNotifications: [],
+    techTree: {
+      researchedTechs: [],
+      researchInProgress: null,
+      researchProgress: 0,
+      researchQueue: [],
+      unlockedUnits: { red: [], blue: [] },
+      unlockedSpecializations: { red: [], blue: [] },
+      unlockedSpells: { red: [], blue: [] }
+    }
   };
 }
 
@@ -2020,6 +2050,47 @@ function createGameState() {
         }
       }
 
+      const techTickResult = tickResearch(state.techTree, state.currentFaction);
+      let newTechTree = techTickResult.techState;
+      
+      if (techTickResult.completedTechs.length > 0) {
+        for (const completedTechId of techTickResult.completedTechs) {
+          const completedTech = getTechById(completedTechId);
+          if (completedTech) {
+            const techLog = {
+              id: `log_${Date.now()}_tech_${Math.random().toString(36).slice(2, 6)}`,
+              turn: newTurn,
+              faction: state.currentFaction,
+              type: /** @type {ActionLogType} */ ('status'),
+              description: `🔬 科技研发完成：${completedTech.name}`,
+              details: { techId: completedTechId, techName: completedTech.name, isTechComplete: true },
+              timestamp: Date.now()
+            };
+            const lastTechLog = newActionLogs[newActionLogs.length - 1];
+            if (lastTechLog && lastTechLog.turn === newTurn && lastTechLog.faction === state.currentFaction) {
+              newActionLogs[newActionLogs.length - 1] = {
+                ...lastTechLog,
+                actions: [...lastTechLog.actions, techLog]
+              };
+            } else {
+              newActionLogs.push({
+                turn: newTurn,
+                faction: state.currentFaction,
+                actions: [techLog]
+              });
+            }
+          }
+        }
+        
+        const techBonuses = calculateTechBonuses(newTechTree.researchedTechs);
+        units = units.map(unit => {
+          if (unit.faction === state.currentFaction) {
+            return applyTechBonusesToUnit(unit, techBonuses);
+          }
+          return unit;
+        });
+      }
+
       const newState = {
         ...state,
         currentFaction: nextFaction,
@@ -2053,7 +2124,8 @@ function createGameState() {
         maintenanceDiscountNextTurn: econResult.economyState.maintenanceDiscountNextTurn,
         killGoldEarnedThisTurn: { red: 0, blue: 0 },
         shopPurchaseCounts: resetShopCounts,
-        economyNotifications: [...state.economyNotifications, ...econNotifications].slice(-30)
+        economyNotifications: [...state.economyNotifications, ...econNotifications].slice(-30),
+        techTree: newTechTree
       };
       replayStore.recorder.recordFrame('turn', turnEndDesc, newState, turnEndLog.details);
       if (isGameOver) {
@@ -2062,6 +2134,112 @@ function createGameState() {
         replayStore.recorder.stopRecording(newState);
       }
       return newState;
+    }),
+    /**
+     * @param {string} techId
+     */
+    startTechResearch: (techId) => update(state => {
+      const faction = state.currentFaction;
+      const currentGold = state.gold[faction];
+      
+      const result = startResearch(techId, faction, state.techTree, currentGold);
+      if (!result.success) {
+        return {
+          ...state,
+          message: `❌ 无法研究：${result.reason}`
+        };
+      }
+
+      const tech = getTechById(techId);
+      const factionName = faction === 'red' ? '红方' : '蓝方';
+      const researchLog = {
+        id: `log_${Date.now()}_tech_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction,
+        type: /** @type {ActionLogType} */ ('status'),
+        description: `🔬 ${factionName}开始研究：${tech?.name || techId}`,
+        details: { techId, techName: tech?.name, isTechStart: true },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, researchLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction,
+          actions: [researchLog]
+        });
+      }
+
+      return {
+        ...state,
+        techTree: result.techState,
+        gold: {
+          ...state.gold,
+          [faction]: result.gold
+        },
+        actionLogs: newActionLogs,
+        lastActionLog: researchLog,
+        message: `🔬 开始研究：${tech?.name || techId}`
+      };
+    }),
+    /**
+     * @param {string} techId
+     */
+    cancelTechResearch: (techId) => update(state => {
+      const faction = state.currentFaction;
+      const currentGold = state.gold[faction];
+      
+      const result = cancelResearch(techId, state.techTree, currentGold);
+      
+      if (!result.success) {
+        return state;
+      }
+
+      const tech = getTechById(techId);
+      const factionName = faction === 'red' ? '红方' : '蓝方';
+      const cancelLog = {
+        id: `log_${Date.now()}_tech_${Math.random().toString(36).slice(2, 6)}`,
+        turn: state.turn,
+        faction,
+        type: /** @type {ActionLogType} */ ('status'),
+        description: `⏸️ ${factionName}取消研究：${tech?.name || techId}，返还 ${result.refundGold} 金币`,
+        details: { techId, techName: tech?.name, isTechCancel: true, refundGold: result.refundGold },
+        timestamp: Date.now()
+      };
+
+      const newActionLogs = [...state.actionLogs];
+      const lastTurnLog = newActionLogs[newActionLogs.length - 1];
+      if (lastTurnLog && lastTurnLog.turn === state.turn && lastTurnLog.faction === faction) {
+        newActionLogs[newActionLogs.length - 1] = {
+          ...lastTurnLog,
+          actions: [...lastTurnLog.actions, cancelLog]
+        };
+      } else {
+        newActionLogs.push({
+          turn: state.turn,
+          faction,
+          actions: [cancelLog]
+        });
+      }
+
+      return {
+        ...state,
+        techTree: result.techState,
+        gold: {
+          ...state.gold,
+          [faction]: result.gold
+        },
+        actionLogs: newActionLogs,
+        lastActionLog: cancelLog,
+        message: `⏸️ 取消研究：${tech?.name || techId}，返还 ${result.refundGold} 金币`
+      };
     }),
     /**
      * @param {string} winner
